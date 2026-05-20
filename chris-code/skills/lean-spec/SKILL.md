@@ -11,7 +11,7 @@ Write a technical design spec as a minimal durable document. The spec makes syst
 
 **Announce at start:** "I'm using the lean-spec skill to write the design spec."
 
-**Save specs to:** `docs/superpowers/specs/YYYY-MM-DD-<feature-name>-design.md`
+**Save specs to:** `docs/specs/YYYY-MM-DD-<feature-name>-design.md`
 (User preferences for spec location override this default.)
 
 ## Core Principle
@@ -114,4 +114,4 @@ Fix issues inline, then move on.
 
 After saving the spec, offer:
 
-**"Spec saved to `docs/superpowers/specs/<filename>.md`. Ready to write the implementation plan with `/lean-plan`?"**
+**"Spec saved to `docs/specs/<filename>.md`. Ready to write the implementation plan with `/lean-plan`?"**
