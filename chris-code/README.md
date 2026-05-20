@@ -86,25 +86,29 @@ flowchart TB
 
 ## Agents
 
-### Coding Agents
+### Coding Agents (exclusive — most specific wins)
 
-Dispatched by `subagent-driven-development` and `executing-plans` via `scope.extensions` matching.
+One coder per task. Dispatched by `subagent-driven-development` and `executing-plans`. When multiple match the same extension, `scope.require_dependencies` picks the most specific (e.g., `pytorch-coder` over `python-coder` when the project depends on torch).
 
-| Agent | Model | Scope | Role |
-|-------|-------|-------|------|
-| `python-coder` | sonnet | `.py` | Python implementation with embedded review principles |
-| `rust-coder` | sonnet | `.rs` | Rust implementation with embedded review principles |
+| Agent | Model | Scope | Dependencies | Role |
+|-------|-------|-------|-------------|------|
+| `python-coder` | sonnet | `.py` | — | General Python implementation with review principles |
+| `pytorch-coder` | sonnet | `.py` | torch, lightning | PyTorch/Lightning implementation with Lightning-first conventions + general Python patterns |
+| `rust-coder` | sonnet | `.rs` | — | Rust implementation with review principles |
 
-### Quality Review Agents
+### Quality Review Agents (additive — all matching fire)
 
-Dispatched per task after spec compliance review passes.
+Dispatched per task after spec compliance review passes. All agents matching the file extensions fire on the same diff.
 
-| Agent | Model | Scope | Role |
-|-------|-------|-------|------|
-| `python-quality-reviewer` | opus | `.py` | Verify coder followed principles + bug detection |
-| `rust-quality-reviewer` | opus | `.rs` | Verify coder followed principles + bug detection |
+| Agent | Model | Scope | Dependencies | Role |
+|-------|-------|-------|-------------|------|
+| `python-quality-reviewer` | opus | `.py` | — | General Python principle adherence + bug detection |
+| `pytorch-quality-reviewer` | opus | `.py` | torch, lightning | Lightning conventions + silent training bugs + reproducibility |
+| `rust-quality-reviewer` | opus | `.rs` | — | Rust principle adherence + bug detection |
 
-### Commit Gate Agents
+In a PyTorch project, `.py` files get **both** `python-quality-reviewer` and `pytorch-quality-reviewer`. If findings conflict, pytorch takes precedence.
+
+### Commit Gate Agents (additive — all matching fire)
 
 Dispatched before each commit and as a final full-diff pass at plan end.
 
@@ -123,14 +127,18 @@ Dispatched by the `bug-hunt` skill.
 
 ## Scope Dispatch
 
-All agents and review skills use a consistent scope-matching mechanism:
+All agents and review skills match by `scope.extensions` and `scope.require_dependencies` in frontmatter. The dispatch mode depends on the role:
 
-1. Check file extensions in the staged diff or task file list
-2. Match against `scope.extensions` in agent/skill frontmatter
-3. If multiple match the same extension, resolve via `scope.require_dependencies` (check project dependency files: `pyproject.toml`, `requirements.txt`, `Cargo.toml`, `package.json`)
-4. More specific agents take priority when their dependencies are present
+| Role | Dispatch | Example (PyTorch project, .py files) |
+|------|----------|--------------------------------------|
+| `*-coder` | **Exclusive** — most specific wins | `pytorch-coder` (not `python-coder`) |
+| `*-quality-reviewer` | **Additive** — all matching fire | `python-quality-reviewer` + `pytorch-quality-reviewer` |
+| `*-review-lite` | **Additive** — all matching fire | `python-review-lite` |
+| `*-review` skills | **Additive** — all matching fire | `python-review` + future `pytorch-review` |
 
-This enables extensibility — adding `pytorch-coder`, `pytorch-quality-reviewer`, `pytorch-review-lite`, and `pytorch-review` requires no changes to any existing skill.
+When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
+
+Dependency resolution checks project files (`pyproject.toml`, `requirements.txt`, `Cargo.toml`, `package.json`) to determine which agents with `require_dependencies` are eligible.
 
 ## Model Selection
 
