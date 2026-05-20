@@ -6,56 +6,48 @@ Personal Claude Code plugin — workflow skills, coding agents, review gates, an
 
 The core workflow is a linear pipeline from idea to integration. Each step invokes specific skills and dispatches agents automatically.
 
-```dot
-digraph workflow {
-    rankdir=TB;
-    node [shape=box, style="rounded"];
+```mermaid
+flowchart TB
+    subgraph Design Phase
+        using["using-chris-code<br/>(session start)"]
+        brainstorm["brainstorming<br/>+ clarifying questions<br/>+ 2-3 approaches"]
+        spec["lean-spec<br/>(500-1500 word design artifact)"]
+        plan["lean-plan<br/>(200-450 word execution handoff)"]
+    end
 
-    subgraph cluster_design {
-        label="Design Phase";
-        style=dashed;
-        using [label="using-chris-code\n(session start)", style="rounded,filled", fillcolor="#e8e8e8"];
-        brainstorm [label="brainstorming\n+ clarifying questions\n+ 2-3 approaches"];
-        spec [label="lean-spec\n(500-1500 word design artifact)"];
-        plan [label="lean-plan\n(200-450 word execution handoff)"];
-    }
+    subgraph Execution Phase
+        worktree["using-git-worktrees<br/>(EnterWorktree)"]
+        execute["subagent-driven-development<br/>or executing-plans"]
+    end
 
-    subgraph cluster_execute {
-        label="Execution Phase";
-        style=dashed;
-        worktree [label="using-git-worktrees\n(EnterWorktree)"];
-        execute [label="subagent-driven-development\nor executing-plans"];
-    }
+    subgraph Per Task
+        coder["*-coder agent<br/>(python-coder, rust-coder)"]:::agent
+        spec_review["spec-reviewer<br/>(opus, prompt template)"]
+        quality["*-quality-reviewer agent<br/>(python-quality-reviewer,<br/>rust-quality-reviewer)"]:::reviewer
+        commit_gate["*-review-lite agent<br/>(python-review-lite,<br/>rust-review-lite)"]:::gate
+    end
 
-    subgraph cluster_per_task {
-        label="Per Task (within execution)";
-        style=dashed;
-        coder [label="*-coder agent\n(python-coder, rust-coder)", style="rounded,filled", fillcolor="#ccffcc"];
-        spec_review [label="spec-reviewer\n(opus, prompt template)"];
-        quality [label="*-quality-reviewer agent\n(python-quality-reviewer,\nrust-quality-reviewer)", style="rounded,filled", fillcolor="#ffffcc"];
-        commit_gate [label="*-review-lite agent\n(python-review-lite,\nrust-review-lite)", style="rounded,filled", fillcolor="#ffcccc"];
-    }
+    subgraph Completion Phase
+        verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-review skills<br/>4. Requirements check"]
+        finish["finishing-a-development-branch<br/>(merge / PR / keep / discard)"]
+    end
 
-    subgraph cluster_finish {
-        label="Completion Phase";
-        style=dashed;
-        verify [label="verification-before-completion\n1. Tests\n2. Lints\n3. *-review skills\n4. Requirements check"];
-        finish [label="finishing-a-development-branch\n(merge / PR / keep / discard)"];
-    }
+    using --> brainstorm
+    brainstorm -->|spec readiness check| spec
+    spec --> plan
+    plan --> worktree
+    worktree --> execute
+    execute -->|dispatch by scope| coder
+    coder --> spec_review
+    spec_review -->|dispatch by scope| quality
+    quality -->|dispatch by scope| commit_gate
+    commit_gate -.->|next task<br/>(staged parallelism)| execute
+    execute -->|all tasks done| verify
+    verify --> finish
 
-    using -> brainstorm;
-    brainstorm -> spec [label="spec readiness check"];
-    spec -> plan;
-    plan -> worktree;
-    worktree -> execute;
-    execute -> coder [label="dispatch by scope"];
-    coder -> spec_review;
-    spec_review -> quality [label="dispatch by scope"];
-    quality -> commit_gate [label="dispatch by scope"];
-    commit_gate -> execute [label="next task\n(staged parallelism)", style=dashed];
-    execute -> verify [label="all tasks done"];
-    verify -> finish;
-}
+    classDef agent fill:#ccffcc,stroke:#333
+    classDef reviewer fill:#ffffcc,stroke:#333
+    classDef gate fill:#ffcccc,stroke:#333
 ```
 
 ## Skills
