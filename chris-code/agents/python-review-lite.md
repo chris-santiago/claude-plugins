@@ -1,6 +1,8 @@
 ---
 name: python-review-lite
 description: Lightweight autonomous Python code-quality gate. Dispatch before any `git commit` that touches `*.py` source. Reads `git diff --cached`, applies a trimmed diff-level idiom checklist, runs the project linter if available, and returns `clean` / `block` / `escalate`. Never writes code. Used as a regression guardrail on every Python commit; not a refactoring agent.
+scope:
+  extensions: [".py"]
 tools: [Read, Grep, Glob, Bash]
 ---
 

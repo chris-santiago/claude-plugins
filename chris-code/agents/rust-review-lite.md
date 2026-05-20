@@ -1,6 +1,8 @@
 ---
 name: rust-review-lite
 description: Lightweight autonomous Rust code-quality gate. Dispatch before any `git commit` that touches `*.rs` source. Reads `git diff --cached`, applies a trimmed diff-level idiom checklist, runs `cargo clippy -D warnings` on the affected crate if available, and returns `clean` / `block` / `escalate`. Never writes code. Used as a regression guardrail on every Rust commit; not a refactoring agent.
+scope:
+  extensions: [".rs"]
 tools: [Read, Grep, Glob, Bash]
 ---
 
