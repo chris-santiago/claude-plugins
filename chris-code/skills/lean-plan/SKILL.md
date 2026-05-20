@@ -11,7 +11,7 @@ Write an implementation plan as a thin execution handoff. The plan tells the exe
 
 **Announce at start:** "I'm using the lean-plan skill to create the implementation plan."
 
-**Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>-plan.md`
+**Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>-plan.md`
 (User preferences for plan location override this default.)
 
 ## Primary Principle
@@ -35,7 +35,7 @@ Every plan MUST use this structure. No other sections. No prose between sections
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use chris-code:subagent-driven-development (recommended) or chris-code:executing-plans to implement this plan task-by-task.
 
 ## 1. Objective
 
@@ -117,7 +117,7 @@ Fix issues inline, then move on.
 
 After saving the plan, offer:
 
-**"Plan saved to `docs/superpowers/plans/<filename>.md`. Two execution options:**
+**"Plan saved to `docs/plans/<filename>.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — fresh subagent per task, review between tasks
 
@@ -125,5 +125,5 @@ After saving the plan, offer:
 
 **Which approach?"**
 
-- **Subagent-Driven:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development`
-- **Inline:** REQUIRED SUB-SKILL: `superpowers:executing-plans`
+- **Subagent-Driven:** REQUIRED SUB-SKILL: `chris-code:subagent-driven-development`
+- **Inline:** REQUIRED SUB-SKILL: `chris-code:executing-plans`
