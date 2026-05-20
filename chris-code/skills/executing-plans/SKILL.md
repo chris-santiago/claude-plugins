@@ -27,16 +27,15 @@ For each task:
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
-4. Dispatch `*-quality-reviewer` agents (matched by file type) to review changes before moving on. If REVISE: fix issues and re-dispatch until APPROVED.
+4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
 5. Mark as completed
 
 ### Step 3: Commit Gate
 
 Before each commit (end of plan or mid-plan commit points):
 
-1. **Collect candidates:** Check staged file extensions (`.py`, `.rs`, etc.) → match against `*-review-lite` agents by their `scope.extensions` frontmatter
-2. **Resolve conflicts:** If multiple agents match the same extension, check project dependency files (`pyproject.toml`, `requirements.txt`, `setup.cfg`, `Cargo.toml`, `package.json`) for `scope.require_dependencies`. More specific agents take priority when their dependencies are present.
-3. **Dispatch** matching agents against the staged diff
+1. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
+2. **Dispatch** all matching agents against the staged diff
 4. If any agent returns **block**: fix the issue before committing
 5. If any agent returns **escalate**: stop and surface to the user
 

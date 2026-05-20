@@ -86,7 +86,7 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 9. **Non-deterministic operations**: `torch.scatter_add`, `index_add_`, gather with duplicate indices, interpolation — these are non-deterministic by default. Use `torch.use_deterministic_algorithms(True)` when reproducibility matters.
 10. **AMP/mixed-precision pitfalls**: Loss scaling issues, NaN from overflow in float16, operations that don't support half precision.
 
-### S3+ patterns to avoid
+### S3+ Lightning patterns to avoid
 
 1. **Manual training loops** inside or alongside Lightning. Use hooks and callbacks for custom logic.
 2. **Hardcoded devices** (`.cuda()`, `.to('cuda:0')`). Use `self.device` or let Lightning handle placement.
@@ -97,6 +97,21 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 7. **Nested training/eval mode toggling** inside hooks. Lightning manages this.
 8. **Recomputing validation metrics from scratch** instead of using TorchMetrics' stateful accumulation.
 
+### S3+ general Python patterns to avoid
+
+These apply to all Python code in the project, not just Lightning modules:
+
+1. **Boolean / mode-flag parameters** on public functions. Use enums, `Literal` types, kwargs, or split into separate functions.
+2. **Dict-shaped domain data** crossing a public boundary. Use `dataclass`, `TypedDict`, or `NamedTuple` when it clarifies.
+3. **Hidden side effects** in "pure-looking" helpers: env var reads, filesystem access, logging embedded in computation, global state mutation.
+4. **New utility functions** dropped into `utils.py`, `common.py`, `helpers.py`, or similar dumping-ground files. Place by domain responsibility.
+5. **Broad `except Exception` blocks** at library boundaries without specific re-raise or typed handling.
+6. **Public API leakage**: new top-level names added to a module without being curated in `__all__` (when `__all__` exists).
+7. **Return shape drift**: sibling functions returning inconsistent types for similar operations.
+8. **Exception drift**: similar failures raising different exception types.
+9. **Orchestration mixed with implementation**: one function that both coordinates workflow and does low-level transforms.
+10. **Overgrown classes**: classes with many methods, weak invariants, and vague names (`Manager`, `Handler`, `Helper`).
+
 ### S1-S2 patterns to watch
 
 - Missing `self.save_hyperparameters()` in `__init__`.
@@ -104,6 +119,28 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 - Inconsistent naming between training and validation metrics.
 - DataLoader without `num_workers`, `pin_memory`, or `persistent_workers` tuning.
 - Missing `worker_init_fn` for reproducible data loading.
+- Unused imports, dead code, sentinel return values.
+- Missing type hints on public functions.
+- Stateful code without need (class that should be functions).
+
+## Refactoring heuristics
+
+When you encounter these patterns while working, fix them if they're in your path. Don't go hunting for them outside your task scope. When a general Python pattern conflicts with a Lightning convention, Lightning wins.
+
+| # | Smell | Fix |
+|---|---|---|
+| 1 | Boolean/mode-flag creep | Split function, config dataclass, `Literal` type, or strategy functions |
+| 2 | Dict-shaped domain data | `dataclass` / `TypedDict` / `NamedTuple` — only when it clarifies |
+| 3 | Hidden side effects | Surface at boundary, inject effectful thing, or rename to make effect obvious |
+| 4 | Orchestration + implementation mixed | Extract leaf operations; orchestrator becomes high-level steps |
+| 5 | Utility dump modules | Split by domain responsibility; inline single-caller utilities |
+| 6 | Return shape drift | Pick one canonical contract and standardize |
+| 7 | Exception drift | Small domain exception hierarchy + consistent raise |
+| 8 | Overgrown classes | Module of functions or smaller collaborating objects |
+| 9 | Stateful code without need | Collapse to pure/near-pure functions |
+| 10 | Under-modeled state | All required state in `__init__`, factory classmethod, or split types |
+| 11 | Public API leakage | Curate `__init__.py` + `__all__` + `_` prefix for internals |
+| 12 | Framework overreach | Simplify toward direct, traceable control flow |
 
 ## Testing ML code
 

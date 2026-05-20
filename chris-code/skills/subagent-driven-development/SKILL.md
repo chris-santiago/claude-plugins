@@ -63,16 +63,20 @@ flowchart TB
 
 ## Agent Selection
 
-### Coder Agents
+### Coder Agents (exclusive — one coder per task)
 
-Dispatch specialized `*-coder` agents instead of generic agents. Match by the same `scope.extensions` mechanism used for review-lite:
+Dispatch the most specific `*-coder` agent for the task's file types:
 
 1. Check which file types the task will touch
-2. Match against available `*-coder` agents (e.g., `python-coder` for `.py`, `rust-coder` for `.rs`)
-3. If multiple coder agents match the same extension, resolve via `scope.require_dependencies` (same as review-lite)
+2. Match against available `*-coder` agents by `scope.extensions`
+3. If multiple match the same extension, resolve via `scope.require_dependencies` — most specific wins (e.g., `pytorch-coder` over `python-coder` when project depends on torch)
 4. If no specific coder matches, fall back to a general-purpose agent
 
-Coder agents embed review principles, refactoring heuristics, and self-review checklists — generic agents don't. This is the primary quality lever.
+Only one coder agent writes the code. The winning coder must be self-contained (includes both domain-specific and general language patterns).
+
+### Review Agents (additive — all matching agents fire)
+
+Unlike coders, `*-quality-reviewer` and `*-review-lite` agents are **additive**: all agents matching the file extensions fire on the same diff. In a PyTorch project, `.py` files get both `python-quality-reviewer` (general Python patterns) and `pytorch-quality-reviewer` (Lightning conventions, training correctness). If findings conflict, the more specific agent's guidance takes precedence.
 
 ### Model Selection
 
