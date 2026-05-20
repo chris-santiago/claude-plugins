@@ -1,0 +1,19 @@
+{
+  "name": "chris-code",
+  "owner": {
+    "name": "chris-santiago"
+  },
+  "metadata": {
+    "description": "Personal Claude Code plugin marketplace — workflow skills, coding agents, and quality campaigns"
+  },
+  "plugins": [
+    {
+      "name": "chris-code",
+      "source": "./chris-code",
+      "description": "Workflow skills, coding agents, review gates, and quality campaigns for Claude Code.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "keywords": ["workflow", "agents", "review", "tdd", "debugging", "quality"]
+    }
+  ]
+}
