@@ -1,139 +1,97 @@
 ---
 name: verification-before-completion
-description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
+description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - runs concrete verification steps and confirms output before making any success claims
 ---
 
 # Verification Before Completion
 
 ## Overview
 
-Claiming work is complete without verification is dishonesty, not efficiency.
+Run concrete verification steps before claiming any work is done. Evidence before assertions, always.
 
-**Core principle:** Evidence before claims, always.
+**Core principle:** No completion claims without fresh verification evidence.
 
-**Violating the letter of this rule is violating the spirit of this rule.**
+**Announce at start:** "I'm using the verification-before-completion skill to verify this work."
 
-## The Iron Law
-
-```
-NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
-```
-
-If you haven't run the verification command in this message, you cannot claim it passes.
-
-## The Gate Function
+## The Gate
 
 ```
 BEFORE claiming any status or expressing satisfaction:
 
-1. IDENTIFY: What command proves this claim?
-2. RUN: Execute the FULL command (fresh, complete)
-3. READ: Full output, check exit code, count failures
+1. IDENTIFY: What commands and checks prove this claim?
+2. RUN: Execute each step below
+3. READ: Full output, check exit codes, count failures
 4. VERIFY: Does output confirm the claim?
    - If NO: State actual status with evidence
    - If YES: State claim WITH evidence
 5. ONLY THEN: Make the claim
-
-Skip any step = lying, not verifying
 ```
 
-## Common Failures
+## Verification Steps
 
-| Claim | Requires | Not Sufficient |
-|-------|----------|----------------|
-| Tests pass | Test command output: 0 failures | Previous run, "should pass" |
-| Linter clean | Linter output: 0 errors | Partial check, extrapolation |
-| Build succeeds | Build command: exit 0 | Linter passing, logs look good |
-| Bug fixed | Test original symptom: passes | Code changed, assumed fixed |
-| Regression test works | Red-green cycle verified | Test passes once |
-| Agent completed | VCS diff shows changes | Agent reports "success" |
-| Requirements met | Line-by-line checklist | Tests passing |
+### Step 1: Tests
 
-## Red Flags - STOP
+Run the project's full test suite. Not a subset. Not "the tests I think are relevant."
 
-- Using "should", "probably", "seems to"
-- Expressing satisfaction before verification ("Great!", "Perfect!", "Done!", etc.)
-- About to commit/push/PR without verification
-- Trusting agent success reports
-- Relying on partial verification
-- Thinking "just this once"
-- Tired and wanting work over
-- **ANY wording implying success without having run verification**
+```bash
+# Use the project's test runner
+pytest / cargo test / npm test / go test ./...
+```
 
-## Rationalization Prevention
+**Must see:** Zero failures, clean output. If tests fail, fix them before proceeding — do not continue to Step 2.
+
+### Step 2: Lints
+
+Run the project's linter. Not optional even if tests pass.
+
+```bash
+# Use the project's linter
+ruff check / cargo clippy -- -D warnings / eslint / golangci-lint run
+```
+
+**Must see:** Zero errors, zero warnings (or only pre-existing warnings). Fix lint issues before proceeding.
+
+### Step 3: Full Review
+
+Dispatch matching `*-review` skills based on file types changed. Match by `scope.extensions` in the skill frontmatter — same mechanism used for `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents. If multiple review skills match the same extension, resolve via `scope.require_dependencies` (e.g., a future `pytorch-review` would match `.py` files in projects that depend on `torch`).
+
+These are the senior-level refactoring reviews — they catch design drift, API cohesion issues, and structural problems that review-lite and quality-reviewer miss. This is the heavyweight pass before integration.
+
+**Must see:** No critical or important issues. If issues are found, address them and re-run the review.
+
+### Step 4: Requirements Check
+
+Re-read the plan or spec that drove this work. For each requirement:
+
+1. Can you point to the code that implements it?
+2. Can you point to a test that verifies it?
+3. Is there anything in the spec that was not implemented?
+4. Is there anything implemented that was not in the spec?
+
+**Must see:** Every requirement covered. If gaps exist, report them — do not claim completion.
+
+## After Verification Passes
+
+All four steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+
+## Rationalizations — All Mean "Run the Verification"
 
 | Excuse | Reality |
 |--------|---------|
-| "Should work now" | RUN the verification |
+| "Should work now" | RUN the commands |
 | "I'm confident" | Confidence ≠ evidence |
-| "Just this once" | No exceptions |
-| "Linter passed" | Linter ≠ compiler |
+| "Linter passed" | Linter ≠ tests ≠ review |
 | "Agent said success" | Verify independently |
-| "I'm tired" | Exhaustion ≠ excuse |
 | "Partial check is enough" | Partial proves nothing |
-| "Different words so rule doesn't apply" | Spirit over letter |
 
-## Key Patterns
+## Integration
 
-**Tests:**
-```
-✅ [Run test command] [See: 34/34 pass] "All tests pass"
-❌ "Should pass now" / "Looks correct"
-```
+**This skill is a prerequisite for:**
+- **chris-code:finishing-a-development-branch** — do not invoke until verification passes
 
-**Regression tests (TDD Red-Green):**
-```
-✅ Write → Run (pass) → Revert fix → Run (MUST FAIL) → Restore → Run (pass)
-❌ "I've written a regression test" (without red-green verification)
-```
+**This skill dispatches:**
+- **`*-review` skills** — full senior-level review, auto-dispatched by scope (Step 3)
 
-**Build:**
-```
-✅ [Run build] [See: exit 0] "Build passes"
-❌ "Linter passed" (linter doesn't check compilation)
-```
-
-**Requirements:**
-```
-✅ Re-read plan → Create checklist → Verify each → Report gaps or completion
-❌ "Tests pass, phase complete"
-```
-
-**Agent delegation:**
-```
-✅ Agent reports success → Check VCS diff → Verify changes → Report actual state
-❌ Trust agent report
-```
-
-## Why This Matters
-
-From 24 failure memories:
-- your human partner said "I don't believe you" - trust broken
-- Undefined functions shipped - would crash
-- Missing requirements shipped - incomplete features
-- Time wasted on false completion → redirect → rework
-- Violates: "Honesty is a core value. If you lie, you'll be replaced."
-
-## When To Apply
-
-**ALWAYS before:**
-- ANY variation of success/completion claims
-- ANY expression of satisfaction
-- ANY positive statement about work state
-- Committing, PR creation, task completion
-- Moving to next task
-- Delegating to agents
-
-**Rule applies to:**
-- Exact phrases
-- Paraphrases and synonyms
-- Implications of success
-- ANY communication suggesting completion/correctness
-
-## The Bottom Line
-
-**No shortcuts for verification.**
-
-Run the command. Read the output. THEN claim the result.
-
-This is non-negotiable.
+**Related skills:**
+- **chris-code:test-driven-development** — TDD ensures tests exist; this skill ensures they pass
+- **chris-code:regression-test** — ensures bug fixes have regression coverage before verification

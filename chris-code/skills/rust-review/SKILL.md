@@ -1,6 +1,8 @@
 ---
 name: rust-review
 description: Conducts a senior-level Rust refactoring and API-design review of a crate, module, or subsystem — recovering architectural intent, identifying drift, and proposing small reviewable patches. Use whenever the user says "review this Rust code", "refactor this crate", "audit our Rust API", "this Rust module feels off", "clean up this Rust subsystem", or asks for cohesion/idiom/API-design feedback on Rust code. Also trigger when the user mentions naming inconsistency, boolean explosion, leaky APIs, panic-prone library code, overgrown modules, parallel-API drift, or compatibility scar tissue in a Rust context — even if they don't explicitly ask for a "review".
+scope:
+  extensions: [".rs"]
 ---
 
 # Rust Review — Senior Refactoring & API Design
