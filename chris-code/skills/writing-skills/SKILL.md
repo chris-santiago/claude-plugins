@@ -279,17 +279,16 @@ Use skill name only, with explicit requirement markers:
 
 ## Flowchart Usage
 
-```dot
-digraph when_flowchart {
-    "Need to show information?" [shape=diamond];
-    "Decision where I might go wrong?" [shape=diamond];
-    "Use markdown" [shape=box];
-    "Small inline flowchart" [shape=box];
+```mermaid
+flowchart TB
+    info{"Need to show information?"}
+    wrong{"Decision where I might go wrong?"}
+    markdown["Use markdown"]
+    flowchart_yes["Small inline flowchart"]
 
-    "Need to show information?" -> "Decision where I might go wrong?" [label="yes"];
-    "Decision where I might go wrong?" -> "Small inline flowchart" [label="yes"];
-    "Decision where I might go wrong?" -> "Use markdown" [label="no"];
-}
+    info -->|yes| wrong
+    wrong -->|yes| flowchart_yes
+    wrong -->|no| markdown
 ```
 
 **Use flowcharts ONLY for:**

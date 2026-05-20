@@ -34,34 +34,33 @@ You MUST create a task for each of these items and complete them in order:
 
 ## Process Flow
 
-```dot
-digraph brainstorming {
-    "Explore project context" [shape=box];
-    "Visual questions ahead?" [shape=diamond];
-    "Offer Visual Companion\n(own message, no other content)" [shape=box];
-    "Ask clarifying questions" [shape=box];
-    "Propose 2-3 approaches" [shape=box];
-    "Present design sections" [shape=box];
-    "User approves design?" [shape=diamond];
-    "Write design doc" [shape=box];
-    "Spec self-review\n(fix inline)" [shape=box];
-    "User reviews spec?" [shape=diamond];
-    "Invoke lean-plan skill" [shape=doublecircle];
+```mermaid
+flowchart TB
+    explore["Explore project context"]
+    visual{"Visual questions ahead?"}
+    companion["Offer Visual Companion<br/>(own message, no other content)"]
+    clarify["Ask clarifying questions"]
+    approaches["Propose 2-3 approaches"]
+    design["Present design sections"]
+    approve{"User approves design?"}
+    write["Write design doc"]
+    selfreview["Spec self-review<br/>(fix inline)"]
+    userreview{"User reviews spec?"}
+    leanplan(("Invoke lean-plan skill"))
 
-    "Explore project context" -> "Visual questions ahead?";
-    "Visual questions ahead?" -> "Offer Visual Companion\n(own message, no other content)" [label="yes"];
-    "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
-    "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Propose 2-3 approaches";
-    "Propose 2-3 approaches" -> "Present design sections";
-    "Present design sections" -> "User approves design?";
-    "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
-    "Write design doc" -> "Spec self-review\n(fix inline)";
-    "Spec self-review\n(fix inline)" -> "User reviews spec?";
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
-    "User reviews spec?" -> "Invoke lean-plan skill" [label="approved"];
-}
+    explore --> visual
+    visual -->|yes| companion
+    visual -->|no| clarify
+    companion --> clarify
+    clarify --> approaches
+    approaches --> design
+    design --> approve
+    approve -->|"no, revise"| design
+    approve -->|yes| write
+    write --> selfreview
+    selfreview --> userreview
+    userreview -->|changes requested| write
+    userreview -->|approved| leanplan
 ```
 
 **The terminal state is invoking lean-plan.** Do NOT invoke any other implementation skill. The ONLY skill you invoke after brainstorming is lean-plan.

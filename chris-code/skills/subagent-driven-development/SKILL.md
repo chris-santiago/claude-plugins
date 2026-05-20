@@ -13,54 +13,52 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 ## The Process
 
-```dot
-digraph process {
-    rankdir=TB;
+```mermaid
+flowchart TB
+    subgraph Per Task
+        coder["Dispatch *-coder agent"]
+        questions{"Coder asks questions?"}
+        answer["Answer questions, provide context"]
+        implement["Coder implements, tests, self-reviews"]
+        spec_rev["Dispatch spec reviewer"]
+        spec_ok{"Spec compliant?"}
+        fix_spec["Coder fixes spec gaps"]
+        quality_rev["Dispatch *-quality-reviewer agent"]
+        quality_ok{"Quality approved?"}
+        fix_quality["Coder fixes quality issues"]
+        commit_gate["Per-task commit gate: *-review-lite"]
+        done["Mark task complete"]
+    end
 
-    subgraph cluster_per_task {
-        label="Per Task";
-        "Dispatch *-coder agent" [shape=box];
-        "Coder asks questions?" [shape=diamond];
-        "Answer questions, provide context" [shape=box];
-        "Coder implements, tests, self-reviews" [shape=box];
-        "Dispatch spec reviewer (./spec-reviewer-prompt.md)" [shape=box];
-        "Spec compliant?" [shape=diamond];
-        "Coder fixes spec gaps" [shape=box];
-        "Dispatch *-quality-reviewer agent" [shape=box];
-        "Quality approved?" [shape=diamond];
-        "Coder fixes quality issues" [shape=box];
-        "Per-task commit gate: *-review-lite" [shape=box];
-        "Mark task complete" [shape=box];
-    }
+    read["Read plan, extract tasks,<br/>map file footprints, group into stages"]
+    more_tasks{"More tasks in stage?"}
+    more_stages{"More stages?"}
+    final_gate["Final commit gate:<br/>*-review-lite on full diff (base..HEAD)"]
+    finish["chris-code:finishing-a-development-branch"]:::finish
 
-    "Read plan, extract tasks, map file footprints, group into stages" [shape=box];
-    "More tasks in stage?" [shape=diamond];
-    "More stages?" [shape=diamond];
-    "Final commit gate: *-review-lite on full diff (base..HEAD)" [shape=box];
-    "chris-code:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    read --> coder
+    coder --> questions
+    questions -->|yes| answer
+    answer --> coder
+    questions -->|no| implement
+    implement --> spec_rev
+    spec_rev --> spec_ok
+    spec_ok -->|no| fix_spec
+    fix_spec -->|re-review| spec_rev
+    spec_ok -->|yes| quality_rev
+    quality_rev --> quality_ok
+    quality_ok -->|no| fix_quality
+    fix_quality -->|re-review| quality_rev
+    quality_ok -->|yes| commit_gate
+    commit_gate --> done
+    done --> more_tasks
+    more_tasks -->|"yes (parallel within stage)"| coder
+    more_tasks -->|no| more_stages
+    more_stages -->|"yes (next stage)"| coder
+    more_stages -->|no| final_gate
+    final_gate --> finish
 
-    "Read plan, extract tasks, map file footprints, group into stages" -> "Dispatch *-coder agent";
-    "Dispatch *-coder agent" -> "Coder asks questions?";
-    "Coder asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Dispatch *-coder agent";
-    "Coder asks questions?" -> "Coder implements, tests, self-reviews" [label="no"];
-    "Coder implements, tests, self-reviews" -> "Dispatch spec reviewer (./spec-reviewer-prompt.md)";
-    "Dispatch spec reviewer (./spec-reviewer-prompt.md)" -> "Spec compliant?";
-    "Spec compliant?" -> "Coder fixes spec gaps" [label="no"];
-    "Coder fixes spec gaps" -> "Dispatch spec reviewer (./spec-reviewer-prompt.md)" [label="re-review"];
-    "Spec compliant?" -> "Dispatch *-quality-reviewer agent" [label="yes"];
-    "Dispatch *-quality-reviewer agent" -> "Quality approved?";
-    "Quality approved?" -> "Coder fixes quality issues" [label="no"];
-    "Coder fixes quality issues" -> "Dispatch *-quality-reviewer agent" [label="re-review"];
-    "Quality approved?" -> "Per-task commit gate: *-review-lite" [label="yes"];
-    "Per-task commit gate: *-review-lite" -> "Mark task complete";
-    "Mark task complete" -> "More tasks in stage?";
-    "More tasks in stage?" -> "Dispatch *-coder agent" [label="yes (parallel within stage)"];
-    "More tasks in stage?" -> "More stages?" [label="no"];
-    "More stages?" -> "Dispatch *-coder agent" [label="yes (next stage)"];
-    "More stages?" -> "Final commit gate: *-review-lite on full diff (base..HEAD)" [label="no"];
-    "Final commit gate: *-review-lite on full diff (base..HEAD)" -> "chris-code:finishing-a-development-branch";
-}
+    classDef finish fill:#90EE90,stroke:#333
 ```
 
 ## Agent Selection
