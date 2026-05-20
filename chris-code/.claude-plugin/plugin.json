@@ -10,6 +10,8 @@
     "./agents/rust-review-lite.md",
     "./agents/bug-hunter.md",
     "./agents/python-quality-reviewer.md",
-    "./agents/rust-quality-reviewer.md"
+    "./agents/rust-quality-reviewer.md",
+    "./agents/pytorch-coder.md",
+    "./agents/pytorch-quality-reviewer.md"
   ]
 }
