@@ -27,7 +27,8 @@ For each task:
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
-4. Mark as completed
+4. Dispatch `*-quality-reviewer` agents (matched by file type) to review changes before moving on. If REVISE: fix issues and re-dispatch until APPROVED.
+5. Mark as completed
 
 ### Step 3: Commit Gate
 
@@ -41,9 +42,13 @@ Before each commit (end of plan or mid-plan commit points):
 
 Only dispatch when there are staged changes to review.
 
-### Step 4: Complete Development
+### Step 4: Final Review
 
-After all tasks complete and verified:
+After all tasks complete: dispatch `*-review-lite` agents against the full diff (base..HEAD) to catch cross-task idiom drift and inconsistencies missed by per-commit gates.
+
+### Step 5: Complete Development
+
+After final review passes:
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
 - **REQUIRED SUB-SKILL:** Use chris-code:finishing-a-development-branch
 - Follow that skill to verify tests, present options, execute choice
@@ -80,4 +85,5 @@ After all tasks complete and verified:
 - **chris-code:using-git-worktrees** - Ensures isolated workspace
 - **chris-code:lean-plan** - Creates the plan this skill executes
 - **chris-code:finishing-a-development-branch** - Complete development after all tasks
-- **`*-review-lite` agents** - Commit gates, auto-dispatched by file type
+- **`*-quality-reviewer` agents** - Per-task quality + bug review, auto-dispatched by file type
+- **`*-review-lite` agents** - Commit gates + final full-diff review, auto-dispatched by file type
