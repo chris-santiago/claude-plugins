@@ -7,37 +7,9 @@ description: Use when executing implementation plans with independent tasks in t
 
 Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance review first, then code quality review.
 
-**Why subagents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
+**Core principle:** Specialized coder agent per task → spec review → quality review → commit gate. Fresh context per task, staged parallelism for independent tasks.
 
-**Core principle:** Fresh subagent per task + two-stage review (spec then quality) = high quality, fast iteration
-
-**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are: BLOCKED status you cannot resolve, ambiguity that genuinely prevents progress, or all tasks complete. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
-
-## When to Use
-
-```dot
-digraph when_to_use {
-    "Have implementation plan?" [shape=diamond];
-    "Tasks mostly independent?" [shape=diamond];
-    "Stay in this session?" [shape=diamond];
-    "subagent-driven-development" [shape=box];
-    "executing-plans" [shape=box];
-    "Manual execution or brainstorm first" [shape=box];
-
-    "Have implementation plan?" -> "Tasks mostly independent?" [label="yes"];
-    "Have implementation plan?" -> "Manual execution or brainstorm first" [label="no"];
-    "Tasks mostly independent?" -> "Stay in this session?" [label="yes"];
-    "Tasks mostly independent?" -> "Manual execution or brainstorm first" [label="no - tightly coupled"];
-    "Stay in this session?" -> "subagent-driven-development" [label="yes"];
-    "Stay in this session?" -> "executing-plans" [label="no - parallel session"];
-}
-```
-
-**vs. Executing Plans (parallel session):**
-- Same session (no context switch)
-- Fresh subagent per task (no context pollution)
-- Two-stage review after each task: spec compliance first, then code quality
-- Faster iteration (no human-in-loop between tasks)
+**Continuous execution:** Do not pause between tasks. The only reasons to stop: unresolvable BLOCKED status, ambiguity that prevents progress, or all tasks complete.
 
 ## The Process
 
@@ -47,59 +19,91 @@ digraph process {
 
     subgraph cluster_per_task {
         label="Per Task";
-        "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
-        "Implementer subagent asks questions?" [shape=diamond];
+        "Dispatch *-coder agent" [shape=box];
+        "Coder asks questions?" [shape=diamond];
         "Answer questions, provide context" [shape=box];
-        "Implementer subagent implements, tests, commits, self-reviews" [shape=box];
-        "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [shape=box];
-        "Spec reviewer subagent confirms code matches spec?" [shape=diamond];
-        "Implementer subagent fixes spec gaps" [shape=box];
-        "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [shape=box];
-        "Code quality reviewer subagent approves?" [shape=diamond];
-        "Implementer subagent fixes quality issues" [shape=box];
-        "Mark task complete in TodoWrite" [shape=box];
+        "Coder implements, tests, self-reviews" [shape=box];
+        "Dispatch spec reviewer (./spec-reviewer-prompt.md)" [shape=box];
+        "Spec compliant?" [shape=diamond];
+        "Coder fixes spec gaps" [shape=box];
+        "Dispatch *-quality-reviewer agent" [shape=box];
+        "Quality approved?" [shape=diamond];
+        "Coder fixes quality issues" [shape=box];
+        "Per-task commit gate: *-review-lite" [shape=box];
+        "Mark task complete" [shape=box];
     }
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" [shape=box];
-    "More tasks remain?" [shape=diamond];
-    "Dispatch final code reviewer subagent for entire implementation" [shape=box];
-    "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    "Read plan, extract tasks, map file footprints, group into stages" [shape=box];
+    "More tasks in stage?" [shape=diamond];
+    "More stages?" [shape=diamond];
+    "Final commit gate: *-review-lite on full diff (base..HEAD)" [shape=box];
+    "chris-code:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch implementer subagent (./implementer-prompt.md)";
-    "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
-    "Implementer subagent asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Dispatch implementer subagent (./implementer-prompt.md)";
-    "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, commits, self-reviews" [label="no"];
-    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)";
-    "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" -> "Spec reviewer subagent confirms code matches spec?";
-    "Spec reviewer subagent confirms code matches spec?" -> "Implementer subagent fixes spec gaps" [label="no"];
-    "Implementer subagent fixes spec gaps" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [label="re-review"];
-    "Spec reviewer subagent confirms code matches spec?" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="yes"];
-    "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" -> "Code quality reviewer subagent approves?";
-    "Code quality reviewer subagent approves?" -> "Implementer subagent fixes quality issues" [label="no"];
-    "Implementer subagent fixes quality issues" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="re-review"];
-    "Code quality reviewer subagent approves?" -> "Mark task complete in TodoWrite" [label="yes"];
-    "Mark task complete in TodoWrite" -> "More tasks remain?";
-    "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
-    "More tasks remain?" -> "Dispatch final code reviewer subagent for entire implementation" [label="no"];
-    "Dispatch final code reviewer subagent for entire implementation" -> "Use superpowers:finishing-a-development-branch";
+    "Read plan, extract tasks, map file footprints, group into stages" -> "Dispatch *-coder agent";
+    "Dispatch *-coder agent" -> "Coder asks questions?";
+    "Coder asks questions?" -> "Answer questions, provide context" [label="yes"];
+    "Answer questions, provide context" -> "Dispatch *-coder agent";
+    "Coder asks questions?" -> "Coder implements, tests, self-reviews" [label="no"];
+    "Coder implements, tests, self-reviews" -> "Dispatch spec reviewer (./spec-reviewer-prompt.md)";
+    "Dispatch spec reviewer (./spec-reviewer-prompt.md)" -> "Spec compliant?";
+    "Spec compliant?" -> "Coder fixes spec gaps" [label="no"];
+    "Coder fixes spec gaps" -> "Dispatch spec reviewer (./spec-reviewer-prompt.md)" [label="re-review"];
+    "Spec compliant?" -> "Dispatch *-quality-reviewer agent" [label="yes"];
+    "Dispatch *-quality-reviewer agent" -> "Quality approved?";
+    "Quality approved?" -> "Coder fixes quality issues" [label="no"];
+    "Coder fixes quality issues" -> "Dispatch *-quality-reviewer agent" [label="re-review"];
+    "Quality approved?" -> "Per-task commit gate: *-review-lite" [label="yes"];
+    "Per-task commit gate: *-review-lite" -> "Mark task complete";
+    "Mark task complete" -> "More tasks in stage?";
+    "More tasks in stage?" -> "Dispatch *-coder agent" [label="yes (parallel within stage)"];
+    "More tasks in stage?" -> "More stages?" [label="no"];
+    "More stages?" -> "Dispatch *-coder agent" [label="yes (next stage)"];
+    "More stages?" -> "Final commit gate: *-review-lite on full diff (base..HEAD)" [label="no"];
+    "Final commit gate: *-review-lite on full diff (base..HEAD)" -> "chris-code:finishing-a-development-branch";
 }
 ```
 
-## Model Selection
+## Agent Selection
 
-Use the least powerful model that can handle each role to conserve cost and increase speed.
+### Coder Agents
 
-**Mechanical implementation tasks** (isolated functions, clear specs, 1-2 files): use a fast, cheap model. Most implementation tasks are mechanical when the plan is well-specified.
+Dispatch specialized `*-coder` agents instead of generic agents. Match by the same `scope.extensions` mechanism used for review-lite:
 
-**Integration and judgment tasks** (multi-file coordination, pattern matching, debugging): use a standard model.
+1. Check which file types the task will touch
+2. Match against available `*-coder` agents (e.g., `python-coder` for `.py`, `rust-coder` for `.rs`)
+3. If multiple coder agents match the same extension, resolve via `scope.require_dependencies` (same as review-lite)
+4. If no specific coder matches, fall back to a general-purpose agent
 
-**Architecture, design, and review tasks**: use the most capable available model.
+Coder agents embed review principles, refactoring heuristics, and self-review checklists — generic agents don't. This is the primary quality lever.
 
-**Task complexity signals:**
-- Touches 1-2 files with a complete spec → cheap model
-- Touches multiple files with integration concerns → standard model
-- Requires design judgment or broad codebase understanding → most capable model
+### Model Selection
+
+Use the least powerful model that can handle each role. **Announce the model and agent on every dispatch:**
+- "Dispatching haiku python-coder agent for Task 3 (add utility function)"
+- "Dispatching sonnet rust-coder agent for Task 5 (refactor pipeline)"
+- "Dispatching opus general agent for final cross-cutting review"
+
+| Model | When |
+|-------|------|
+| **Haiku** | Isolated functions, clear spec, 1–2 files, mechanical changes |
+| **Sonnet** | Multi-file coordination, integration concerns, pattern matching |
+| **Opus** | Architecture decisions, design judgment, broad codebase understanding, reviews |
+
+## Task Scheduling
+
+Use **staged parallelism**, not flat sequential or flat parallel dispatch.
+
+1. **Map file footprints:** Before dispatching, identify every source file and test file each task will touch
+2. **Group into stages:** Tasks within a stage must have zero file overlap (source AND test files). Tasks that share any file go in separate stages.
+3. **Within a stage:** Dispatch subagents in parallel — they touch disjoint files and cannot conflict
+4. **Between stages:** Wait for all tasks in the current stage to complete and pass review before starting the next stage
+
+Common serialization triggers:
+- Two tasks both modify the same test file (e.g., `conftest.py`, `test_utils.py`)
+- Two tasks both touch a shared module (e.g., `models.py`, `lib.rs`)
+- A later task depends on types/interfaces introduced by an earlier task
+
+When in doubt, serialize. The cost of a conflict is higher than the cost of waiting.
 
 ## Handling Implementer Status
 
@@ -121,159 +125,69 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 
 ## Prompt Templates
 
-- `./implementer-prompt.md` - Dispatch implementer subagent
+- `./implementer-prompt.md` - Dispatch implementer subagent (used when no `*-coder` agent matches)
 - `./spec-reviewer-prompt.md` - Dispatch spec compliance reviewer subagent
-- `./code-quality-reviewer-prompt.md` - Dispatch code quality reviewer subagent
+
+Quality review is handled by `*-quality-reviewer` agents (e.g., `python-quality-reviewer`, `rust-quality-reviewer`), dispatched by scope matching — no prompt template needed.
 
 ## Example Workflow
 
 ```
-You: I'm using Subagent-Driven Development to execute this plan.
+[Read plan: docs/plans/feature-plan.md]
+[Extract 5 tasks, map file footprints, group into 3 stages]
+[Stage 1: Tasks 1,2 (disjoint files) | Stage 2: Task 3 | Stage 3: Tasks 4,5 (disjoint)]
 
-[Read plan file once: docs/superpowers/plans/feature-plan.md]
-[Extract all 5 tasks with full text and context]
-[Create TodoWrite with all tasks]
+Stage 1 — dispatching 2 tasks in parallel:
+  "Dispatching sonnet python-coder agent for Task 1 (add CLI hook)"
+  "Dispatching haiku python-coder agent for Task 2 (add utility function)"
 
-Task 1: Hook installation script
+  Task 1: coder completes → spec reviewer ✅ → quality reviewer ❌ (S3: hidden side effect
+    in helper) → coder fixes → quality reviewer ✅ → python-review-lite ✅ → mark complete
+  Task 2: coder completes → spec reviewer ✅ → quality reviewer ✅ → python-review-lite ✅
+    → mark complete
 
-[Get Task 1 text and context (already extracted)]
-[Dispatch implementation subagent with full task text + context]
+Stage 2:
+  "Dispatching sonnet python-coder agent for Task 3 (refactor shared module)"
+  [Task 3 shares conftest.py with Tasks 1,2 — must wait for Stage 1]
 
-Implementer: "Before I begin - should the hook be installed at user or system level?"
+  Task 3: coder completes → reviews pass → commit gate → mark complete
 
-You: "User level (~/.config/superpowers/hooks/)"
+Stage 3 — dispatching 2 tasks in parallel:
+  "Dispatching sonnet rust-coder agent for Task 4 (add FFI binding)"
+  "Dispatching haiku python-coder agent for Task 5 (add Python wrapper)"
 
-Implementer: "Got it. Implementing now..."
-[Later] Implementer:
-  - Implemented install-hook command
-  - Added tests, 5/5 passing
-  - Self-review: Found I missed --force flag, added it
-  - Committed
+  [Both complete → reviews → commit gates (rust-review-lite + python-review-lite) → mark complete]
 
-[Dispatch spec compliance reviewer]
-Spec reviewer: ✅ Spec compliant - all requirements met, nothing extra
-
-[Get git SHAs, dispatch code quality reviewer]
-Code reviewer: Strengths: Good test coverage, clean. Issues: None. Approved.
-
-[Mark Task 1 complete]
-
-Task 2: Recovery modes
-
-[Get Task 2 text and context (already extracted)]
-[Dispatch implementation subagent with full task text + context]
-
-Implementer: [No questions, proceeds]
-Implementer:
-  - Added verify/repair modes
-  - 8/8 tests passing
-  - Self-review: All good
-  - Committed
-
-[Dispatch spec compliance reviewer]
-Spec reviewer: ❌ Issues:
-  - Missing: Progress reporting (spec says "report every 100 items")
-  - Extra: Added --json flag (not requested)
-
-[Implementer fixes issues]
-Implementer: Removed --json flag, added progress reporting
-
-[Spec reviewer reviews again]
-Spec reviewer: ✅ Spec compliant now
-
-[Dispatch code quality reviewer]
-Code reviewer: Strengths: Solid. Issues (Important): Magic number (100)
-
-[Implementer fixes]
-Implementer: Extracted PROGRESS_INTERVAL constant
-
-[Code reviewer reviews again]
-Code reviewer: ✅ Approved
-
-[Mark Task 2 complete]
-
-...
-
-[After all tasks]
-[Dispatch final code-reviewer]
-Final reviewer: All requirements met, ready to merge
-
-Done!
+[Final commit gate: python-review-lite + rust-review-lite on full diff (base..HEAD)]
+[chris-code:finishing-a-development-branch]
 ```
-
-## Advantages
-
-**vs. Manual execution:**
-- Subagents follow TDD naturally
-- Fresh context per task (no confusion)
-- Parallel-safe (subagents don't interfere)
-- Subagent can ask questions (before AND during work)
-
-**vs. Executing Plans:**
-- Same session (no handoff)
-- Continuous progress (no waiting)
-- Review checkpoints automatic
-
-**Efficiency gains:**
-- No file reading overhead (controller provides full text)
-- Controller curates exactly what context is needed
-- Subagent gets complete information upfront
-- Questions surfaced before work begins (not after)
-
-**Quality gates:**
-- Self-review catches issues before handoff
-- Two-stage review: spec compliance, then code quality
-- Review loops ensure fixes actually work
-- Spec compliance prevents over/under-building
-- Code quality ensures implementation is well-built
-
-**Cost:**
-- More subagent invocations (implementer + 2 reviewers per task)
-- Controller does more prep work (extracting all tasks upfront)
-- Review loops add iterations
-- But catches issues early (cheaper than debugging later)
 
 ## Red Flags
 
-**Never:**
-- Start implementation on main/master branch without explicit user consent
-- Skip reviews (spec compliance OR code quality)
-- Proceed with unfixed issues
-- Dispatch multiple implementation subagents in parallel (conflicts)
-- Make subagent read plan file (provide full text instead)
-- Skip scene-setting context (subagent needs to understand where task fits)
-- Ignore subagent questions (answer before letting them proceed)
-- Accept "close enough" on spec compliance (spec reviewer found issues = not done)
-- Skip review loops (reviewer found issues = implementer fixes = review again)
-- Let implementer self-review replace actual review (both are needed)
-- **Start code quality review before spec compliance is ✅** (wrong order)
-- Move to next task while either review has open issues
-
-**If subagent asks questions:**
-- Answer clearly and completely
-- Provide additional context if needed
-- Don't rush them into implementation
-
-**If reviewer finds issues:**
-- Implementer (same subagent) fixes them
-- Reviewer reviews again
-- Repeat until approved
-- Don't skip the re-review
-
-**If subagent fails task:**
-- Dispatch fix subagent with specific instructions
-- Don't try to fix manually (context pollution)
+- Never start implementation on main/master without explicit user consent
+- Never skip reviews (spec compliance OR quality) or proceed with unfixed issues
+- Never dispatch subagents in parallel when their file footprints overlap
+- Never make a subagent read the plan file — provide full task text in the prompt
+- Never start quality review before spec compliance passes
+- Never move to next task while any review has open issues
+- If a reviewer finds issues: coder fixes → reviewer re-reviews → repeat until approved
+- If a subagent is blocked: provide more context, upgrade model, or break the task apart — never force retry without changes
 
 ## Integration
 
 **Required workflow skills:**
-- **superpowers:using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **superpowers:writing-plans** - Creates the plan this skill executes
-- **superpowers:requesting-code-review** - Code review template for reviewer subagents
-- **superpowers:finishing-a-development-branch** - Complete development after all tasks
+- **chris-code:using-git-worktrees** - Ensures isolated workspace
+- **chris-code:lean-plan** - Creates the plan this skill executes
+- **chris-code:requesting-code-review** - Code review template for reviewer subagents
+- **chris-code:finishing-a-development-branch** - Complete development after all tasks
+
+**Agents:**
+- **`*-coder` agents** - Specialized implementers, auto-dispatched by file type
+- **`*-quality-reviewer` agents** - Design quality + bug detection review, auto-dispatched by file type
+- **`*-review-lite` agents** - Commit gates (idiom + lint), auto-dispatched by file type
 
 **Subagents should use:**
-- **superpowers:test-driven-development** - Subagents follow TDD for each task
+- **chris-code:test-driven-development** - Subagents follow TDD for each task
 
 **Alternative workflow:**
-- **superpowers:executing-plans** - Use for parallel session instead of same-session execution
+- **chris-code:executing-plans** - Use for inline execution without subagents

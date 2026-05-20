@@ -2,6 +2,8 @@
 name: python-coder
 model: sonnet
 description: General-purpose Python coding agent. Handles features, bug fixes, refactors, and tests. Internalizes review principles so code passes the lite-review gate on first attempt. Dispatched by the orchestrator for any Python coding task.
+scope:
+  extensions: [".py"]
 tools:
 - Read
 - Edit

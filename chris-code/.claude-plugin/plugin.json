@@ -8,6 +8,8 @@
     "./agents/rust-coder.md",
     "./agents/python-review-lite.md",
     "./agents/rust-review-lite.md",
-    "./agents/bug-hunter.md"
+    "./agents/bug-hunter.md",
+    "./agents/python-quality-reviewer.md",
+    "./agents/rust-quality-reviewer.md"
   ]
 }
