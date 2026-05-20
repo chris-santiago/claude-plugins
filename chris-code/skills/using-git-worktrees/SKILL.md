@@ -46,70 +46,33 @@ Honor any existing declared preference without asking. If the user declines cons
 
 ## Step 1: Create Isolated Workspace
 
-**You have two mechanisms. Try them in this order.**
+### Use `EnterWorktree` (required)
 
-### 1a. Native Worktree Tools (preferred)
+Call the `EnterWorktree` tool. It creates a worktree inside `.claude/worktrees/` and **switches the session's working directory** into it. This is the only mechanism that works mid-session — `git worktree add` + `cd` in bash does NOT change the session's CWD, so Read/Edit/Write/subagents will still target the original directory.
 
-The user has asked for an isolated workspace (Step 0 consent). Do you already have a way to create a worktree? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 3.
-
-Native tools handle directory placement, branch creation, and cleanup automatically. Using `git worktree add` when you have a native tool creates phantom state your harness can't see or manage.
-
-Only proceed to Step 1b if you have no native worktree tool available.
-
-### 1b. Git Worktree Fallback
-
-**Only use this if Step 1a does not apply** — you have no native worktree tool available. Create a worktree manually using git.
-
-#### Directory Selection
-
-Follow this priority order. Explicit user preference always beats observed filesystem state.
-
-1. **Check your instructions for a declared worktree directory preference.** If the user has already specified one, use it without asking.
-
-2. **Check for an existing project-local worktree directory:**
-   ```bash
-   ls -d .worktrees 2>/dev/null     # Preferred (hidden)
-   ls -d worktrees 2>/dev/null      # Alternative
-   ```
-   If found, use it. If both exist, `.worktrees` wins.
-
-3. **Check for an existing global directory:**
-   ```bash
-   project=$(basename "$(git rev-parse --show-toplevel)")
-   ls -d ~/.config/superpowers/worktrees/$project 2>/dev/null
-   ```
-   If found, use it (backward compatibility with legacy global path).
-
-4. **If there is no other guidance available**, default to `.worktrees/` at the project root.
-
-#### Safety Verification (project-local directories only)
-
-**MUST verify directory is ignored before creating worktree:**
-
-```bash
-git check-ignore -q .worktrees 2>/dev/null || git check-ignore -q worktrees 2>/dev/null
+```
+EnterWorktree({ name: "feat/my-feature" })
 ```
 
-**If NOT ignored:** Add to .gitignore, commit the change, then proceed.
-
-**Why critical:** Prevents accidentally committing worktree contents to repository.
-
-Global directories (`~/.config/superpowers/worktrees/`) need no verification.
-
-#### Create the Worktree
-
-```bash
-project=$(basename "$(git rev-parse --show-toplevel)")
-
-# Determine path based on chosen location
-# For project-local: path="$LOCATION/$BRANCH_NAME"
-# For global: path="~/.config/superpowers/worktrees/$project/$BRANCH_NAME"
-
-git worktree add "$path" -b "$BRANCH_NAME"
-cd "$path"
+To enter an existing worktree instead of creating one:
+```
+EnterWorktree({ path: "/path/to/existing/worktree" })
 ```
 
-**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Then run setup and baseline tests in place.
+**When done:** Use `ExitWorktree` with `action: "keep"` (preserve work) or `action: "remove"` (clean exit).
+
+**If `EnterWorktree` is unavailable or fails:**
+
+<HARD-GATE>
+Do NOT silently fall back to working in the current directory. This was a major source of bugs — agents thought they were isolated but were modifying the main workspace.
+
+You MUST:
+1. **Stop and warn the user explicitly:** "I cannot create an isolated worktree mid-session. Working in-place risks modifying your current branch."
+2. **Wait for the user to choose:**
+   - Work on a new branch in the current directory (less isolation, user accepts risk)
+   - The user creates a worktree manually and starts a new session from it: `git worktree add .worktrees/feat-x -b feat/x && cd .worktrees/feat-x`
+3. **Do not proceed with implementation until the user responds.**
+</HARD-GATE>
 
 ## Step 3: Project Setup
 
@@ -157,59 +120,13 @@ Ready to implement <feature-name>
 |-----------|--------|
 | Already in linked worktree | Skip creation (Step 0) |
 | In a submodule | Treat as normal repo (Step 0 guard) |
-| Native worktree tool available | Use it (Step 1a) |
-| No native tool | Git worktree fallback (Step 1b) |
-| `.worktrees/` exists | Use it (verify ignored) |
-| `worktrees/` exists | Use it (verify ignored) |
-| Both exist | Use `.worktrees/` |
-| Neither exists | Check instruction file, then default `.worktrees/` |
-| Global path exists | Use it (backward compat) |
-| Directory not ignored | Add to .gitignore + commit |
-| Permission error on create | Sandbox fallback, work in place |
+| `EnterWorktree` available | Use it (Step 1) |
+| `EnterWorktree` unavailable | Offer branch-in-place or manual worktree + new session |
 | Tests fail during baseline | Report failures + ask |
 | No package.json/Cargo.toml | Skip dependency install |
 
-## Common Mistakes
-
-### Fighting the harness
-
-- **Problem:** Using `git worktree add` when the platform already provides isolation
-- **Fix:** Step 0 detects existing isolation. Step 1a defers to native tools.
-
-### Skipping detection
-
-- **Problem:** Creating a nested worktree inside an existing one
-- **Fix:** Always run Step 0 before creating anything
-
-### Skipping ignore verification
-
-- **Problem:** Worktree contents get tracked, pollute git status
-- **Fix:** Always use `git check-ignore` before creating project-local worktree
-
-### Assuming directory location
-
-- **Problem:** Creates inconsistency, violates project conventions
-- **Fix:** Follow priority: existing > global legacy > instruction file > default
-
-### Proceeding with failing tests
-
-- **Problem:** Can't distinguish new bugs from pre-existing issues
-- **Fix:** Report failures, get explicit permission to proceed
-
 ## Red Flags
 
-**Never:**
-- Create a worktree when Step 0 detects existing isolation
-- Use `git worktree add` when you have a native worktree tool (e.g., `EnterWorktree`). This is the #1 mistake — if you have it, use it.
-- Skip Step 1a by jumping straight to Step 1b's git commands
-- Create worktree without verifying it's ignored (project-local)
-- Skip baseline test verification
-- Proceed with failing tests without asking
-
-**Always:**
-- Run Step 0 detection first
-- Prefer native tools over git fallback
-- Follow directory priority: existing > global legacy > instruction file > default
-- Verify directory is ignored for project-local
-- Auto-detect and run project setup
-- Verify clean test baseline
+- Never create a worktree when Step 0 detects existing isolation
+- Never use `git worktree add` mid-session — it doesn't switch the session CWD. Use `EnterWorktree`.
+- Never proceed with failing baseline tests without asking
