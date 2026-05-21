@@ -281,9 +281,8 @@ plugins/ml-journal/
     log-commit/SKILL.md
     research-note/SKILL.md
     research-report/SKILL.md
-  report-drafter.md               # agent — drafts RESEARCH_REPORT.md (dispatched by /research-report)
-  journal_log.py                  # top-level copy (used at runtime from .project-log/)
-  journal_query.py
+  agents/
+    report-drafter.md             # agent — drafts RESEARCH_REPORT.md (dispatched by /research-report)
   journal-precompact.sh           # optional PreCompact hook
   journal-session-start.sh        # optional SessionStart hook
   journal_system_spec.md          # internal system specification

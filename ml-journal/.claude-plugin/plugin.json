@@ -4,6 +4,6 @@
   "version": "0.3.0",
   "license": "MIT",
   "agents": [
-    "./report-drafter.md"
+    "./agents/report-drafter.md"
   ]
 }
