@@ -152,16 +152,4 @@ Announce the model and agent on every dispatch: "Dispatching sonnet python-coder
 
 ## Installation
 
-```bash
-# In settings.json, add to extraKnownMarketplaces:
-"chris-code": {
-  "source": {
-    "source": "directory",
-    "path": "/Users/chrissantiago/Dropbox/claude-config/plugins"
-  },
-  "autoUpdate": true
-}
-
-# And enable in enabledPlugins:
-"chris-code@chris-code": true
-```
+See the [top-level README](../README.md) for installation methods (GitHub marketplace, local directory, or manual cache install).
