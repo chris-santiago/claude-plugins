@@ -2,15 +2,5 @@
   "name": "ml-lab",
   "description": "Structured ML hypothesis investigation for Claude Code — ensemble critique (default) or adversarial debate, empirical testing, peer review, coherence audit, and README rewrite.",
   "version": "2.0.0",
-  "license": "MIT",
-  "agents": [
-    "./ml-lab.md",
-    "./ml-critic.md",
-    "./ml-critic-r2.md",
-    "./ml-defender.md",
-    "./research-reviewer.md",
-    "./research-reviewer-lite.md",
-    "./readme-rewriter.md",
-    "./report-writer.md"
-  ]
+  "license": "MIT"
 }
