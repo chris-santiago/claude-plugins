@@ -1,18 +1,20 @@
 ---
 name: technical-review
-description: Use when reviewing mathematical correctness, algorithmic logic, research alignment, or numerical stability in a codebase. Triggers include loss functions, estimators, optimization steps, statistical methods, probabilistic models, numerical methods, or any code that implements a published algorithm. Also use when the user says "technical review", "math review", "verify the algorithm", "check the formulas", or "does this match the paper".
+description: Use when reviewing mathematical correctness, algorithmic logic, research alignment, numerical stability, or ML performance/scaling in Python ML code. Triggers include loss functions, estimators, optimization steps, statistical methods, probabilistic models, numerical methods, or any code that implements a published algorithm. Covers PyTorch, Lightning, scikit-learn, scipy, numpy, lightgbm, and other ML/scientific Python libraries. Also use when the user says "technical review", "math review", "verify the algorithm", "check the formulas", or "does this match the paper".
+scope:
+  extensions: [".py"]
 ---
 
 # Technical Review
 
-Review mathematical correctness, algorithmic logic, research alignment, and numerical stability. This skill does NOT cover code quality, API design, or idiom compliance — those are handled by `*-review` skills and `*-quality-reviewer` agents.
+Review mathematical correctness, algorithmic logic, research alignment, numerical stability, and ML performance/scaling in Python ML code. This skill does NOT cover general code quality, API design, or idiom compliance — those are handled by `*-review` skills and `*-quality-reviewer` agents.
 
 **Announce at start:** "I'm using the technical-review skill to review mathematical and algorithmic correctness."
 
 ## Before Starting
 
 Auto-discover project context by reading:
-1. `pyproject.toml` / `setup.cfg` / `package.json` — package name, description, dependencies
+1. `pyproject.toml` / `setup.cfg` — package name, description, ML dependencies (torch, lightning, sklearn, scipy, numpy, lightgbm, xgboost, etc.)
 2. `README.md` — stated purpose, claimed methods, referenced papers
 3. Source directory structure — identify modules with mathematical content
 
@@ -102,10 +104,42 @@ Identify expressions at risk of:
 
 For each risk, state whether it's a confirmed bug or a latent risk, and suggest a numerically stable alternative.
 
+### 6. Performance and Scaling
+
+Review computational efficiency with attention to ML-specific patterns:
+
+**Algorithmic complexity:**
+- Asymptotic complexity of core operations — does it scale with dataset/feature/batch size as expected?
+- Unnecessary recomputation inside training loops (recomputing constants, rebuilding indexes, redundant forward passes)
+- Quadratic or worse operations hidden in data preprocessing or attention mechanisms
+
+**Memory:**
+- Tensors retained on GPU unnecessarily (missing `.detach()`, `.cpu()`, or `del`)
+- Intermediate allocations that grow with batch/sequence length
+- Gradient accumulation memory vs. large-batch alternatives
+- DataLoader memory: full dataset loaded when streaming is feasible
+
+**Vectorization and data movement:**
+- Python loops over tensor elements where vectorized ops exist (numpy, torch, scipy)
+- Unnecessary CPU-GPU transfers in hot paths (`.item()`, `.numpy()`, `.cpu()` inside loops)
+- Missing `pin_memory`, inefficient `collate_fn`, untuned `num_workers`
+- Operations that force synchronization (`.item()` in training loop)
+
+**Framework-specific:**
+- PyTorch: `torch.compile` applicability, inefficient custom autograd, missing `torch.no_grad()` in inference
+- scikit-learn: fitting inside a loop when `partial_fit` or warm starts apply, n_jobs underuse
+- scipy: dense operations where sparse would suffice, redundant matrix copies
+- numpy: repeated allocations where pre-allocated buffers work
+
+**Classify each finding as:**
+- **Confirmed bottleneck** — measured or structurally obvious (O(n^2) where O(n) exists)
+- **Likely bottleneck** — pattern matches common perf issues but needs profiling
+- **Optimization opportunity** — correct but slower than necessary
+
 ## Findings Format
 
 For each finding, include:
-- **Tag**: `[math-bug]`, `[math-risk]`, `[research-mismatch]`, `[logic-bug]`, `[logic-risk]`, `[stability-risk]`, `[unverifiable-claim]`
+- **Tag**: `[math-bug]`, `[math-risk]`, `[research-mismatch]`, `[logic-bug]`, `[logic-risk]`, `[stability-risk]`, `[perf-bottleneck]`, `[perf-risk]`, `[unverifiable-claim]`
 - **Severity**: critical / high / medium / low
 - **Location**: file:line or file:function
 - **Finding**: concrete description
