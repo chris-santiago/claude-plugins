@@ -137,7 +137,7 @@ Quality review is handled by `*-quality-reviewer` agents (e.g., `python-quality-
 ## Example Workflow
 
 ```
-[Read plan: docs/plans/feature-plan.md]
+[Read plan: .claude/output/plans/feature-plan.md]
 [Extract 5 tasks, map file footprints, group into 3 stages]
 [Stage 1: Tasks 1,2 (disjoint files) | Stage 2: Task 3 | Stage 3: Tasks 4,5 (disjoint)]
 

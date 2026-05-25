@@ -11,8 +11,7 @@ Write an implementation plan as a thin execution handoff. The plan tells the exe
 
 **Announce at start:** "I'm using the lean-plan skill to create the implementation plan."
 
-**Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>-plan.md`
-(User preferences for plan location override this default.)
+**Save plans to:** `.claude/output/plans/YYYY-MM-DD-<feature-name>-plan.md`
 
 ## Primary Principle
 
@@ -117,7 +116,7 @@ Fix issues inline, then move on.
 
 After saving the plan, offer:
 
-**"Plan saved to `docs/plans/<filename>.md`. Two execution options:**
+**"Plan saved to `.claude/output/plans/<filename>.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — fresh subagent per task, review between tasks
 

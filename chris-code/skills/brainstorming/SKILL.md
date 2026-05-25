@@ -27,7 +27,7 @@ You MUST create a task for each of these items and complete them in order:
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Spec readiness check** — read `lean-spec`'s output structure (sections 1–10) and verify you have enough context to fill each one. If gaps exist, ask the remaining questions before proceeding.
-7. **Write spec** — invoke `lean-spec` skill, save to `docs/specs/YYYY-MM-DD-<topic>-design.md` and commit
+7. **Write spec** — invoke `lean-spec` skill, save to `.claude/output/specs/YYYY-MM-DD-<topic>-design.md` and commit
 8. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 9. **User reviews written spec** — ask user to review the spec file before proceeding
 10. **Transition to implementation** — invoke `lean-plan` skill to create implementation plan
@@ -107,7 +107,7 @@ flowchart TB
 
 **Documentation:**
 
-- Invoke `lean-spec` to write the validated design to `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- Invoke `lean-spec` to write the validated design to `.claude/output/specs/YYYY-MM-DD-<topic>-design.md`
 - Commit the design document to git
 
 **Spec Self-Review:**
