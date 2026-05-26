@@ -72,7 +72,8 @@ Dispatch the most specific `*-coder` agent for the task's file types:
 1. Check which file types the task will touch
 2. Match against available `*-coder` agents by `scope.extensions`
 3. If multiple match the same extension, resolve via `scope.require_dependencies` — most specific wins (e.g., `pytorch-coder` over `python-coder` when project depends on torch)
-4. If no specific coder matches, fall back to a general-purpose agent
+4. Concrete tiebreaker: if the code subclasses `nn.Module`, manipulates `torch.Tensor` shapes/devices, or implements a training-pipeline component (loss, callback, optimizer, scheduler, metric), dispatch `pytorch-coder`. Reserve `python-coder` for non-torch code (CLI, data I/O, config utils).
+5. If no specific coder matches, fall back to a general-purpose agent
 
 Only one coder agent writes the code. The winning coder must be self-contained (includes both domain-specific and general language patterns).
 

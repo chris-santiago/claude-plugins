@@ -41,7 +41,7 @@ flowchart TB
     coder --> spec_review
     spec_review -->|dispatch by scope| quality
     quality -->|dispatch by scope| commit_gate
-    commit_gate -.->|next task<br/>(staged parallelism)| execute
+    commit_gate -.->|next task<br/>staged parallelism| execute
     execute -->|all tasks done| verify
     verify --> finish
 
