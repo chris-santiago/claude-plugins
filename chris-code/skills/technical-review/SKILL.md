@@ -160,4 +160,4 @@ For each finding, include:
 - Unresolved questions requiring domain expertise
 - Whether external domain expert review is needed
 
-Save the review to `docs/reviews/YYYY-MM-DD-technical-review.md` and commit.
+Save the review to `.claude/output/reviews/YYYY-MM-DD-technical-review.md`.
