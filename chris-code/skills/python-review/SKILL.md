@@ -2,7 +2,7 @@
 name: python-review
 description: Conducts a senior-level Python refactoring and API-design review of a package, module, or subsystem — recovering architectural intent, identifying drift, and proposing small reviewable patches. Use whenever the user says "review this Python code", "refactor this package", "audit our Python API", "this module feels off", "clean up this Python subsystem", or asks for cohesion/idiom/API-design feedback on Python code. Also trigger when the user mentions utility-module sprawl, dict-shaped domain data, hidden side effects, mode-flag creep, inconsistent return shapes, exception drift, overgrown classes, package boundary confusion, or leaky internal imports in a Python context — even if they don't explicitly ask for a "review".
 scope:
-  extensions: [".py"]
+  extensions: [".py", ".ipynb"]
 ---
 
 # Python Review — Senior Refactoring & API Design

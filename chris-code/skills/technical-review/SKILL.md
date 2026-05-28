@@ -2,7 +2,7 @@
 name: technical-review
 description: Use when reviewing mathematical correctness, algorithmic logic, research alignment, numerical stability, or ML performance/scaling in Python ML code. Triggers include loss functions, estimators, optimization steps, statistical methods, probabilistic models, numerical methods, or any code that implements a published algorithm. Covers PyTorch, Lightning, scikit-learn, scipy, numpy, lightgbm, and other ML/scientific Python libraries. Also use when the user says "technical review", "math review", "verify the algorithm", "check the formulas", or "does this match the paper".
 scope:
-  extensions: [".py"]
+  extensions: [".py", ".ipynb"]
 ---
 
 # Technical Review

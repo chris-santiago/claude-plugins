@@ -3,7 +3,7 @@ name: pytorch-quality-reviewer
 model: opus
 description: Reviews PyTorch/Lightning implementation quality after spec compliance passes. Verifies the coder followed Lightning conventions and PyTorch correctness patterns, checks for silent training bugs, and validates ML test quality. Read-only — never writes code. Dispatched by subagent-driven-development per task.
 scope:
-  extensions: [".py"]
+  extensions: [".py", ".ipynb"]
   require_dependencies: ["torch", "pytorch-lightning", "lightning"]
 tools: [Read, Grep, Glob, Bash]
 ---

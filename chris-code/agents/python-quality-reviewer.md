@@ -3,7 +3,7 @@ name: python-quality-reviewer
 model: opus
 description: Reviews Python implementation quality after spec compliance passes. Verifies the coder agent followed its embedded principles, checks for obvious bugs, and validates test quality. Read-only — never writes code. Dispatched by subagent-driven-development per task.
 scope:
-  extensions: [".py"]
+  extensions: [".py", ".ipynb"]
 tools: [Read, Grep, Glob, Bash]
 ---
 

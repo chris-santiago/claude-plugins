@@ -27,7 +27,7 @@ For each task:
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
-4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
+4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
 5. Mark as completed
 
 ### Step 3: Commit Gate

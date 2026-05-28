@@ -53,7 +53,7 @@ ruff check / cargo clippy -- -D warnings / eslint / golangci-lint run
 
 ### Step 3: Full Review
 
-Dispatch **all matching** `*-review` skills based on file types changed (additive — e.g., both `python-review` and a future `pytorch-review` fire on `.py` files in a PyTorch project). Match by `scope.extensions` in the skill frontmatter. If findings conflict, the more domain-specific review takes precedence.
+Dispatch **all matching** `*-review` skills based on file types changed (additive — e.g., both `python-review` and a future `pytorch-review` fire on `.py` and `.ipynb` files in a PyTorch project). Match by `scope.extensions` in the skill frontmatter. If findings conflict, the more domain-specific review takes precedence.
 
 These are the senior-level refactoring reviews — they catch design drift, API cohesion issues, and structural problems that review-lite and quality-reviewer miss. This is the heavyweight pass before integration.
 

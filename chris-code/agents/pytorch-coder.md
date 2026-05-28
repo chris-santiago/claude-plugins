@@ -3,7 +3,7 @@ name: pytorch-coder
 model: sonnet
 description: PyTorch/Lightning coding agent. Handles model implementation, training pipelines, data modules, and ML tests. Follows Lightning conventions over raw PyTorch patterns. Dispatched by the orchestrator for tasks touching PyTorch/Lightning code.
 scope:
-  extensions: [".py"]
+  extensions: [".py", ".ipynb"]
   require_dependencies: ["torch", "pytorch-lightning", "lightning"]
 tools:
 - Read
@@ -13,6 +13,7 @@ tools:
 - Glob
 - Grep
 - Agent
+- NotebookEdit
 ---
 
 # PyTorch / Lightning Coder
