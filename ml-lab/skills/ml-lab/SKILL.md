@@ -380,13 +380,24 @@ Log `subagent`/`receive_defender_r2` with `meta` containing `{"round": N, "is_fi
 
 ##### Stage B.3 — derive_verdict()
 
-**Run the deterministic script** — do not compute the verdict manually. Pipe the Stage B.2 defender JSON to `derive_verdict.py`:
+**Run the deterministic script** — do not compute the verdict manually. The script ships inside the installed `ml-lab` plugin, so resolve its path from the plugin registry rather than assuming a repo-relative location. This works from any investigation directory, including a standalone one outside the ml-lab dev repo:
 
 ```bash
-# From repo root:
-echo '<stage_b2_defender_json>' | uv run plugins/ml-lab/skills/ml-lab/scripts/derive_verdict.py
-# Or with an absolute path if cwd is uncertain:
-echo '<stage_b2_defender_json>' | uv run "$(git rev-parse --show-toplevel)/plugins/ml-lab/skills/ml-lab/scripts/derive_verdict.py"
+# Resolve derive_verdict.py from the installed ml-lab plugin (portable across any cwd):
+DV=$(python3 -c "
+import json, os
+with open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')) as f:
+    d = json.load(f)
+for key, entries in d.get('plugins', {}).items():
+    if key.startswith('ml-lab@') and entries:
+        print(os.path.join(entries[0].get('installPath', ''), 'skills/ml-lab/scripts/derive_verdict.py'))
+        break
+")
+# Fallback for the dev repo if the plugin isn't installed (e.g. testing uncommitted script edits):
+if [ -z "$DV" ] || [ ! -f "$DV" ]; then
+  DV="$(git rev-parse --show-toplevel 2>/dev/null)/plugins/ml-lab/skills/ml-lab/scripts/derive_verdict.py"
+fi
+echo '<stage_b2_defender_json>' | uv run "$DV"
 ```
 
 Use the script's stdout as the verdict. The script is the authoritative implementation; the rules table below is documentation only.
