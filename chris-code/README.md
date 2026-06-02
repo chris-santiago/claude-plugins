@@ -2,6 +2,18 @@
 
 Personal Claude Code plugin — workflow skills, coding agents, review gates, and quality campaigns.
 
+chris-code turns Claude Code into an opinionated software-engineering workflow rather than a free-form chat assistant. Once installed, it routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run two-stage review (spec compliance, then code quality), and gate every commit with a lint-aware idiom check. Use it when you want Claude to design before it codes, keep the main context window clean by offloading work to focused subagents, and catch agent-generated drift before it reaches `main`. Drop into any repo, type `/brainstorming` (or just describe a feature), and the workflow takes over from there.
+
+## Based on Superpowers
+
+chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned around three problems observed in practice:
+
+**Spec and plan bloat.** Superpowers specs grew to 2500+ words with file maps, step-by-step instructions, and inline code scaffolds. Plans added another 5,000–10,000 words of code blocks that implementing agents routinely ignored and rewrote. chris-code enforces a "contracts stay, choreography goes" principle: specs are 500–1500 words covering only invariants that survive architectural change; plans are 200–450 word execution handoffs with no inline code unless exact schemas are required.
+
+**Shadow code.** Superpowers' writing-plans mandated "complete code in every step." In practice this produced prescriptive scaffolding that agents discarded — the work of writing it was wasted and the mismatch between plan code and actual codebase state caused confusion. chris-code plans tell executors *what* to do and *where*, trusting agents to read the spec and write code fit for the real codebase.
+
+**Inconsistent review discipline.** chris-code adds explicit two-stage review gates (spec compliance, then code quality) applied uniformly to every task. Staged parallelism maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer prompt includes a "Do Not Trust the Report" check — verifying implementations by reading actual code, not agent summaries.
+
 ## Workflow
 
 The core workflow is a linear pipeline from idea to integration. Each step invokes specific skills and dispatches agents automatically.
