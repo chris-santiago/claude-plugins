@@ -14,6 +14,8 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 **Inconsistent review discipline.** chris-code adds explicit two-stage review gates (spec compliance, then code quality) applied uniformly to every task. Staged parallelism maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer prompt includes a "Do Not Trust the Report" check — verifying implementations by reading actual code, not agent summaries.
 
+<details>
+
 <summary>Coming from superpowers? Read this first.</summary>
 
 chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers). If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
