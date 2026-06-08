@@ -16,7 +16,8 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 <details>
 
-<summary>Coming from superpowers? Read this first.</summary>
+<summary><h2>Coming from superpowers? Read this first.</h2></summary>
+
 
 chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers). If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
 
