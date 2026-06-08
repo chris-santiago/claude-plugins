@@ -33,8 +33,22 @@ flowchart TD
 
     G1 --> IW1["🔒 /intent-watch — clean pass required<br/>HYPOTHESIS.md locked · resolve any drift before Step 6"]
     style IW1 fill:#fff3cd,stroke:#e6a817
-    IW1 --> S6["Step 6 — Design & Run Experiment<br/>Baseline verification · Precondition check<br/>/loop intent-watch active"]
-    S6 --> S7["Step 7 — Synthesize Conclusions<br/>CONCLUSIONS.md + figures"]
+    IW1 --> PROMO{"Promote to Metaflow flow?<br/>judgment · default: >1 cell or >1 analysis"}
+    PROMO -- "No — quick PoC" --> S6
+    PROMO -- "Yes — promote" --> PINIT["/pipeline-init — scaffold Metaflow+Hydra flow<br/>migrate PoC into make_data·build_model·train_arm·metric"]
+    PINIT --> PLINT["🔒 flow-lint — 5 mechanical AST rules · must exit 0"]
+    PLINT --> PREV["🔒 pipeline-reviewer — 5 intent-fidelity checks · FAIL blocks"]
+    PREV --> S6
+    style PINIT fill:#e8f0fb,stroke:#3b6ea5
+    style PLINT fill:#fff3cd,stroke:#e6a817
+    style PREV fill:#fff3cd,stroke:#e6a817
+    S6["Step 6 — Design & Run Experiment<br/>promoted ⇒ run the flow<br/>Baseline · Precondition · /loop intent-watch"]
+    S6 --> PROVED{"Promoted flow?"}
+    PROVED -- "No" --> S7
+    PROVED -- "Yes" --> PROVE["🔒 determinism gate — verify declared<br/>experiment.determinism contract"]
+    style PROVE fill:#fff3cd,stroke:#e6a817
+    PROVE --> S7
+    S7["Step 7 — Synthesize Conclusions<br/>CONCLUSIONS.md + figures"]
     S7 --> MFLAW{"Evaluation<br/>design flaw?"}
     MFLAW -- "Yes → micro-iterate" --> S6
 

@@ -1,0 +1,14 @@
+# Axis-AGNOSTIC baseline method (generic exemplar).
+#
+# kind: ce  -> plain weighted cross-entropy MLP. The trained model does NOT
+# depend on the eval-axis (eval_k / the top-k cutoff of recall_at_k), so this
+# method trains ONCE per dataset and is EVALUATED at every eval_k value in the
+# experiment's training axis. The flow classifies it as axis-agnostic by its
+# `kind` (see is_axis_agnostic_method in reference_flow.py). Raise on unknown kind.
+#
+# epochs / lr / batch_size are intentionally absent: they flow from the resolved
+# training group (conf/training/default.yaml), which is AUTHORITATIVE. A method
+# YAML carries only method-specific params, never epochs/lr/batch — otherwise it
+# would block a per-experiment training override (a known fidelity trap).
+kind: ce
+hidden: 64        # method-specific architecture knob (width of the MLP)

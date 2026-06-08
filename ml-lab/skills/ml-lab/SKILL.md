@@ -494,6 +494,50 @@ Present this plan to the user. **Do not begin Step 6 until:**
 
 ---
 
+## Promotion to a Metaflow Flow (judgment-triggered)
+
+This phase sits between an approved experiment plan (Gate 1) and running the experiment (Step 6). It does not have a step number and does not change any step number: Steps 6–13 are unchanged whether or not promotion happens.
+
+**This is a judgment trigger, not a forced gate.** The default signal is: *the investigation has more than one analysis cell, or more than one distinct analysis or diagnostic.* That is a recommendation. By judgment, the orchestrator may promote earlier (when reproducibility tracking matters from the start) or stay ad-hoc longer (when the hypothesis is still unstable).
+
+**Default path is no promotion.** A quick single-cell PoC that computes one number under one condition is **not** promoted — there is no Metaflow tax for simple work. It proceeds to Step 6 exactly as written, and Steps 6–13 run unchanged. The rest of this section applies only when the orchestrator decides to promote.
+
+### On promotion — scaffold via `pipeline-init`
+
+When the orchestrator decides to promote, invoke the **`pipeline-init`** skill. It scaffolds the config-driven Metaflow + Hydra flow (shell, DAG, `conf/`) and migrates the PoC logic into the four component seams (`make_data`, `build_model`, `train_arm`, `metric`). `HYPOTHESIS.md` stays unchanged; `INVESTIGATION_LOG.jsonl` stays append-only.
+
+The promoted flow is a **single source of truth**: it embodies only the final, debated methodology. It does **not** validate against or carry forward the throwaway PoC's numbers or assumptions — the critic/defender debate exists to redirect those, and the journal (not the flow) is where superseded assumptions live.
+
+### The four-layer enforcement gate (non-optional)
+
+Promotion carries a mandatory enforcement gate, exactly as **non-optional** as Step 3's `ml-critic` dispatch is non-optional. The model is **prevent → lint → review → prove**:
+
+1. **Prevent (scaffold):** the `pipeline-init` scaffold puts the PoC into seams that make the silent-error class structurally hard to introduce.
+2. **Lint (blocking, static):** run `flow-lint.py` (resolved portably from the plugin registry, the same way `derive_verdict.py` is resolved). It is deterministic and **must exit 0**. Do not override or bypass it.
+3. **Review (blocking, static):** dispatch the **`pipeline-reviewer`** agent (Seam-5 intent-fidelity judgment rules: split convention, per-epoch reshuffle symmetry, axes-match-source, same-name/different-quantity metrics, sweep-override inflation). Any **`FAIL`** is blocking — address all FAIL findings and re-dispatch until none remain.
+
+Lint and review are both **static** and run **before** the flow is run. Neither is optional.
+
+### Step 6 for a promoted investigation = run the flow
+
+When promoted, Step 6's "design and run the experiment" is **executed as this Metaflow flow**. Step 6's text is unchanged; the flow *is* the design-and-run artifact for a promoted investigation. The pre-specified verdicts, bootstrap CIs, stratified analysis, and baseline/precondition verification rules from Step 6 all still apply — they are now realized through the flow's components rather than an ad-hoc script.
+
+### Prove = determinism contract (blocking)
+
+The **prove** layer is not a reproduce-the-PoC gate (that would enshrine the throwaway PoC's assumptions). It verifies the flow holds the reproducibility contract it **declared** in `experiment.determinism`:
+
+- **`order_independent`** (default): aggregated outputs identical across worker counts — run at two `--max-workers` values and diff via `scripts/determinism-check.py`.
+- **`single_worker`**: pinned to one worker because a dependency is nondeterministic under parallelism (e.g. gensim in the ATO investigation); verify run-twice-identical at one worker.
+- **`nondeterministic`**: explicit, recorded escape hatch — gate self-skips.
+
+The experiment's *findings* are certified by the machinery this workflow already mandates (verdicts, trivial-baseline, bootstrap CIs, the debate, Step 10 peer review), not by this gate. Determinism only proves the pipeline's numbers are execution-invariant as declared.
+
+### Enforcement guards invariants, never a DAG shape
+
+The lint and reviewer guard the seam invariants (data-keyed `foreach` grain, train→analyze separation, scoped `merge_artifacts`, registry dispatch that raises on unknown method kinds, intent-fidelity to the source-of-truth). They do **not** police DAG topology or step granularity. A legitimately different-shaped flow that honors the invariants passes.
+
+---
+
 ## Step 6 — Design and Run the Experiment
 
 **Goal:** Translate every agreed empirical test into a concrete experimental condition with a pre-specified verdict. Incorporate conceded critique points into the experiment design — concessions identify known problems that the experiment must address, not just the formally agreed tests.

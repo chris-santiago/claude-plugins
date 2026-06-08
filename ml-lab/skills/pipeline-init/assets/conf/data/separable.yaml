@@ -1,0 +1,24 @@
+# Separable-feature toy data group (generic exemplar).
+# Maps to make_data(data_spec, data_axes, seed) with kind='separable'.
+#
+# Toy domain: feature X separates two classes. Positives get a +separation shift
+# on the signal features; the rest are noise. The point is to exercise the WIRING
+# (data-axis split, foreach grain, train->analyze), not ML substance.
+#
+# split_convention: sequential
+#   Train and test are drawn from a SINGLE RNG advanced sequentially (train call
+#   then test call on the same generator), so the test stream continues the train
+#   stream. No validation set is produced. Methods that need val-based selection
+#   (method.kind that carries an internal sweep) must use split_convention:
+#   independent instead. See conf/SCHEMA.md.
+kind: separable
+n_feat: 20            # total feature dimension
+signal_feats: [0, 1, 2]   # columns that carry the class signal
+separation: 2.0       # default class-mean shift on signal_feats (a DATA axis)
+noise_scale: 1.0      # std of the gaussian background (a DATA axis)
+pos_rate: 0.1         # fraction of positives
+n_train: 20000
+n_test: 40000
+n_val: 10000          # only consumed under split_convention: independent
+seed_base: 7000       # added to the per-branch seed before RNG construction
+split_convention: sequential

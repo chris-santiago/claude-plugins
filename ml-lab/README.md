@@ -13,6 +13,7 @@ This directory contains the Claude Code agents, skills, and scripts that power t
 | `research-reviewer-lite.md` | Verification reviewer — Haiku-class follow-up review | `/ml-lab` skill (Step 10, Rounds 2–3) |
 | `readme-rewriter.md` | Outside-reader README rewriter — diagnoses and rewrites for external audiences | `/ml-lab` skill (Step 13) |
 | `intent-monitor.md` | Pre-registration drift monitor — evaluates git changes in an experiment directory against binding constraints in a source-of-truth document; emits a clean-pass line or structured conflict report | `/intent-watch` skill (user-invoked) |
+| `pipeline-reviewer.md` | Fidelity judgment gate for promoted Metaflow flows — 5 intent-fidelity checks (split, reshuffle, axes-match, metric quantity, sweep inflation); reads source + source-of-truth, does not run the flow | `/pipeline-init` promotion phase (blocking, before the flow runs) |
 
 All agents are subagents dispatched via the Agent tool from the main session (orchestrated by the `/ml-lab` skill). In **debate mode** (the default), `ml-critic` (Stage A.1) and `ml-defender` (Stage A.2) run once, followed by a convergence loop of `ml-critic-r2` (Stage B.1) and `ml-defender` (Stage B.2) up to max_rounds=4. In **ensemble mode** (opt-in), `ml-defender` and `ml-critic-r2` are not dispatched — three independent `ml-critic` dispatches with union pooling.
 
@@ -27,6 +28,16 @@ Skills are user-invocable slash commands that live in `skills/<name>/SKILL.md`.
 | `ml-lab` | `/ml-lab` | Start a structured ML hypothesis investigation. Runs the full 13-step workflow in the main session, dispatching subagents for critique, defense, report writing, and peer review. |
 | `intent-watch` | `/intent-watch <experiment_dir> <source_of_truth>` | **Gate 1 (mandatory):** run once before Step 6 begins — must return a clean pass; any HIGH or CRITICAL conflict blocks the experiment. **Step 6 (active loop):** run `/loop 2m /intent-watch <experiment_dir> HYPOTHESIS.md` during scripting to catch pre-registration drift immediately. Not useful before `HYPOTHESIS.md` exists or after the experiment is complete. |
 | `deep-dive` | `/deep-dive [experiment_path]` | After any investigation phase or full run is complete. Surveys scripts, results schemas, journal decisions, and existing docs to produce `DEEP_DIVE.md` — a comprehensive technical reference covering data construction, model architecture, scoring mechanics, statistical methods, per-test detail, quality gates, aggregation, and key design decisions with sources cited. Works with or without a project journal; degrades gracefully when artifacts are missing. |
+| `pipeline-init` | `/pipeline-init` | Promote an investigation that outgrew a single-cell PoC onto a config-driven Metaflow+Hydra flow. Scaffolds the flow + conf/ bundle, migrates the PoC into the component seams, declares the determinism contract, and runs the lint → pipeline-reviewer → determinism gate (prevent→lint→review→prove). The flow is a single source of truth of final methodology — it does not reproduce the throwaway PoC. |
+
+## Scripts
+
+Some skills ship helper scripts that are invoked internally rather than by the user directly. These live under `skills/<skill-name>/scripts/`.
+
+| Script | Skill | Purpose |
+|--------|-------|---------|
+| `scripts/flow-lint.py` | `pipeline-init` | 5-rule AST lint enforced before promotion — checks structural correctness of the generated flow |
+| `scripts/determinism-check.py` | `pipeline-init` | Verifies the declared determinism contract; run as the final gate in the prevent→lint→review→prove sequence |
 
 ## What these copies are
 

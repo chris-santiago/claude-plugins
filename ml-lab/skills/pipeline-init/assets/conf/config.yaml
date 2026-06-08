@@ -1,0 +1,32 @@
+# Master config for the pipeline standard (generic exemplar).
+#
+# Hydra defaults list: composes the data + experiment + training groups at once.
+# The flow's Config(parser=hydra_parser) loads `config` and resolves this tree.
+#
+# Run an experiment by overriding the groups together (two positional args,
+# BEFORE `run`):
+#   uv run flow.py --config-value cfg "hydra_overrides: [experiment=baseline_vs_method]" run
+#
+# Pair a non-default data group when the experiment needs it:
+#   uv run flow.py --config-value cfg "hydra_overrides: [experiment=baseline_vs_method,data=separable]" run
+#
+# Smoke / fast runs — shrink seeds and data via dotted overrides:
+#   uv run flow.py --config-value cfg "hydra_overrides: [seeds=1,data.n_train=2000,data.n_test=4000]" run
+
+# NOTE: the `method/` group is NOT in the defaults list. Methods are named in
+# each experiment's `methods:` list and loaded by name from conf/method/<name>.yaml
+# by the flow (load_method_cfg) — exactly as the reference loads its arm configs.
+# Only data / experiment / training are Hydra-composed defaults.
+defaults:
+  - data: separable
+  - experiment: baseline_vs_method
+  - training: default
+  - _self_
+
+# Global knobs
+seeds: 8
+bootstrap:
+  n_resamples: 1000
+  seed: 0
+# Hint for Metaflow --max-workers; not enforced by the flow.
+max_workers: 8

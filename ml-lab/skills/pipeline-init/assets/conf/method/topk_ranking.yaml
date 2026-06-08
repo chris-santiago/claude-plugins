@@ -1,0 +1,23 @@
+# Axis-DEPENDENT method (generic exemplar).
+#
+# kind: topk  -> a ranking loss whose objective is parameterized by the eval-axis
+# (eval_k / the top-k cutoff). Because the loss BAKES IN the cutoff, the model
+# must be RETRAINED for every eval_k value (the flow classifies it as
+# axis-dependent by its `kind`; see is_axis_agnostic_method). This is the analog
+# of the reference's budget-dependent PAUC arm.
+#
+# epochs / lr / batch_size are absent on purpose (see baseline_ce.yaml): they come
+# from the training group, which is authoritative. Only method-specific params
+# live here.
+#
+# warmup_frac / temp are genuinely method-specific (no training-group analog), so
+# they stay here as method defaults; they may be overridden per-experiment via
+# method_overrides, or swept via temp_sweep.
+kind: topk
+hidden: 64
+margin: 1.0        # ranking margin (method-specific)
+warmup_frac: 0.3   # CE warmup fraction before the ranking objective engages
+temp: 0.5          # softening temperature for the ranking surrogate
+# Example sweep axis, expanded in-process per branch (NOT a foreach branch).
+# Collapse to a singleton via method_overrides to disable val-based selection.
+temp_sweep: [0.5, 0.25]

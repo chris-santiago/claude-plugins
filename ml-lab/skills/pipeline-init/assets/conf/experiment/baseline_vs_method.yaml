@@ -1,0 +1,50 @@
+# Baseline-vs-method experiment (generic exemplar).
+# Expected data group: separable (pair data=separable in the Hydra overrides, or
+# rely on the config.yaml default).
+#
+# This is the canonical "does method X beat the baseline" experiment. It compares
+# an axis-agnostic baseline (baseline_ce) against an axis-dependent method
+# (topk_ranking) across two eval_k cutoffs and two separation levels.
+#
+# === pinned experiment keys (see conf/SCHEMA.md for the full contract) ===
+#
+# name:        tags every record so the static analysis branches can filter.
+# axes:        cartesian-product axes. Each cell has one key per axis. Values for
+#              a DATA axis are threaded into data_spec; values for a training axis
+#              are threaded into method_spec / the metric.
+# data_axes:   subset of `axes` keys that change the GENERATED DATASET. The
+#              foreach grain is (data_axes + seed): data is generated ONCE per
+#              branch, and every method sharing it trains in-process. Axes NOT
+#              listed here are training-axes (same data, different model/eval).
+# methods:     method config-group names to compare in each cell (loaded from
+#              conf/method/<name>.yaml by the flow).
+# method_overrides: per-method override map applied BEFORE sweep expansion.
+#              Collapse a method's internal sweep to a singleton to disable
+#              val-based selection (matches a source that used one fixed config).
+# split_convention: data-splitting strategy (set in the data group; echoed here
+#              only for visibility — the data group is authoritative).
+# diagnostics: named analysis diagnostics computed from train artifacts (consumed
+#              by the static `an_*` branches, NOT run inside train).
+# requests_model:  store the trained nn.Module in each record (needed when a
+#              diagnostic re-runs the model, e.g. a representation probe).
+# requests_scores: store raw scores + labels in each record (needed when a
+#              diagnostic recomputes geometry from scores).
+name: baseline_vs_method
+axes:
+  separation: [1.0, 2.0]      # DATA axis: class-mean shift
+  eval_k: [50, 200]           # training axis: top-k cutoff for recall_at_k
+data_axes: [separation]
+methods: [baseline_ce, topk_ranking]
+method_overrides:
+  # Match a source that used a SINGLE fixed config per method (no val selection):
+  # collapse topk_ranking's temp_sweep to one value.
+  topk_ranking:
+    temp_sweep: [0.5]
+diagnostics: [metric_trend]
+requests_model: false
+requests_scores: false
+# Reproducibility contract the determinism gate verifies (see conf/SCHEMA.md):
+#   order_independent (default) | single_worker | nondeterministic.
+# Declare single_worker if a dependency is nondeterministic under parallelism
+# (e.g. gensim); declare nondeterministic to take the explicit escape hatch.
+determinism: order_independent

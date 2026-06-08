@@ -1,0 +1,17 @@
+# Default training group (generic exemplar).
+#
+# These values are threaded through the DAG into build_model / train_arm as the
+# AUTHORITATIVE source for shared training knobs. A method YAML that omits these
+# (it should) inherits them here. If a method YAML hard-set epochs/lr/batch it
+# would BLOCK a per-experiment training override — a known fidelity trap, so keep
+# epochs/lr/batch here, method-specific params in conf/method/.
+#
+# epochs:  may be an int (used by all methods) OR a dict keyed by a method axis
+#          (e.g. {hidden_small: 30, hidden_large: 80}) when one experiment needs
+#          per-cell epoch budgets. The flow resolves the dict form by the cell.
+hidden: 64        # fallback MLP width when a method omits `hidden`
+epochs: 20
+batch: 512
+lr: 0.001
+warmup_frac: 0.3  # fallback for ranking-style methods that omit it
+eval_every: 5     # val-check cadence (only used under split_convention: independent)
