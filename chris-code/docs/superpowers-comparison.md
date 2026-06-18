@@ -2,6 +2,8 @@
 
 chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers). If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
 
+> **Baseline:** this comparison is against the **v5.1.0** fork point, where chris-code's design diverged. chris-code has since selectively backported mechanisms from **v6.0.0** (file handoffs, pre-flight review, a durable progress ledger, reviewer-integrity rules); see the plugin README.
+
 ## TL;DR
 
 Day to day, three things feel different:

@@ -19,7 +19,7 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 <summary><h2>Coming from superpowers? Read this first.</h2></summary>
 
 
-chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers) **v5.1.0**, the version it branched from; every comparison here is against that baseline. If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
+chris-code branched from [obra/superpowers](https://github.com/obra/superpowers) **v5.1.0** and has since selectively backported mechanisms from **v6.0.0** (file handoffs, pre-flight plan review, a durable progress ledger, reviewer-integrity rules — see *Execution mechanics*). The comparison below is framed against the v5.1.0 fork point, where most of chris-code's design diverged; the v6 backports sit on top of it. If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
 
 ## TL;DR
 
@@ -175,7 +175,7 @@ flowchart TB
 
 ### Execution mechanics
 
-`subagent-driven-development` keeps the orchestrator's context lean and the run recoverable:
+Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, these keep `subagent-driven-development`'s orchestrator context lean and the run recoverable:
 
 - **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.git/sdd/` (per-worktree, uncommitted) via `scripts/task-brief`, `scripts/review-package`, and `scripts/progress`; dispatches pass file paths, never pasted text or diffs.
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
