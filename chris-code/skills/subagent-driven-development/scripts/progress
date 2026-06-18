@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Durable progress ledger for subagent-driven-development and executing-plans.
+# Lives in .git/ (per-worktree, uncommitted, unsynced) and survives
+# compaction, so a controller that loses its context resumes instead of
+# re-dispatching finished work. Complements TodoWrite (live visibility);
+# this is the durable recovery map.
+#
+# Usage:
+#   progress read              # print the ledger (nothing if absent)
+#   progress append "<line>"   # append one line, e.g.
+#                              #   "Task 3: complete (commits a1b2c3d..e4f5a6b, review clean)"
+#   progress clear             # remove the ledger
+set -euo pipefail
+
+dir=$(git rev-parse --git-path sdd)
+ledger="$dir/progress.md"
+
+cmd=${1:-}
+case "$cmd" in
+  read)
+    [ -f "$ledger" ] && cat "$ledger" || true
+    ;;
+  append)
+    [ $# -eq 2 ] || { echo 'usage: progress append "<line>"' >&2; exit 2; }
+    mkdir -p "$dir"
+    printf '%s\n' "$2" >> "$ledger"
+    ;;
+  clear)
+    rm -f "$ledger"
+    ;;
+  *)
+    echo 'usage: progress {read|append "<line>"|clear}' >&2
+    exit 2
+    ;;
+esac
