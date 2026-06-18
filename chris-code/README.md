@@ -8,7 +8,7 @@ chris-code turns Claude Code into an opinionated software-engineering workflow r
 
 chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned around three problems observed in practice:
 
-**Spec and plan bloat.** Superpowers specs grew to 2500+ words with file maps, step-by-step instructions, and inline code scaffolds. Plans added another 5,000–10,000 words of code blocks that implementing agents routinely ignored and rewrote. chris-code enforces a "contracts stay, choreography goes" principle: specs are 500–1500 words covering only invariants that survive architectural change; plans are 200–450 word execution handoffs with no inline code unless exact schemas are required.
+**Spec and plan bloat.** Superpowers specs grew to 2500+ words with file maps, step-by-step instructions, and inline code scaffolds. Plans added another 5,000–10,000 words of code blocks that implementing agents routinely ignored and rewrote. chris-code enforces a "contracts stay, choreography goes" principle: specs cover only the invariants that survive architectural change, and plans are thin execution handoffs with no inline code unless an exact schema is required. A word-efficiency principle keeps both lean — every line must be load-bearing — rather than a fixed word budget.
 
 **Shadow code.** Superpowers' writing-plans mandated "complete code in every step." In practice this produced prescriptive scaffolding that agents discarded — the work of writing it was wasted and the mismatch between plan code and actual codebase state caused confusion. chris-code plans tell executors *what* to do and *where*, trusting agents to read the spec and write code fit for the real codebase.
 
@@ -25,7 +25,7 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 Day to day, three things feel different:
 
-1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts (500–1500 words), plans capture *what and where* (200–450 words), and the code gets written against the real codebase, not the plan.
+1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts, plans capture *what and where*, and the code gets written against the real codebase, not the plan.
 2. **Coding and review run through dedicated agents, not generic subagents.** chris-code ships named `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents that auto-dispatch by file type. You rarely pick one by hand.
 3. **Every task passes the same review gates.** Spec compliance, then code quality, then a pre-commit idiom/lint gate. No task is "small enough to skip."
 
@@ -39,7 +39,7 @@ Everything below is the reasoning behind those, then the specifics.
 
 **The why.** superpowers' `writing-plans` told you to document everything "as if the engineer has zero context," with complete code in every step. In practice, implementing agents ignored the pasted code and wrote their own, so the effort was wasted and the plan-vs-reality mismatch caused confusion.
 
-chris-code adopts **"contracts stay, choreography goes."** A spec records only the invariants that survive an architectural rewrite. A plan tells the executor *what* to do and *where*, and trusts it to write code that fits the actual repo. There are hard word budgets to keep it honest.
+chris-code adopts **"contracts stay, choreography goes."** A spec records only the invariants that survive an architectural rewrite. A plan tells the executor *what* to do and *where*, and trusts it to write code that fits the actual repo. A word-efficiency principle keeps it honest: every line must be load-bearing, and length is a smell rather than a limit.
 
 ### 2. A real agent layer, dispatched by scope
 
@@ -81,7 +81,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 | Skill | superpowers | chris-code |
 |---|---|---|
-| **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only (500–1500w). Plan = what/where handoff, no inline code (200–450w). |
+| **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-review` skills) → Requirements. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
@@ -134,8 +134,8 @@ flowchart TB
     subgraph Design Phase
         using["using-chris-code<br/>(session start)"]
         brainstorm["brainstorming<br/>+ clarifying questions<br/>+ 2-3 approaches"]
-        spec["lean-spec<br/>(500-1500 word design artifact)"]
-        plan["lean-plan<br/>(200-450 word execution handoff)"]
+        spec["lean-spec<br/>(contracts-only design artifact)"]
+        plan["lean-plan<br/>(what/where execution handoff)"]
     end
 
     subgraph Execution Phase
@@ -173,6 +173,15 @@ flowchart TB
     classDef gate fill:#ffcccc,stroke:#333
 ```
 
+### Execution mechanics
+
+`subagent-driven-development` keeps the orchestrator's context lean and the run recoverable:
+
+- **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.git/sdd/` (per-worktree, uncommitted) via `scripts/task-brief`, `scripts/review-package`, and `scripts/progress`; dispatches pass file paths, never pasted text or diffs.
+- **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
+- **Durable progress ledger.** Each clean task is appended to `.git/sdd/progress.md`; a controller that loses context after compaction resumes from the ledger instead of re-running finished work. TodoWrite stays the live view.
+- **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
+
 ## Skills
 
 ### Workflow Skills (pipeline order)
@@ -181,10 +190,10 @@ flowchart TB
 |-------|---------|------------|
 | `using-chris-code` | Session-start skill discovery | Plugin system (auto) |
 | `brainstorming` | Explore intent, requirements, design before implementation | User or using-chris-code |
-| `lean-spec` | Write canonical design spec (500-1500 words) | brainstorming (step 7) |
-| `lean-plan` | Write thin execution handoff (200-450 words) | brainstorming (step 10) |
+| `lean-spec` | Write canonical design spec (contracts only) | brainstorming (step 7) |
+| `lean-plan` | Write thin execution handoff (what & where, no code) | brainstorming (step 10) |
 | `using-git-worktrees` | Isolated workspace via EnterWorktree | executing-plans / subagent-driven-dev |
-| `subagent-driven-development` | Execute plan with fresh subagent per task, staged parallelism | lean-plan handoff |
+| `subagent-driven-development` | Execute plan per task: file-handoff dispatch, staged parallelism, durable progress ledger | lean-plan handoff |
 | `executing-plans` | Execute plan inline (no subagents) | lean-plan handoff (alternative) |
 | `dispatching-parallel-agents` | Dispatch 2+ independent tasks concurrently | Any skill needing parallelism |
 | `test-driven-development` | RED-GREEN-REFACTOR cycle | Coder agents during implementation |
