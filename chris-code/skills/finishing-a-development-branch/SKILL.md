@@ -154,6 +154,14 @@ git branch -D <feature-branch>
 
 **Only runs for Options 1 and 4.** Options 2 and 3 always preserve the worktree.
 
+First, remove the SDD run artifacts (task briefs, reports, review diffs, progress ledger):
+
+```bash
+rm -rf "$(git rev-parse --git-path sdd)"   # .git/sdd, or .git/worktrees/<name>/sdd in a worktree
+```
+
+In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case.
+
 ```bash
 GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
 GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)

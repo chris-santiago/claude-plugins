@@ -59,10 +59,12 @@ One sentence describing the required change.
 - Backward-compat requirements
 - Performance, security, architecture constraints
 - Repeat a constraint here even if it appears in the spec when violating it would be costly or easy to miss
+- State each constraint self-contained, with exact values, so the orchestrator can copy it verbatim into every implementer and reviewer dispatch
 
 ## 5. Tasks
 
 ### Task 1: [Name]
+- Consumes: <contract> from <spec §N, or built in Task M → `path`> — a pointer, never a restated signature; omit if the task stands alone
 - [ ] Concrete action (reference spec §N for requirements)
 - [ ] Concrete action
 - [ ] Verify: `exact command to run`
@@ -96,11 +98,9 @@ One sentence describing the required change.
 
 **Spec references — replace duplicated detail** with a direct section reference. Keep the detail in the plan anyway if it's safety-critical, easy to miss, or likely forgotten during implementation.
 
-## Target Length
+## Word Efficiency
 
-- **200–450 words** for a normal single-subsystem plan
-- **Up to 800 words** if the plan spans 5+ tasks across multiple files
-- If the plan exceeds these bounds, you're restating the spec — cut harder
+Every line must be load-bearing: a contract, an action, a path, a constraint, or an acceptance check the implementer cannot infer from the spec or the repo. Length is a smell, not a limit. A plan much longer than its task count usually means restatement, so investigate and cut. Never pad to fill a budget or truncate to fit one.
 
 ## Self-Review
 

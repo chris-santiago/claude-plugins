@@ -50,8 +50,10 @@ Component responsibilities. Data flow. Where computation lives.
 
 ## 6. Canonical interfaces / data contracts
 Public interfaces, schemas, typed structures, protocol contracts.
-Minimal code ONLY to pin down a public API, schema, or semantic rule
-that would otherwise be ambiguous. No module drafts or scaffolds.
+Capture any contract that later binds separate tasks or components, so a plan
+can reference it here instead of restating it. Minimal code ONLY to pin down a
+public API, schema, or semantic rule that would otherwise be ambiguous. No
+module drafts or scaffolds.
 
 ## 7. Invariants and constraints
 Non-negotiable guarantees. Backward compat. Performance/security requirements.
@@ -93,11 +95,9 @@ If code is included: keep it short, treat it as contract material, never include
 - Large code scaffolds, patch-style prose ("replace lines X–Y with…")
 - Temporary execution notes that belong in a plan
 
-## Target Length
+## Word Efficiency
 
-- **500–1500 words** for a single-subsystem spec
-- **Up to 2500 words** for a multi-component spec spanning 5+ interfaces
-- If the spec exceeds these bounds, look for implementation choreography to cut
+Every line must be load-bearing: behavior, an interface, an invariant, a decision, or an acceptance criterion that would otherwise be ambiguous. Length is a smell, not a limit. A spec much longer than its interface count usually carries implementation choreography, so find it and cut. Never pad to fill a budget or truncate to fit one.
 
 ## Self-Review
 
