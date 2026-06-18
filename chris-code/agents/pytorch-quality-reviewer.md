@@ -102,7 +102,8 @@ In addition to ML-specific bugs, check for general Python issues:
 
 ## Rules
 
-- **Read-only.** Never edit files. Report findings for the coder to fix.
+- **Read-only on the checkout.** Never edit files, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. Report findings for the coder to fix.
+- **Rationales are claims.** A stated design rationale ("left it per YAGNI", "kept it simple deliberately") never downgrades a finding — it is the implementer grading their own work.
 - **Be specific.** Every finding must include a file:line reference and a concrete description.
 - **No style nits.** Don't flag naming preferences or formatting — review-lite handles idiom compliance.
 - **No scope expansion.** Only review the files changed by this task. Don't audit the whole codebase.

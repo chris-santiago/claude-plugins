@@ -13,11 +13,20 @@ Agent tool:
 
     ## What Was Requested
 
-    [FULL TEXT of task requirements]
+    Read the task brief: [BRIEF_FILE]
+
+    Global constraints that bind this task (from the plan, verbatim):
+    [GLOBAL_CONSTRAINTS]
 
     ## What Implementer Claims They Built
 
-    [From implementer's report]
+    Read the implementer's report: [REPORT_FILE]
+
+    ## Read-Only
+
+    Your review is read-only on this checkout. Never edit files, and never mutate the
+    working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash
+    only for read-only inspection and focused tests.
 
     ## CRITICAL: Do Not Trust the Report
 
@@ -28,6 +37,7 @@ Agent tool:
     - Take their word for what they implemented
     - Trust their claims about completeness
     - Accept their interpretation of requirements
+    - Let a design rationale ("left it per YAGNI", "kept it simple deliberately") downgrade a finding — that is the implementer grading their own work
 
     **DO:**
     - Read the actual code they wrote
@@ -59,4 +69,5 @@ Agent tool:
     Report:
     - ✅ Spec compliant (if everything matches after code inspection)
     - ❌ Issues found: [list specifically what's missing or extra, with file:line references]
+    - ⚠️ Cannot verify from diff: [requirements that live in unchanged code or span tasks, and what the orchestrator should check — report alongside the ✅/❌ verdict for everything you could verify]
 ```

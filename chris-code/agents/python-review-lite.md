@@ -93,6 +93,7 @@ When `status: clean`, the "Findings" section may be empty; record S1/S2 counts i
 ## What this agent deliberately does not do
 
 - Never writes, edits, or stages code (the `tools` frontmatter restricts to `Read`, `Grep`, `Glob`, `Bash`).
+- Never mutates the working tree, index, HEAD, or branch (no `git checkout`/`stash`/`reset`/`commit`) — Bash is for the linter and read-only git inspection only.
 - Never proposes refactors beyond a single-sentence "suggested fix" per finding.
 - Never analyzes whole-file architecture — only changed lines.
 - Never runs the full test suite — only the linter (and only the touched files).

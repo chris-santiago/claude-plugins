@@ -13,6 +13,15 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 **Every task gets every gate.** The three-stage review (spec → quality → review-lite) applies to ALL tasks — not just the first one. You will feel pressure to skip gates on later tasks because "the pattern is established" or "this one is simple." That impulse is the exact failure mode this rule prevents. Task 5 gets the same gates as Task 1. No exceptions.
 
+## Pre-Flight Plan Review
+
+Before dispatching Task 1, load the progress ledger (see Durable Progress) and resume at the first task not marked complete. Then read the plan once and check for:
+
+- **Internal conflicts** — tasks that contradict each other or the plan's Constraints.
+- **Plan-mandated defects** — anything the plan asks for that a reviewer would flag (a test that asserts nothing, verbatim duplication, a swallowed error).
+
+Present everything you find to the user as one batched question, each finding beside the plan text that mandates it, asking which governs. If the scan is clean, proceed without comment. Do not interrupt per-discovery mid-run.
+
 ## The Process
 
 ```mermaid
@@ -29,13 +38,13 @@ flowchart TB
         quality_ok{"Quality approved?"}
         fix_quality["Coder fixes quality issues"]
         commit_gate["Per-task commit gate: *-review-lite"]
-        done["Mark task complete"]
+        done["Mark task complete<br/>(TodoWrite + ledger)"]
     end
 
-    read["Read plan, extract tasks,<br/>map file footprints, group into stages"]
+    read["Read plan + progress ledger,<br/>pre-flight conflict scan,<br/>extract tasks, map footprints, group into stages"]
     more_tasks{"More tasks in stage?"}
     more_stages{"More stages?"}
-    final_gate["Final commit gate:<br/>*-review-lite on full diff (base..HEAD)"]
+    final_gate["Final review: scripts/review-package merge-base..HEAD<br/>→ *-review-lite on full diff"]
     finish["chris-code:finishing-a-development-branch"]:::finish
 
     read --> coder
@@ -110,6 +119,37 @@ Common serialization triggers:
 
 When in doubt, serialize. The cost of a conflict is higher than the cost of waiting.
 
+## File Handoffs
+
+Anything you paste into a dispatch — and anything a subagent prints back — stays resident in your context for the rest of the session. Hand artifacts over as files instead, all under `$(git rev-parse --git-path sdd)` (`.git/sdd/`, per-worktree and uncommitted):
+
+- **Task brief:** run `scripts/task-brief PLAN_FILE N`; it writes the task's full text to a file and prints the path. The dispatch then carries only: (1) one line on where this task fits; (2) the brief path, introduced as "read this first — your requirements, with exact values verbatim"; (3) the spec path, plus dependency pointers — for a contract built by an earlier task, name the file or spec § to read rather than restating signatures; (4) the Global Constraints copied verbatim; (5) the report-file path.
+- **Report file:** name it after the brief (`task-N-brief.md` → `task-N-report.md`). The implementer writes its full report there and returns only status, commits, a one-line test summary, and concerns.
+- **Reviewer inputs:** spec-reviewer and `*-quality-reviewer` agents get the brief path, the report path, the changed-file list, and the verbatim Constraints, and read the actual changed files. Do not paste diffs.
+- **Never** paste task text, prior-task summaries, or diffs into a dispatch or into your own context. A fresh subagent needs its brief, the interfaces it touches, and the constraints — nothing else.
+
+## Global Constraints
+
+Copy the plan's Constraints section verbatim (exact values, formats, and stated relationships between components) into every implementer and reviewer dispatch. It is the reviewer's attention lens for what THIS project demands; the process rules already live in the agents and templates.
+
+## Constructing Reviewer Dispatches
+
+- **Never pre-judge.** Do not instruct a reviewer to ignore, not-flag, or pre-rate a finding. If your dispatch contains "do not flag," "at most Minor," or "the plan chose," stop — you are pre-judging to spare yourself a review loop. Let the reviewer raise it and adjudicate it in the loop.
+- **Do not** ask a reviewer to re-run tests the implementer already ran, or add open-ended directives ("check all uses") without a concrete, task-specific reason.
+- **Plan-mandated defects are the user's call.** If a finding conflicts with what the plan mandates, present the finding and the plan text and ask which governs. Do not dismiss it because the plan mandated it, and do not dispatch a fix that contradicts the plan without asking.
+
+## Handling ⚠️ Items
+
+The spec-reviewer may return "⚠️ Cannot verify from diff" items — requirements that live in unchanged code or span tasks. These do not block the rest of the review, but resolve each one yourself before marking the task complete: you hold the plan and cross-task context the reviewer lacks. A confirmed gap is a failed spec review — send it back to the coder and re-review.
+
+## Durable Progress
+
+Conversation memory does not survive compaction; a controller that loses its place can re-dispatch finished tasks. Track progress in a ledger, not only in TodoWrite.
+
+- At start, run `scripts/progress read`. Tasks listed complete are DONE — do not re-dispatch them; resume at the first task not listed. If the ledger belongs to a different branch, `scripts/progress clear` first.
+- When a task's reviews come back clean, run `scripts/progress append "Task N: complete (commits <base7>..<head7>, review clean)"` alongside marking it done in TodoWrite. TodoWrite is your live view; the ledger is the durable recovery map.
+- After compaction, rebuild the TodoWrite list from the ledger, and trust the ledger and `git log` over your own recollection.
+
 ## Handling Implementer Status
 
 Implementer subagents report one of four statuses. Handle each appropriately:
@@ -134,6 +174,8 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 - `./spec-reviewer-prompt.md` - Dispatch spec compliance reviewer subagent
 
 Quality review is handled by `*-quality-reviewer` agents (e.g., `python-quality-reviewer`, `rust-quality-reviewer`), dispatched by scope matching — no prompt template needed.
+
+All dispatches use file handoffs (see File Handoffs): pass brief, report, and constraint content as file paths plus verbatim Constraints, never pasted task text or diffs.
 
 ## Example Workflow
 
@@ -172,8 +214,11 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never start implementation on main/master without explicit user consent
 - Never skip reviews (spec compliance OR quality) or proceed with unfixed issues
 - Never dispatch subagents in parallel when their file footprints overlap
-- Never make a subagent read the plan file — provide full task text in the prompt
+- Never paste task text or diffs into a dispatch or your own context — hand the task brief as a file (`scripts/task-brief`), and never hand a subagent the whole plan file
+- Never coach a reviewer to suppress, soften, or pre-rate a finding
 - Never start quality review before spec compliance passes
+- Never mark a task complete with an unresolved ⚠️ item
+- Never re-dispatch a task the ledger lists as complete
 - Never move to next task while any review has open issues
 - If a reviewer finds issues: coder fixes → reviewer re-reviews → repeat until approved
 - If a subagent is blocked: provide more context, upgrade model, or break the task apart — never force retry without changes
