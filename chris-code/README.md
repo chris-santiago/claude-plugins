@@ -12,14 +12,14 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 **Shadow code.** Superpowers' writing-plans mandated "complete code in every step." In practice this produced prescriptive scaffolding that agents discarded — the work of writing it was wasted and the mismatch between plan code and actual codebase state caused confusion. chris-code plans tell executors *what* to do and *where*, trusting agents to read the spec and write code fit for the real codebase.
 
-**Inconsistent review discipline.** chris-code adds explicit two-stage review gates (spec compliance, then code quality) applied uniformly to every task. Staged parallelism maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer prompt includes a "Do Not Trust the Report" check — verifying implementations by reading actual code, not agent summaries.
+**Inconsistent review discipline.** superpowers already runs two-stage review (spec compliance, then code quality) per task via dispatched reviewer subagents. chris-code keeps those gates but applies them uniformly through dedicated, scope-dispatched agents, adds a lint-aware pre-commit gate, and maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer prompt keeps a "Do Not Trust the Report" check: verify implementations by reading actual code, not agent summaries.
 
 <details>
 
 <summary><h2>Coming from superpowers? Read this first.</h2></summary>
 
 
-chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers). If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
+chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers) **v5.1.0**, the version it branched from; every comparison here is against that baseline. If you know superpowers, you already know 80% of chris-code: the same brainstorm → plan → execute → review → finish pipeline, most of the same skill names, the same TDD and systematic-debugging discipline. This doc explains the 20% that changed and, more importantly, *why*.
 
 ## TL;DR
 
@@ -47,9 +47,9 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 chris-code adds **nine dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
 
-### 3. Review is a uniform, multi-stage gate, not a single pass
+### 3. Review is a uniform, multi-stage gate
 
-**The why.** superpowers folds review into one step and leans on the implementer to self-check. chris-code distrusts agent self-reports ("Do Not Trust the Report" — re-read the actual code, not the summary) and applies the *same* gates to every task: spec compliance, then code quality, then a lint-aware pre-commit idiom check, then a final full-diff pass for cross-task drift. Lint is its own mandatory gate, not a footnote.
+**The why.** superpowers already reviews every task in two stages (spec compliance, then code quality) through dispatched reviewer subagents, plus a final whole-branch pass. chris-code keeps that spine and hardens it: the reviewers are dedicated, scope-dispatched agents rather than generic subagents driven by prompt templates; lint becomes its own mandatory gate; a `*-review-lite` idiom check runs pre-commit; and a final full-diff pass catches cross-task drift. Every gate re-reads the actual code, not the agent's summary ("Do Not Trust the Report").
 
 ### 4. Parallelism is a feature, not a footgun
 
@@ -57,7 +57,7 @@ chris-code adds **nine dedicated agents** with frontmatter scoping. The right on
 
 ### 5. Native tools first, with hard gates
 
-**The why.** chris-code mandates the native `EnterWorktree`/`ExitWorktree` tools for isolation and adds a hard gate: if the tool is unavailable, **stop and warn**, never silently fall back to working in place. superpowers ships an automatic manual-`git worktree` fallback. The gate exists because a silent fallback once caused real damage (subagents targeting the wrong directory).
+**The why.** superpowers already prefers native worktree tools (its rewrite names `EnterWorktree`) and asks consent, falling back to a manual `git worktree` only when no native tool exists, and announcing the fallback when it happens. chris-code shares that native-first preference but replaces the fallback with a **hard gate**: if the native tool is unavailable, **stop and warn**, never fall back to working in place. The gate exists because a silent fallback once caused real damage (subagents targeting the wrong directory).
 
 There's also a quieter sixth shift in **voice**: chris-code strips superpowers' persuasion scaffolding (Real-World-Impact stat blocks, "Red Flags - STOP" lists, rationalization tables, the "your human partner" framing) in favor of terse, mechanical instructions. Same rules, less rhetoric.
 
@@ -81,7 +81,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 | Skill | superpowers | chris-code |
 |---|---|---|
-| **writing-plans** | One skill. Exhaustive spec + plan with full code per step. | **Split into `lean-spec` + `lean-plan`.** Spec = contracts only (500–1500w). Plan = what/where handoff, no inline code (200–450w). |
+| **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only (500–1500w). Plan = what/where handoff, no inline code (200–450w). |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-review` skills) → Requirements. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
@@ -94,7 +94,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 | Skill | Why it exists |
 |---|---|
-| `lean-spec` | A first-class design artifact superpowers never had (spec was inlined into brainstorming/plans). |
+| `lean-spec` | Promotes the spec to a dedicated skill. superpowers produced a design/spec doc inside `brainstorming`; chris-code makes writing it a first-class step. |
 | `regression-test` | Lock in every bug fix with a test for the bug and its siblings before moving on. |
 | `python-review` | Senior Python refactor/API-design review as an on-demand pass. |
 | `rust-review` | The same, for Rust. |
