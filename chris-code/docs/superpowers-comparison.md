@@ -6,7 +6,7 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 Day to day, three things feel different:
 
-1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts (500–1500 words), plans capture *what and where* (200–450 words), and the code gets written against the real codebase, not the plan.
+1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts, plans capture *what and where*, and the code gets written against the real codebase, not the plan.
 2. **Coding and review run through dedicated agents, not generic subagents.** chris-code ships named `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents that auto-dispatch by file type. You rarely pick one by hand.
 3. **Every task passes the same review gates.** Spec compliance, then code quality, then a pre-commit idiom/lint gate. No task is "small enough to skip."
 
@@ -20,7 +20,7 @@ Everything below is the reasoning behind those, then the specifics.
 
 **The why.** superpowers' `writing-plans` told you to document everything "as if the engineer has zero context," with complete code in every step. In practice, implementing agents ignored the pasted code and wrote their own, so the effort was wasted and the plan-vs-reality mismatch caused confusion.
 
-chris-code adopts **"contracts stay, choreography goes."** A spec records only the invariants that survive an architectural rewrite. A plan tells the executor *what* to do and *where*, and trusts it to write code that fits the actual repo. There are hard word budgets to keep it honest.
+chris-code adopts **"contracts stay, choreography goes."** A spec records only the invariants that survive an architectural rewrite. A plan tells the executor *what* to do and *where*, and trusts it to write code that fits the actual repo. A word-efficiency principle keeps it honest: every line must be load-bearing, and length is a smell rather than a limit.
 
 ### 2. A real agent layer, dispatched by scope
 
@@ -62,7 +62,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 | Skill | superpowers | chris-code |
 |---|---|---|
-| **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only (500–1500w). Plan = what/where handoff, no inline code (200–450w). |
+| **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-review` skills) → Requirements. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
