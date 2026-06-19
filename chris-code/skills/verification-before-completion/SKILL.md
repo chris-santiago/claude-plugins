@@ -53,11 +53,11 @@ ruff check / cargo clippy -- -D warnings / eslint / golangci-lint run
 
 ### Step 3: Full Review
 
-Dispatch **all matching** `*-review` skills based on file types changed (additive — e.g., both `python-review` and a future `pytorch-review` fire on `.py` and `.ipynb` files in a PyTorch project). Match by `scope.extensions` in the skill frontmatter. If findings conflict, the more domain-specific review takes precedence.
+Dispatch **all matching** `*-design-reviewer` agents based on file types changed (additive — e.g., both `python-design-reviewer` and `rust-design-reviewer` fire when a change spans `.py`/`.ipynb` and `.rs`). Match by `scope.extensions`. If findings conflict, the more domain-specific review takes precedence.
 
-These are the senior-level refactoring reviews — they catch design drift, API cohesion issues, and structural problems that review-lite and quality-reviewer miss. This is the heavyweight pass before integration.
+These read-only agents are the senior-level pass — they catch design drift, API cohesion issues, and structural problems that review-lite and quality-reviewer miss, and they run in an isolated context so the architecture analysis doesn't pollute the main window. This is the heavyweight gate before integration. (For hands-on refactoring outside the gate, invoke the `python-review` / `rust-review` skills directly.)
 
-**Must see:** No critical or important issues. If issues are found, address them and re-run the review.
+**Must see:** Verdict PASS from every dispatched agent (no S3+ findings). If any returns CONCERNS, address the findings and re-run.
 
 ### Step 4: Requirements Check
 
@@ -90,7 +90,7 @@ All four steps green → you may claim completion. Then invoke `chris-code:finis
 - **chris-code:finishing-a-development-branch** — do not invoke until verification passes
 
 **This skill dispatches:**
-- **`*-review` skills** — full senior-level review, auto-dispatched by scope (Step 3)
+- **`*-design-reviewer` agents** — read-only senior-level review, auto-dispatched by scope (Step 3)
 
 **Related skills:**
 - **chris-code:test-driven-development** — TDD ensures tests exist; this skill ensures they pass

@@ -83,7 +83,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-review` skills) → Requirements. |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -249,6 +249,15 @@ Dispatched before each commit and as a final full-diff pass at plan end.
 | `python-review-lite` | sonnet | `.py` | Idiom checklist + linter, returns clean/block/escalate |
 | `rust-review-lite` | sonnet | `.rs` | Idiom checklist + clippy, returns clean/block/escalate |
 
+### Senior Review Agents (additive — all matching fire)
+
+Dispatched by `verification-before-completion` as the heavyweight, read-only gate before integration. Produce a findings report (architecture map, drift, severity-tagged recommendations); never edit code. The `python-review` / `rust-review` skills are the hands-on, standalone counterparts.
+
+| Agent | Model | Scope | Role |
+|-------|-------|-------|------|
+| `python-design-reviewer` | opus | `.py` | Senior Python cohesion/API-design findings, returns PASS/CONCERNS |
+| `rust-design-reviewer` | opus | `.rs` | Senior Rust cohesion/API-design findings, returns PASS/CONCERNS |
+
 ### Campaign Agent
 
 Dispatched by the `bug-hunt` skill.
@@ -266,7 +275,8 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-coder` | **Exclusive** — most specific wins | `pytorch-coder` (not `python-coder`) |
 | `*-quality-reviewer` | **Additive** — all matching fire | `python-quality-reviewer` + `pytorch-quality-reviewer` |
 | `*-review-lite` | **Additive** — all matching fire | `python-review-lite` |
-| `*-review` skills | **Additive** — all matching fire | `python-review` + future `pytorch-review` |
+| `*-design-reviewer` | **Additive** — all matching fire | `python-design-reviewer` + `rust-design-reviewer` |
+| `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 
