@@ -44,7 +44,7 @@ flowchart TB
     read["Read plan + progress ledger,<br/>pre-flight conflict scan,<br/>extract tasks, map footprints, group into stages"]
     more_tasks{"More tasks in stage?"}
     more_stages{"More stages?"}
-    final_gate["Final review: scripts/review-package merge-base..HEAD<br/>→ *-review-lite on full diff"]
+    final_gate["Final gate: scripts/review-package merge-base..HEAD<br/>→ *-review-lite reads the package file"]
     finish["chris-code:finishing-a-development-branch"]:::finish
 
     read --> coder
@@ -135,6 +135,8 @@ Copy the plan's Constraints section verbatim (exact values, formats, and stated 
 ## Constructing Reviewer Dispatches
 
 - **Never pre-judge.** Do not instruct a reviewer to ignore, not-flag, or pre-rate a finding. If your dispatch contains "do not flag," "at most Minor," or "the plan chose," stop — you are pre-judging to spare yourself a review loop. Let the reviewer raise it and adjudicate it in the loop.
+- **Pass the `*-review-lite` cycle counter.** When a commit-gate `*-review-lite` returns block/escalate, the coder fixes and you re-dispatch the same agent on the same diff. Pass `cycle: N` in that dispatch — `1` on the first try, incremented on each re-review. At `cycle >= 3` the agent escalates to break a stuck fix loop; omit the counter and that backstop never fires (the agent assumes `cycle: 1` every time).
+- **Never narrow the mandate.** Do not reframe a reviewer's job to a subset of its remit ("just check for bugs," "only look at the parser," "skip the tests"). Each reviewer's system prompt defines its full scope — hand it the inputs and constraints, not a reduced charter. Under-cueing the scope is as corrosive as suppressing a finding: a design reviewer told to "look for bugs" stops reviewing design.
 - **Do not** ask a reviewer to re-run tests the implementer already ran, or add open-ended directives ("check all uses") without a concrete, task-specific reason.
 - **Plan-mandated defects are the user's call.** If a finding conflicts with what the plan mandates, present the finding and the plan text and ask which governs. Do not dismiss it because the plan mandated it, and do not dispatch a fix that contradicts the plan without asking.
 
@@ -167,6 +169,18 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 4. If the plan itself is wrong, escalate to the human
 
 **Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
+
+## Final Gate
+
+After the last stage, run one review over the whole change. The per-commit gates each saw a single commit in isolation, so cross-commit idiom drift — a helper duplicated across two tasks, an inconsistency between Task 1 and Task 5 — can pass every per-commit gate and still land.
+
+The task commits are already in, so `git diff --cached` is empty and `*-review-lite` cannot use its default staged-diff path. Hand it the whole-change diff as a file instead:
+
+1. `BASE=$(git merge-base HEAD <base-branch>)`, `HEAD=$(git rev-parse HEAD)`.
+2. Run `scripts/review-package "$BASE" "$HEAD"` — it writes the commit list, stat, and full multi-commit diff to a file and prints the path (the diff never enters your context).
+3. Dispatch each matching `*-review-lite` agent with that package-file path. The agent reads the package and reviews the whole-change diff, not `--cached`.
+
+Handle block/escalate exactly as at a per-commit gate (including the `cycle` counter on re-dispatch).
 
 ## Prompt Templates
 
@@ -205,7 +219,7 @@ Stage 3 — dispatching 2 tasks in parallel:
 
   [Both complete → reviews → commit gates (rust-review-lite + python-review-lite) → mark complete]
 
-[Final commit gate: python-review-lite + rust-review-lite on full diff (base..HEAD)]
+[Final gate: scripts/review-package base..HEAD → python-review-lite + rust-review-lite read the package file]
 [chris-code:finishing-a-development-branch]
 ```
 

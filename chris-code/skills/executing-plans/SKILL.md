@@ -35,15 +35,19 @@ For each task:
 Before each commit (end of plan or mid-plan commit points):
 
 1. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
-2. **Dispatch** all matching agents against the staged diff
-4. If any agent returns **block**: fix the issue before committing
-5. If any agent returns **escalate**: stop and surface to the user
+2. **Dispatch** all matching agents against the staged diff. Pass `cycle: N` — `1` on the first dispatch for this commit, incremented each time you re-dispatch after a fix. At `cycle >= 3` the agent escalates to break a stuck loop; omit the counter and that backstop never fires.
+3. If any agent returns **block**: fix the issue and re-dispatch (incrementing `cycle`) before committing
+4. If any agent returns **escalate**: stop and surface to the user
 
 Only dispatch when there are staged changes to review.
 
 ### Step 4: Final Review
 
-After all tasks complete: dispatch `*-review-lite` agents against the full diff (base..HEAD) to catch cross-task idiom drift and inconsistencies missed by per-commit gates.
+After all tasks complete, review the whole change to catch cross-task idiom drift the per-commit gates missed. The task commits are already in, so `git diff --cached` is empty and `*-review-lite` cannot use its staged-diff path. Hand it the whole-change diff as a file:
+
+1. `BASE=$(git merge-base HEAD main)` (or the actual base), `HEAD=$(git rev-parse HEAD)`.
+2. Run `subagent-driven-development/scripts/review-package "$BASE" "$HEAD"` to write the multi-commit diff to a file and print its path.
+3. Dispatch each matching `*-review-lite` agent with that package-file path; the agent reviews the package diff, not `--cached`.
 
 ### Step 5: Complete Development
 

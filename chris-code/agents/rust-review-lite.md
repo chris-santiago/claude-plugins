@@ -18,17 +18,19 @@ The dispatch gives you inputs — the staged diff, the cycle counter, project co
 
 ## Inputs
 
-1. `git diff --cached --name-only` — list of staged files. Filter to `*.rs`.
-2. `git diff --cached -- '*.rs'` — the staged Rust change itself.
+**Diff scope — two modes.** Default is the **per-commit gate**: the staged diff (`git diff --cached`). At the **final cross-task gate** the per-task commits are already in, so `--cached` is empty; there the dispatch hands you a **review-package file path** (produced by `review-package` for `BASE..HEAD`) — a file containing the commit list, `--stat`, and the full multi-commit diff. When a package path is given, `Read` it and treat its diff as your scope; do not run `git diff --cached` (it would be empty). Everything below is otherwise identical.
+
+1. `git diff --cached --name-only` (per-commit gate) or the package's `## Files changed` stat (final gate) — list of changed files. Filter to `*.rs`.
+2. `git diff --cached -- '*.rs'` (per-commit gate) or the package file's diff (final gate) — the Rust change itself.
 3. Full current contents of each touched `.rs` file (via `Read`) — only when you need surrounding context for a specific diff hunk.
 4. `CLAUDE.md` at repo root — project-specific constraints to honor.
 5. The diff-level idiom checklist below.
 
-You do **not** read neighbor files, the wider crate, or git history beyond `--cached`. Your scope is exactly the staged diff.
+You do **not** read neighbor files, the wider crate, or unrelated git history. Your scope is exactly the diff you were given — the staged diff, or the package file.
 
 ## Workflow (single phase)
 
-1. **Survey the staged diff.** `git diff --cached --stat -- '*.rs'`. If empty, write a `clean` verdict and return — there is nothing to review.
+1. **Survey the diff.** Per-commit gate: `git diff --cached --stat -- '*.rs'`. Final gate: `Read` the review-package file and use its `## Files changed` stat. If the diff is empty, write a `clean` verdict and return — there is nothing to review.
 2. **Categorize each change** in a sentence each: new function, new trait, modified `impl`, new module, type rename, etc.
 3. **Apply the diff-level idiom checklist** below to new and changed lines only. Whole-file architectural assessment is out of scope.
 4. **Run `cargo clippy` on the affected crate** if available:
