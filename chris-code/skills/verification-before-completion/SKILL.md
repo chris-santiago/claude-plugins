@@ -57,6 +57,23 @@ Dispatch **all matching** `*-design-reviewer` agents based on file types changed
 
 These read-only agents are the senior-level pass — they catch design drift, API cohesion issues, and structural problems that review-lite and quality-reviewer miss, and they run in an isolated context so the architecture analysis doesn't pollute the main window. This is the heavyweight gate before integration. (For hands-on refactoring outside the gate, invoke the `python-review` / `rust-review` skills directly.)
 
+Dispatch each matching agent with this framing — design/cohesion is the mandate, not a bug hunt:
+
+```
+Role: senior design/cohesion review of the whole change before integration.
+This is NOT a bug hunt. Report architectural cohesion, API design, module
+boundaries, and structural drift per your output format (Architecture map,
+Findings, Recommended refactors, What still feels wrong). Correctness bugs are
+in scope only as a subset (S4–S5), not the focus.
+
+Inputs:
+  - Changed files: <git diff --name-only <merge-base>..HEAD>
+  - Spec/plan: <paths>
+  - Project constraints: <CLAUDE.md / plan Constraints, verbatim>
+```
+
+Pass it the inputs and constraints, never a narrowed scope. Do not tell the agent to skip a concern or pre-rate a severity — its findings and verdict are its own.
+
 **Must see:** Verdict PASS from every dispatched agent (no S3+ findings). If any returns CONCERNS, address the findings and re-run.
 
 ### Step 4: Requirements Check

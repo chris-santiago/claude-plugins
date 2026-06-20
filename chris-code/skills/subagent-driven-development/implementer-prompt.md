@@ -2,6 +2,8 @@
 
 Use this template when dispatching an implementer subagent. Prefer dispatching a `*-coder` agent by scope match — use this generic template only as a fallback when no specialized coder agent matches.
 
+All inputs are handed over as files (see the skill's **File Handoffs** section). Do **not** paste task text, prior-task summaries, or diffs into the dispatch — carry paths, plus the Constraints verbatim.
+
 ```
 Agent tool:
   subagent_type: [matched *-coder agent, or "general-purpose"]
@@ -10,13 +12,20 @@ Agent tool:
   prompt: |
     You are implementing Task N: [task name]
 
-    ## Task Description
+    ## Where This Fits
 
-    [FULL TEXT of task from plan — paste it here, don't make subagent read the file]
+    [One line: where this task sits in the plan and what depends on it.]
 
-    ## Context
+    ## Your Requirements
 
-    [Scene-setting: where this fits, dependencies, architectural context]
+    Read this first — your requirements, with exact values verbatim: [BRIEF_FILE]
+
+    Spec: [SPEC_FILE]. For any contract an earlier task built, read the file or
+    spec § named here rather than guessing signatures: [DEPENDENCY_POINTERS]
+
+    ## Global Constraints (from the plan, verbatim)
+
+    [GLOBAL_CONSTRAINTS]
 
     ## Before You Begin
 
@@ -25,11 +34,11 @@ Agent tool:
 
     ## Your Job
 
-    1. Implement exactly what the task specifies
-    2. Write tests (following TDD if task says to)
+    1. Implement exactly what the brief specifies
+    2. Write tests (following TDD if the brief says to)
     3. Verify implementation works
     4. Self-review against your embedded checklist
-    5. Report back
+    5. Write your full report to [REPORT_FILE], then return only the summary below
 
     Work from: [directory]
 
@@ -47,12 +56,15 @@ Agent tool:
 
     ## Report Format
 
-    - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+    Write the full report to [REPORT_FILE]:
     - What you implemented
     - What you tested and results
     - Files changed
     - Self-review findings (if any)
     - Concerns or issues
+
+    Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
+    NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.
 
     **Do not commit or push.** The orchestrator handles staging, review, and commit.
 ```

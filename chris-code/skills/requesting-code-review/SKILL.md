@@ -9,7 +9,7 @@ Dispatch a review for a fresh perspective on work in progress. This skill is for
 
 **When the automated pipeline handles it:**
 - Per-task review → `*-quality-reviewer` agents (subagent-driven-development)
-- Pre-merge review → `*-review` skills (verification-before-completion)
+- Pre-merge review → `*-design-reviewer` agents (verification-before-completion Step 3)
 - Commit gate → `*-review-lite` agents (executing-plans)
 
 **When to use this skill instead:**
@@ -22,7 +22,7 @@ Dispatch a review for a fresh perspective on work in progress. This skill is for
 
 ### Option A: Scope-matched review (preferred)
 
-Dispatch the matching `*-review` skill based on file types changed — same mechanism as verification-before-completion Step 3:
+Dispatch the matching `*-review` skill based on file types changed. These are the hands-on, read-WRITE senior reviews — the interactive counterpart to the read-only `*-design-reviewer` agents that gate verification-before-completion Step 3:
 
 1. Check which file types were modified
 2. Match against `*-review` skills by `scope.extensions`
