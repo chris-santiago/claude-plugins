@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Extract one task's full text from a chris-code plan into a file the
-# implementer reads in one call, so the task text never has to pass through
-# the orchestrator's context.
+# Extract one task's plan entry (its actions, Consumes pointers, and spec
+# references) into a file the implementer reads in one call, so the task text
+# never has to pass through the orchestrator's context. The brief is a
+# reference sheet; the implementer reads the referenced spec sections itself.
 #
 # Usage: task-brief PLAN_FILE TASK_N [OUTFILE]
 # Default OUTFILE: <git-sdd>/task-<N>-brief.md  (git-sdd = git rev-parse --git-path sdd)

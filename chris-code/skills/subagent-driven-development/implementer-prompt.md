@@ -18,10 +18,11 @@ Agent tool:
 
     ## Your Requirements
 
-    Read this first — your requirements, with exact values verbatim: [BRIEF_FILE]
+    Read this first — your task and the sections to read: [BRIEF_FILE]
 
-    Spec: [SPEC_FILE]. For any contract an earlier task built, read the file or
-    spec § named here rather than guessing signatures: [DEPENDENCY_POINTERS]
+    Spec: [SPEC_FILE]. Read the sections the brief references; that is where the
+    requirements live. For a contract an earlier task built, read the file or
+    spec § named there rather than guessing signatures: [DEPENDENCY_POINTERS]
 
     ## Global Constraints (from the plan, verbatim)
 
