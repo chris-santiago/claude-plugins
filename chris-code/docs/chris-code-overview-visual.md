@@ -95,7 +95,7 @@ style: |
 
 Design before it codes. Review before it lands.
 
-`23 skills · 9 agents · uniform review gates`
+`25 skills · 11 agents · uniform review gates`
 
 ---
 
@@ -172,6 +172,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
 <div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
+<div class="lane"><div class="lanehdr" style="background:#e8eaf6;border:1.5px solid #9fa8da;color:#1a1a2e">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
 
@@ -212,7 +213,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v2">2 · Lints — zero errors / warnings</div>
 <div class="vchev">↓</div>
-<div class="vbar v3">3 · Full review — senior *-review skills</div>
+<div class="vbar v3">3 · Full review — scope-matched *-design-reviewer agents</div>
 <div class="vchev">↓</div>
 <div class="vbar v4">4 · Requirements — every item traced</div>
 <div class="vchev">↓</div>
@@ -233,6 +234,22 @@ On-demand skills for when you want to go hunting:
 - **`technical-review`** — math / algorithm / numerical correctness for ML
 - **`python-review` · `rust-review`** — senior refactor & API-design passes
 - **`release`** — version bump + changelog + GitHub release
+
+---
+
+## Remediation & coherent change
+
+<p class="cap" style="margin-top:6px">A bug, a refactor, an API alignment — the behavior is settled, only the <b>implementation</b> is open. One engine handles all of them: find the fix that fits the codebase, and defend it against the alternatives.</p>
+
+<div class="flow">
+<div class="node design">remediating-issues &nbsp;·&nbsp; systematic-debugging &nbsp;·&nbsp; lean-spec &nbsp;·&nbsp; direct</div>
+<div class="chev">↓ &nbsp; feed a <b>determined</b> change</div>
+<div class="node exec">coherent-change &nbsp;·&nbsp; research → defend the most coherent fix → implement → lite-review</div>
+<div class="chev">↓ &nbsp; hand back a working, lite-reviewed change</div>
+<div class="node task">caller closes &nbsp;·&nbsp; regression / coverage → design-reviewer gate → land</div>
+</div>
+
+<p class="cap">Signature output: a <b>defended choice</b> — every candidate rooted in how the codebase already solves it, plus why the chosen one wins. Ship the fix that looks like it was always there.</p>
 
 ---
 

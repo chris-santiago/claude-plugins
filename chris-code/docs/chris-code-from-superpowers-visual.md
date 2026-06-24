@@ -162,6 +162,7 @@ This deck is the other **20%**, and the *why*.
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
 <div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
+<div class="lane"><div class="lanehdr" style="background:#e8eaf6;border:1.5px solid #9fa8da;color:#1a1a2e">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
 
@@ -229,13 +230,14 @@ Where muscle memory will mislead you. Framed before → after:
 
 ## What's new, and why
 
-<div class="newhdr">New skills (9)</div>
-<div class="chiprow"><span class="chip">lean-spec</span><span class="chip">regression-test</span><span class="chip">python-review</span><span class="chip">rust-review</span><span class="chip">technical-review</span><span class="chip">bug-hunt</span><span class="chip">test-sweep</span><span class="chip">code-archaeology</span><span class="chip">release</span></div>
+<div class="newhdr">New skills (11)</div>
+<div class="chiprow"><span class="chip">lean-spec</span><span class="chip">coherent-change</span><span class="chip">remediating-issues</span><span class="chip">regression-test</span><span class="chip">python-review</span><span class="chip">rust-review</span><span class="chip">technical-review</span><span class="chip">bug-hunt</span><span class="chip">test-sweep</span><span class="chip">code-archaeology</span><span class="chip">release</span></div>
 
-<div class="newhdr">New agents (9) — the layer superpowers doesn't have</div>
+<div class="newhdr">New agents (11) — the layer superpowers doesn't have</div>
 <div class="arow">3 coders (<code>python</code> / <code>pytorch</code> / <code>rust</code>) — exclusive, most-specific wins</div>
 <div class="arow">3 quality-reviewers — additive post-spec review</div>
 <div class="arow">2 review-lite gates — pre-commit idiom + lint</div>
+<div class="arow">2 design-reviewers (<code>python</code> / <code>rust</code>) — senior cohesion at the verification gate</div>
 <div class="arow"><code>bug-hunter</code> — adversarial edge-case test writer</div>
 
 ---
@@ -244,7 +246,7 @@ Where muscle memory will mislead you. Framed before → after:
 
 ## The net
 
-chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 9 new skills and a 9-agent layer.
+chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 11 new skills and an 11-agent layer.
 
 **Same spine.** Leaner artifacts, mechanical dispatch, harder gates.
 
