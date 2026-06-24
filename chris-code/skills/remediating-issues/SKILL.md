@@ -55,7 +55,7 @@ One issue is the atom. Work it through these stages. (A set of issues is just fa
 
 **3. Close it — the bug gates.** With the lite-reviewed fix in hand, run the close in order:
 
-1. **`chris-code:regression-test` (REQUIRED — the mandatory bug gate).** Durable coverage of the *specific failure mode*, proven RED on the pre-fix code (`git stash push -- <changed source>` → watch it fail → `git stash pop`). An *inert* defect (no observable symptom, per stage 1) is instead proven structurally — assert the inconsistency itself is gone. The fix is not complete until this passes.
+1. **`chris-code:regression-test` (REQUIRED — the mandatory bug gate).** Durable coverage of the *specific failure mode*, proven RED on the pre-fix code. Run the proof **before staging**, while the fix is still unstaged: `git stash push -- <changed source>` → it fails → `git stash pop` → then `git add` once. (`git stash pop` restores the working tree but **not** the index, so stashing *after* `git add` silently un-stages the fix and it drops from the commit; recover with `git stash pop --index`.) An *inert* defect (no observable symptom, per stage 1) is instead proven structurally — assert the inconsistency itself is gone. The fix is not complete until this passes.
 2. **`chris-code:verification-before-completion`** (REQUIRED) — tests, lint, and the `python-design-reviewer` / `rust-design-reviewer` cohesion gate. Verdict must be PASS.
 3. **`chris-code:finishing-a-development-branch`** — integration (merge / PR / keep / discard).
 
