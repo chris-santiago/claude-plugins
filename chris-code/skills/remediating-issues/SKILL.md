@@ -79,7 +79,7 @@ The signature artifact, presented at the stage-4 checkpoint before any code chan
 
 **5. Defense against the alternatives.** Every rejected candidate (A/B/C/D…) gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star fix from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it.
 
-**6. Implementation + verification plan.** Who implements (coder agent), the test(s) and the domain-appropriate proof (golden / browser / benchmark), `regression-test`, and how the origin gets closed.
+**6. Implementation + verification plan.** Who implements (coder agent), the test(s) and the domain-appropriate proof, `regression-test`, and how the origin gets closed.
 
 Then ask to proceed.
 
@@ -98,7 +98,7 @@ One issue is the atom; a set is fan-out. Triage all issues, rank them, and footp
 | "I'll add the test after the fix" | The before/after check comes first. A test written around a working fix proves nothing about the bug. |
 | "The issue already says how to fix it" | That's candidate A. Make it earn the win or show why it loses — the suggested fix is often the over-reaching one. |
 | "One-line rejections are enough" | The rejection reasoning *is* the deliverable. A real rebuttal per alternative is what makes the choice trustworthy. |
-| "A unit test covers it" (for a visual/interactive symptom) | If the eye, the browser, or the benchmark is what sees the bug, that's the proof you owe. |
+| "A unit test covers it" (for a symptom a unit test can't observe) | If the bug only surfaces through an integration, end-to-end, or performance check, that's the proof you owe. |
 | "Fix the reported case now, handle the siblings later" | Same-root-cause siblings ship in this fix — the correctness table lists them for a reason. Only a separate, larger improvement may be deferred. |
 
 ## Red Flags — Stop, You're About to Violate the Discipline
@@ -108,5 +108,5 @@ One issue is the atom; a set is fan-out. Triage all issues, rank them, and footp
 - Your fix introduces a helper the codebase already provides.
 - You're shipping a stub, a fallback, or a "TODO: the rest" for a case the same root cause reaches.
 - You rejected an alternative without saying why it's less coherent.
-- Your proof is a unit test for a symptom only the eye, the browser, or a benchmark can see.
+- Your proof is a unit test for a symptom only an integration, end-to-end, or performance check can observe.
 - You're about to claim "done" without the before/after check flipping or `verification-before-completion` running.
