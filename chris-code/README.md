@@ -198,6 +198,8 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 | `dispatching-parallel-agents` | Dispatch 2+ independent tasks concurrently | Any skill needing parallelism |
 | `test-driven-development` | RED-GREEN-REFACTOR cycle | Coder agents during implementation |
 | `systematic-debugging` | Four-phase root cause investigation | When bugs arise |
+| `remediating-issues` | Remediate a known bug/issue: diagnose → build → close | User, or a review/audit finding |
+| `coherent-change` | Build a *determined* change to fit the codebase: research → defend → implement → lite-review | `remediating-issues` / `systematic-debugging` / `lean-spec` / direct |
 | `verification-before-completion` | Tests + lints + full review + requirements check | Before claiming done |
 | `finishing-a-development-branch` | Merge / PR / keep / discard + worktree cleanup | After verification passes |
 | `requesting-code-review` | Ad-hoc review (fresh perspective, pre-refactor) | User-triggered |
