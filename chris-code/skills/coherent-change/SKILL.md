@@ -20,7 +20,7 @@ Once a change is *determined* — its intended behavior settled — there are st
 
 **The signature output, produced every time:** a defended choice — every genuine candidate rooted in how this codebase already solves the problem, the one you selected, proof it's correct across *all* affected cases, and why it beats the others on reuse, idiom-fit, contract-preservation, least surprise, and end-user ergonomics.
 
-This is the engine `chris-code:remediating-issues` runs for a known issue, and the one `chris-code:systematic-debugging` hands a diagnosed fix off to — both own their front-end and delegate the whole build, so the engine carries it end to end. A design workflow such as `chris-code:lean-spec` can instead call it decision-only, taking only the defended choice for its own plan (see Modes).
+This is the engine `chris-code:remediating-issues` runs for a known issue, and the one `chris-code:systematic-debugging` hands a diagnosed fix off to — both delegate the *build* (research → defend → implement, lite-reviewed) and then run their own close. A design workflow such as `chris-code:lean-spec` instead calls it decision-only, taking only the defended choice for its own plan (see Modes).
 
 ## When to Use
 
@@ -34,13 +34,13 @@ This is the engine `chris-code:remediating-issues` runs for a known issue, and t
 
 ## Modes — Read This First
 
-The mode turns on one question: **does a downstream workflow own the build?** Not "who invoked you" — what owns the implementation.
+The mode turns on one question: **does a downstream workflow own implementation?**
 
-**Carry-through (default).** You own the change end to end: run the full arc through implement → verify → close. This is the mode for direct invocation **and** for when a fix-oriented front-end (`chris-code:remediating-issues`, `chris-code:systematic-debugging`) hands you a determined change — they own the framing or diagnosis, you own the build.
+**Build (default).** Research → defend → implement → **lite-review self-gate** → hand back. The engine produces a coherent, working, lite-reviewed change and hands it to the caller. It does **not** run the heavyweight close — durable coverage, `verification-before-completion`, `finishing` — that is the caller's responsibility. This is the mode for direct invocation and for fix-oriented front-ends (`chris-code:remediating-issues`, `chris-code:systematic-debugging`), which own their own close. If you were invoked directly, *you* are the caller: run the close after.
 
-**Decision-only (escape hatch).** You stop at the approved defended choice and hand it back, because a downstream spec → plan → execution workflow owns the build. This is the mode when a design workflow such as `chris-code:lean-spec` calls you at its propose-approaches step. Run **stages 1–4 only**; the defended choice's implementation + verification plan becomes a hand-off note for their plan. Do **not** implement, verify, or close — that would collide with their workflow.
+**Decision-only (escape hatch).** Research → defend, then stop and hand back the approved defended choice — because a downstream spec → plan → execution workflow (`chris-code:lean-spec`) owns implementation itself. Run **stages 1–4 only**; do **not** implement. The defended choice's implementation + close plan becomes a hand-off note for their plan.
 
-You are in decision-only mode **only** if a spec/plan/execution workflow downstream owns the build. Otherwise carry through — including when remediating-issues or systematic-debugging delegated the change to you.
+You are in decision-only mode **only** when a downstream workflow owns implementation (lean-spec). Otherwise build.
 
 ## The Iron Law
 
@@ -69,13 +69,15 @@ Work the determined change through these stages. (Decision-only mode stops after
 
 **4. Select and defend.** Choose the most coherent and ergonomic candidate and write the defended choice (canonical structure below). **Present it — with the implementation and verification plan — and get approval before changing code.** This is the single human checkpoint. **Decision-only mode ends here:** return the approved defended choice to the caller and stop.
 
-**5. Implement.** *(carry-through only)* Dispatch the language-matched coder agent (`chris-code:python-coder` / `rust-coder` / `pytorch-coder`) to make the approved change — the default path, keeping implementation in an isolated context. The coder implements *only* the approved choice: minimal, no "while I'm here" extras. Work in-thread only when the change is too small to be worth a dispatch. Then **verify the coder's work yourself — subagents over-claim.** Re-run the tests, `grep` that intended deletions actually happened, and read the changed hunk; trust the diff you've checked, not the agent's summary.
+**5. Implement and self-gate.** *(build only)* Dispatch the language-matched coder agent (`chris-code:python-coder` / `rust-coder` / `pytorch-coder`) to make the approved change — the default path, keeping implementation in an isolated context. The coder implements *only* the approved choice: minimal, no "while I'm here" extras. Work in-thread only when the change is too small to be worth a dispatch. Then **verify the coder's work yourself — subagents over-claim:** re-run the tests, `grep` that intended deletions actually happened, and read the changed hunk; trust the diff you've checked, not the agent's summary. Before handing back, run the **`*-review-lite` gate** (`python-review-lite` / `rust-review-lite`) on the staged diff — the fast, diff-level guarantee that you never ship broken or sloppy code to the caller. It must come back clean.
 
-**6. Prove and close.** *(carry-through only)* Run the before/after check from stage 1: it must fail without the change and pass with it. Where a unit test cannot observe the result, match the proof to what the change actually affects (an integration assertion, a golden/visual capture, a benchmark). Then, in order:
+**6. Hand back — the caller closes.** *(build only)* Confirm the before/after check from stage 1 passes (it must fail without the change and pass with it; where a unit test cannot observe the result, use the domain-appropriate proof — an integration assertion, a golden/visual capture, a benchmark). Then hand back the implemented, lite-reviewed change. The heavyweight **close is the caller's**, in order:
 
-1. **Durable coverage, proven RED without the change.** Ensure the change has test coverage that fails without it and passes with it — write it test-first where you can (`chris-code:test-driven-development`). Prove it's real: temporarily revert the change (`git stash push -- <changed source>`), watch the test fail, then restore (`git stash pop`). A test never seen failing proves nothing. A fix-oriented front-end (remediating-issues, systematic-debugging) additionally runs `chris-code:regression-test` here, to cover the *specific failure mode* rather than just the new behavior.
-2. **`chris-code:verification-before-completion`** (REQUIRED) — runs tests and lint, and dispatches the language-matched read-only **review agent** (`python-design-reviewer` / `rust-design-reviewer`). That senior cohesion/drift pass is the right final gate for a change whose whole point is fitting the codebase. Verdict must be PASS.
+1. **Durable coverage, proven RED without the change.** The behavior is locked in with tests that fail without the change and pass with it (`git stash push -- <changed source>` → watch fail → `git stash pop`). A bug-oriented caller (`chris-code:remediating-issues`, `chris-code:systematic-debugging`) uses `chris-code:regression-test` for the *specific failure mode*; new behavior uses `chris-code:test-driven-development`.
+2. **`chris-code:verification-before-completion`** — tests, lint, and the language-matched `python-design-reviewer` / `rust-design-reviewer` cohesion gate (the heavyweight pass; verdict must be PASS).
 3. **`chris-code:finishing-a-development-branch`** — integration (merge / PR / keep / discard).
+
+If you were invoked **directly**, you are the caller — run this close yourself. If a front-end called you, it owns the close.
 
 ## The Defended Choice
 
@@ -95,9 +97,9 @@ The signature artifact, presented at the stage-4 checkpoint before any code chan
 
 **5. Defense against the alternatives.** Every rejected candidate gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it.
 
-**6. Implementation + verification plan.** Who implements (coder agent), the test(s) and the domain-appropriate proof, the durable coverage, and how it lands. In decision-only mode this is a hand-off note for the caller's plan, not yours to execute.
+**6. Implementation + close plan.** Who implements (coder agent) and the lite-review self-gate, then the caller's close: durable coverage / domain-appropriate proof, the `chris-code:verification-before-completion` gate (design-reviewer must PASS), and `chris-code:finishing-a-development-branch` for landing. In decision-only mode the whole plan is a hand-off note for the caller, not yours to execute.
 
-Then ask to proceed (carry-through) or hand back (decision-only).
+Then ask to proceed (build) or hand back (decision-only).
 
 ## Rationalizations — All Mean "Do the Research and Write the Defense"
 
@@ -118,4 +120,4 @@ Then ask to proceed (carry-through) or hand back (decision-only).
 - Your change introduces a helper the codebase already provides.
 - You rejected an alternative without saying why it's less coherent.
 - You're implementing or closing while in decision-only mode — the caller owns that.
-- You're about to claim "done" without the before/after check flipping or `verification-before-completion` running.
+- You're about to hand back without the before/after check flipping or the `*-review-lite` gate running.

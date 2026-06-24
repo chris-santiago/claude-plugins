@@ -170,6 +170,7 @@ You MUST complete each phase before proceeding to the next.
    - ONE change at a time
    - No "while I'm here" improvements
    - No bundled refactoring
+   - The root cause is known, so the fix is now a *determined change*. When more than one implementation is plausible, hand it to `chris-code:coherent-change` — it researches the codebase's patterns, defends the most coherent implementation against the alternatives, implements it, and lite-reviews it before handing back. You then run this phase's close (the failing test from Step 1, regression coverage, verify).
 
 3. **Verify Fix**
    - Test passes now?
@@ -242,4 +243,5 @@ These techniques are part of systematic debugging and available in this director
 **Related skills:**
 - **chris-code:test-driven-development** - For creating failing test case (Phase 4, Step 1)
 - **chris-code:regression-test** - For full regression coverage after the fix (Phase 4, Step 1)
+- **chris-code:coherent-change** - For implementing the determined fix coherently once the root cause is known (Phase 4, Step 2)
 - **chris-code:verification-before-completion** - Verify fix worked before claiming success

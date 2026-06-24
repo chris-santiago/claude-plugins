@@ -74,6 +74,10 @@ How correctness is validated — at the level of behavior, not command execution
 Only unresolved items that block correctness. Omit section if none.
 ```
 
+## Grounding a Key Decision
+
+When a section-8 decision is a *determined change against existing code* — the behavior is settled and the only open question is which implementation best fits — use `chris-code:coherent-change` in **decision-only mode** to research the codebase, generate grounded candidates, and defend the most coherent one. Capture its defended choice as the decision's rationale and rejected alternatives. The engine stops at the choice and hands back; the spec → plan → execution workflow still owns the build.
+
 ## Allowed Code
 
 Code in the spec must be **minimal** and only used to pin down:
