@@ -1,7 +1,7 @@
 {
   "name": "chris-code",
   "description": "Workflow skills, coding agents, review gates, and quality campaigns for Claude Code.",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "license": "MIT",
   "agents": [
     "./agents/python-coder.md",
