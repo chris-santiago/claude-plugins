@@ -54,6 +54,10 @@ Capture any contract that later binds separate tasks or components, so a plan
 can reference it here instead of restating it. Minimal code ONLY to pin down a
 public API, schema, or semantic rule that would otherwise be ambiguous. No
 module drafts or scaffolds.
+Prefer contracts that make integration a *seam-check*: a boundary a reviewer can
+verify by reading the two sides against the contract, without holding the whole
+system in context. The sharper the seam, the less an integrator has to trust a
+compressed report.
 
 ## 7. Invariants and constraints
 Non-negotiable guarantees. Backward compat. Performance/security requirements.

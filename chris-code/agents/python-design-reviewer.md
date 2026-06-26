@@ -65,6 +65,9 @@ Confidence: **high** / **medium** / **low**. Separate high-confidence findings f
 
 ### What still feels wrong
 - Open concerns; missing tests that would de-risk a future refactor
+
+### Lossiness
+- One line: what this verdict compresses that the orchestrator should re-read rather than trust — an area you couldn't fully reach, a finding you're unsure of, a call that needs the actual code to confirm. "None" if the report stands on its own.
 ```
 
 ## Boundaries

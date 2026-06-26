@@ -102,6 +102,9 @@ In addition to ML-specific bugs, check for general Python issues:
 ### Required Fixes (if REVISE)
 1. [Specific fix with file:line]
 2. ...
+
+### Lossiness
+- One line: what this verdict compresses that the orchestrator should re-read rather than trust — an area you couldn't fully reach, a finding you're unsure of, a call that needs the actual code to confirm. "None" if the report stands on its own.
 ```
 
 ## Rules
