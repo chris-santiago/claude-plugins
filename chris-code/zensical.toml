@@ -1,0 +1,156 @@
+[project]
+
+site_name        = "chris-code"
+site_description = "An opinionated software-engineering workflow for Claude Code: design before code, dispatch focused subagents, and gate drift before it reaches main."
+site_author      = "chris-santiago"
+site_url         = "https://chris-santiago.github.io/claude-plugins/"
+docs_dir         = "docs"
+site_dir         = "site"
+
+repo_url  = "https://github.com/chris-santiago/claude-plugins"
+repo_name = "chris-santiago/claude-plugins"
+edit_uri  = "edit/main/docs/"
+
+nav = [
+    { "Home" = "index.md" },
+
+    { "Tutorials" = [
+        { "Overview"        = "tutorials/index.md" },
+        { "Getting started" = "tutorials/getting-started.md" },
+    ] },
+
+    { "How-to" = [
+        { "Overview"                  = "how-to/index.md" },
+        { "Remediate a bug"           = "how-to/remediate-a-bug.md" },
+        { "Make a determined change"  = "how-to/make-a-determined-change.md" },
+        { "Review a branch"           = "how-to/review-a-branch.md" },
+        { "Run a quality campaign"    = "how-to/run-a-quality-campaign.md" },
+        { "Cut a release"             = "how-to/cut-a-release.md" },
+    ] },
+
+    { "Reference" = [
+        { "Overview"             = "reference/index.md" },
+        { "Skills"               = "reference/skills.md" },
+        { "Agents"               = "reference/agents.md" },
+        { "Scope dispatch & models" = "reference/scope-dispatch.md" },
+    ] },
+
+    { "Explanation" = [
+        { "Overview"                  = "explanation/index.md" },
+        { "The pipeline"              = "explanation/the-pipeline.md" },
+        { "The assurance model"       = "explanation/the-assurance-model.md" },
+        { "Context & dispatch"        = "explanation/context-and-dispatch.md" },
+        { "Relationship to superpowers" = "explanation/vs-superpowers.md" },
+    ] },
+]
+
+# Optional palette override — drop a stylesheet at docs/stylesheets/extra.css
+# and uncomment to use a custom color scheme.
+# extra_css = [ "stylesheets/extra.css" ]
+
+
+# ----------------------------------------------------------------------------
+# Theme: modern variant of Material's look and feel.
+# ----------------------------------------------------------------------------
+[project.theme]
+variant  = "modern"
+language = "en"
+
+features = [
+    "announce.dismiss",
+
+    # Per-page edit / view-source buttons (link to the page's own .md on GitHub).
+    "content.action.edit",
+    "content.action.view",
+
+    # Code-block UX.
+    "content.code.annotate",
+    "content.code.copy",
+    "content.code.select",
+
+    "content.footnote.tooltips",
+    "content.tabs.link",
+    "content.tooltips",
+
+    # Navigation.
+    "navigation.expand",            # expand sidebar groups by default
+    "navigation.footer",
+    "navigation.indexes",           # section index doubles as section landing
+    "navigation.instant",           # XHR nav, no full reload
+    "navigation.instant.prefetch",
+    "navigation.path",              # breadcrumbs
+    "navigation.sections",
+    "navigation.tabs",              # top-level sections as tabs
+    "navigation.tabs.sticky",
+    "navigation.top",               # back-to-top button
+    "navigation.tracking",
+
+    # Search.
+    "search.highlight",
+]
+
+[project.theme.icon]
+edit = "material/pencil"
+view = "material/eye"
+
+# Light + dark color schemes with a toggle.
+[[project.theme.palette]]
+scheme      = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme      = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+
+# ----------------------------------------------------------------------------
+# Markdown extensions — Material-equivalent set.
+# ----------------------------------------------------------------------------
+[project.markdown_extensions.abbr]
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.footnotes]
+[project.markdown_extensions.md_in_html]
+
+[project.markdown_extensions.toc]
+permalink = true
+
+[project.markdown_extensions.pymdownx.arithmatex]
+generic = true                      # MathJax-style equations
+
+[project.markdown_extensions.pymdownx.betterem]
+[project.markdown_extensions.pymdownx.caret]
+[project.markdown_extensions.pymdownx.details]    # collapsible admonitions
+
+[project.markdown_extensions.pymdownx.emoji]
+emoji_generator = "zensical.extensions.emoji.to_svg"
+emoji_index     = "zensical.extensions.emoji.twemoji"
+
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums     = true
+line_spans          = "__span"
+pygments_lang_class = true
+
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.keys]
+[project.markdown_extensions.pymdownx.magiclink]
+[project.markdown_extensions.pymdownx.mark]
+[project.markdown_extensions.pymdownx.smartsymbols]
+
+[project.markdown_extensions.pymdownx.superfences]
+# Register the `mermaid` fence so ```mermaid blocks render as diagrams.
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" }
+]
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style     = true
+combine_header_slug = true
+
+[project.markdown_extensions.pymdownx.tasklist]
+custom_checkbox = true
+
+[project.markdown_extensions.pymdownx.tilde]

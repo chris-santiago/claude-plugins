@@ -1,0 +1,46 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time. Don't cancel an in-progress deploy
+# when a new run queues — let the running one finish first.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v6
+      # uv provides an ephemeral, project-less toolchain: `uvx` resolves and
+      # runs zensical on the fly (and fetches a Python if the runner lacks one).
+      # No pyproject.toml, no virtualenv, nothing to maintain in-repo.
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uvx zensical build --clean
+        working-directory: chris-code
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: chris-code/site
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

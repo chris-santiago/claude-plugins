@@ -252,4 +252,4 @@ chris-code is a **true superset**: every superpowers skill is present (one renam
 
 **Same spine.** Leaner artifacts, mechanical dispatch, harder gates.
 
-Full write-up: `docs/superpowers-comparison.md`
+Full write-up: `superpowers-comparison.md`
