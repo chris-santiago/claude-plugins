@@ -13,6 +13,15 @@ When you have multiple unrelated failures (different test files, different subsy
 
 **Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
 
+## Forking vs. named dispatch
+
+Claude Code can also *fork* — spawn a subagent that inherits your full session (its prompt, tools, and history) instead of a constructed brief. Forking and a named agent's persona are mutually exclusive: a fork carries *your* context and persona; a named agent carries *its own* and starts fresh. Two consequences for this workflow:
+
+- **Reviewers and the intent re-check stay named and fresh.** Their value is independence — a different persona judging the work without your framing. A fork can't give them their persona, and it would hand them your context, contaminating the very independence the gate exists for. Never fork a reviewer.
+- **Forking is not the integrator's fix.** A fork inherits your *compressed* context — your running summary — not the underlying evidence. When you're judging from compressed reports, the fix is to re-read the actual slice (see `subagent-driven-development`, *Judging from Compressed Reports*), not to fork.
+
+Forking is for *exploratory* branches — spinning off a what-if with the full conversation in hand. For the dispatch-a-focused-task pattern this skill is about, construct the brief and use a named agent.
+
 ## When to Use
 
 ```mermaid
