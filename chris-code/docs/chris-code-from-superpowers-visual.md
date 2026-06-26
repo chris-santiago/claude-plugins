@@ -62,6 +62,7 @@ style: |
   .green{ background:#d7f5e3; border:1.5px solid #7fd6a6; }
   .yellow{ background:#fff3cd; border:1.5px solid #ffd966; }
   .red{ background:#ffd9d9; border:1.5px solid #ef9a9a; }
+  .indigo{ background:#e8eaf6; border:1.5px solid #9fa8da; }
   .muted{ background:#f0f0f0; border:1.5px solid #ddd; color:#aaa; text-decoration:line-through; }
   .lanenote{ font-size:14px; color:#666; }
 
@@ -162,7 +163,7 @@ This deck is the other **20%**, and the *why*.
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
 <div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
-<div class="lane"><div class="lanehdr" style="background:#e8eaf6;border:1.5px solid #9fa8da;color:#1a1a2e">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
+<div class="lane"><div class="lanehdr indigo">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
 
