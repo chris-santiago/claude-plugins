@@ -114,7 +114,7 @@ Senior Rust coder. Implement features, fix bugs, write tests, and refactor — c
 4. **Run tests** — `cargo test` (target a specific crate/test when appropriate); fix failures.
 5. **Run clippy** — `cargo clippy -- -D warnings`; fix warnings.
 6. **Rebuild bindings** when relevant (e.g., `maturin develop`) and run Python tests if the project has a Python extension.
-7. **Self-review** against S3+ list; fix anything introduced.
+7. **Self-review** against S3+ list; fix anything introduced. The list is a *floor, not a ceiling* — clearing it is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names.
 8. **Report back** — changes, files, test status; flag public-API changes, cross-language wiring, architectural questions.
 
 ## Boundaries

@@ -82,7 +82,7 @@ style: |
   /* verification funnel */
   .vstack{ display:flex; flex-direction:column; align-items:center; gap:2px; margin-top:16px; }
   .vbar{ border-radius:9px; padding:9px 0; font-weight:600; font-size:18px; text-align:center; color:#16213e; background:#e8eaf6; border:1.5px solid #9fa8da; }
-  .v1{ width:90%; } .v2{ width:76%; } .v3{ width:62%; } .v4{ width:48%; }
+  .v1{ width:90%; } .v2{ width:78%; } .v3{ width:66%; } .v4{ width:54%; } .v5{ width:42%; }
   .vdone{ width:34%; background:#d7f5e3; border:1.5px solid #7fd6a6; border-radius:9px; padding:9px 0; text-align:center; font-weight:700; color:#0a7a4a; }
   .vchev{ color:#aab; font-size:18px; }
 ---
@@ -190,7 +190,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="gate"><span class="gnum">4</span>Full-diff<br>pass</div>
 </div>
 
-<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." <b>Do Not Trust the Report</b> — reviewers re-read the code, not the summary.</p>
+<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." <b>Do Not Trust the Report</b> — reviewers re-read the code, not the summary. More stages raise <i>recall</i>, not proof: they catch more, they don't certify the rest is clean.</p>
 
 ---
 
@@ -217,10 +217,12 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v4">4 · Requirements — every item traced</div>
 <div class="vchev">↓</div>
+<div class="vbar v5">5 · Intent re-check — spec-blind, behavior vs the original ask</div>
+<div class="vchev">↓</div>
 <div class="vdone">✓ may claim done</div>
 </div>
 
-<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands.</p>
+<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands. <b>Green means these lenses caught nothing, not that nothing's wrong</b> — the independent axes (deterministic lint, spec-blind intent) carry more than another same-model re-read.</p>
 
 ---
 

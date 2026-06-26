@@ -111,6 +111,16 @@ If no intent ledger exists and no original-ask statement is recoverable (a chang
 
 All five steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
+## What These Gates Do and Don't Prove
+
+Be honest about what a green pipeline buys. These steps are not independent guarantees stacked into a proof. Only about two axes are genuinely independent: the **linter** (a deterministic, non-LLM check) and **conformance** (does the behavior match the spec/intent). The design and quality re-judgments are correlated LLM passes — they share a model, a training distribution, and often a framing, so they tend to miss the same things together.
+
+- More passes raise **recall** (more issues surfaced), not **residual assurance** — a clean run means "nothing these lenses caught," not "nothing is wrong."
+- **Diversity beats quantity.** A check that fails *differently* — a deterministic linter, a spec-blind behavior check, an actual failing test, a human read — adds more than another same-model re-review of the same diff. The intent re-check (Step 5) earns its place by being spec-*blind*: it decorrelates from every spec-anchored step above it.
+- No gate here verifies the **spec itself is right**. Conformance is not correctness; that judgment stays with the user.
+
+Run the gates — they catch real drift. Just don't read green as proof of its absence.
+
 ## Rationalizations — All Mean "Run the Verification"
 
 | Excuse | Reality |

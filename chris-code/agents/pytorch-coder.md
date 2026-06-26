@@ -169,7 +169,7 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 4. **Run tests** — `pytest` or project runner; fix failures.
 5. **Sanity check** — `Trainer(fast_dev_run=1)` for shape/loop validation when touching training pipeline.
 6. **Run lints** — project linter; fix issues.
-7. **Self-review** against the silent-bug + S3+ lists; fix anything introduced.
+7. **Self-review** against the silent-bug + S3+ lists; fix anything introduced. The lists are a *floor, not a ceiling* — clearing them is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names.
 8. **Report back** — changes, tests, training-dynamics impact; flag anything that changes loss, optimizer, schedule, augmentation, data split, or model architecture.
 
 ## Boundaries

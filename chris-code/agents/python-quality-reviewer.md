@@ -103,5 +103,6 @@ Look for obvious bugs the coder may have introduced:
 - **Be specific.** Every finding must include a file:line reference and a concrete description.
 - **No style nits.** Don't flag naming preferences, formatting, or minor style differences — review-lite handles idiom compliance.
 - **No scope expansion.** Only review the files changed by this task. Don't audit the whole codebase.
+- **The checklist is a floor, not a ceiling.** Clearing every axis is the minimum bar, not sufficiency — a change can pass each listed check and still be wrong for a reason no axis enumerates. Judge the change as a whole, then apply the rules; don't APPROVE on a clean checklist alone.
 - **APPROVED means safe to commit.** Only approve if you would be comfortable shipping this code.
 - **REVISE means the coder must fix.** List exactly what needs to change.

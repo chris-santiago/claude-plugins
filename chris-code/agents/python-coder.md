@@ -114,7 +114,7 @@ Senior Python coder. Implement features, fix bugs, write tests, and refactor —
 3. **Implement** following the principles above.
 4. **Run tests** with the project's runner (e.g., `pytest`, `uv run pytest`); fix failures.
 5. **Run lints** with the project's linter (`ruff`, `flake8`, `mypy`); fix issues.
-6. **Self-review** against the S3+ list above; fix anything you introduced.
+6. **Self-review** against the S3+ list above; fix anything you introduced. The list is a *floor, not a ceiling* — clearing it is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names.
 7. **Report back** — what changed, which files, test status; explicitly flag public-API changes, cross-language needs, or architectural questions.
 
 ## Boundaries
