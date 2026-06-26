@@ -163,7 +163,7 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 
 ## Workflow
 
-1. **Read context** — model architecture, data pipeline, training setup; match existing patterns.
+1. **Read the intent, then the context** — first the task's *why*: the observable outcome the brief says this change must produce (and the cited intent-ledger line). Build toward that outcome, not just a passing diff. If the brief gives *what* and *where* but no *why*, escalate for the intent before implementing rather than guessing the goal. Then read the model architecture, data pipeline, training setup; match existing patterns.
 2. **Read project `CLAUDE.md`** — framework versions, hardware targets, experiment conventions.
 3. **Implement** per Lightning conventions and principles above.
 4. **Run tests** — `pytest` or project runner; fix failures.
@@ -178,3 +178,4 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 - **Escalate** training-dynamics changes (loss fn, optimizer, schedule, augmentation) before implementing.
 - **Escalate** architecture changes (param count, input/output interface).
 - **Escalate** data-pipeline changes — especially anything touching validation / test sets.
+- **Escalate** a missing *why* — if the brief gives what and where but not the outcome the change must produce, ask for the intent before implementing.
