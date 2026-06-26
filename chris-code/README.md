@@ -192,6 +192,47 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 - **Durable progress ledger.** Each clean task is appended to `.git/sdd/progress.md`; a controller that loses context after compaction resumes from the ledger instead of re-running finished work. TodoWrite stays the live view.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
 
+## The determined-change engine
+
+The pipeline above is for **design-open** work — when *what to build* is still live. But much engineering is **determined**: the behavior is already settled (a bug to fix, a refactor, an API alignment, an already-specced change) and the only open question is *which implementation best fits the codebase*. That track runs through `coherent-change`.
+
+Its signature output, produced every time, is a **defended choice**: every genuine candidate rooted in how the codebase already solves the problem, the one selected, proof it's correct across *all* affected cases (a per-case table), and why it beats the alternatives on reuse, idiom-fit, contract-preservation, least surprise, and ergonomics. That artifact — not just a working diff — is the point.
+
+`coherent-change` is an **engine, rarely invoked alone.** Front-ends own the *framing* and the *close*, and delegate the *build* to it:
+
+- **`remediating-issues`** — a known bug or review/audit finding. Confirms the issue is real and still open, runs `systematic-debugging`'s root-cause phase, delegates the build, then runs the **bug close**: `regression-test` → `verification-before-completion` → `finishing-a-development-branch`.
+- **`systematic-debugging`** — a bug under investigation. Root-causes it, hands the *diagnosed fix* to the engine, then closes.
+- **`lean-spec`** — design-time. Calls the engine **decision-only**: it takes just the defended choice into its plan and owns implementation itself.
+- **Direct** — invoke it yourself; then *you* are the caller and run the close.
+
+Two modes turn on one question — *does a downstream workflow own implementation?*
+
+- **Build (default).** research → defend → implement (coder agent) → `*-review-lite` self-gate → hand back a working, lite-reviewed change. The caller owns the heavyweight close.
+- **Decision-only.** research → defend, then stop and hand back the defended choice (for `lean-spec`, which owns implementation).
+
+The discipline that keeps it honest: a determined change **closes its whole scope** — every sibling branch, producer, and input its intent reaches (the per-case table lists them). No stubs, no "handle the rest later"; only a genuinely separate, larger improvement is logged and deferred.
+
+```mermaid
+flowchart TB
+    rem["remediating-issues<br/>known bug / review finding"]
+    dbg["systematic-debugging<br/>diagnosed fix"]
+    direct["direct invocation"]
+    spec["lean-spec<br/>design-time"]
+
+    engine["coherent-change<br/>the determined-change engine<br/>research → defend the most coherent change → implement → *-review-lite"]
+
+    rem -->|build mode| engine
+    dbg -->|build mode| engine
+    direct -->|build mode| engine
+    spec -->|decision-only| engine
+
+    engine -->|"build: working,<br/>lite-reviewed change"| close["caller's close<br/>regression / durable coverage →<br/>verification-before-completion →<br/>finishing-a-development-branch"]
+    engine -->|"decision-only:<br/>defended choice only"| splan["into lean-spec's plan"]
+
+    classDef eng fill:#e8eaf6,stroke:#9fa8da
+    class engine eng
+```
+
 ## Skills
 
 ### Workflow Skills (pipeline order)
