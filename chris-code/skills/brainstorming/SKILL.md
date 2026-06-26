@@ -27,7 +27,7 @@ You MUST create a task for each of these items and complete them in order:
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Spec readiness check** — read `lean-spec`'s output structure (sections 1–10) and verify you have enough context to fill each one. If gaps exist, ask the remaining questions before proceeding.
-7. **Freeze the intent ledger** — capture ≤7 observable acceptance statements in the user's own words, get explicit approval, save to `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md` (see The Intent Ledger below)
+7. **Freeze the intent ledger** — *you* draft ≤7 observable acceptance statements from the dialogue you just had (quoting the user), the user confirms or tweaks, then save to `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md` (see The Intent Ledger below)
 8. **Write spec** — invoke `lean-spec` skill, save to `.claude/output/specs/YYYY-MM-DD-<topic>-design.md` and commit
 9. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 10. **User reviews written spec** — ask user to review the spec file before proceeding
@@ -110,8 +110,10 @@ flowchart TB
 
 Before the spec is written, freeze a small record of what the user actually asked for — in their words, not the spec's. The spec will elaborate, reframe, and add structure; the ledger stays as the original ask, so a later gate can check shipped behavior against intent without the spec's framing standing in the way.
 
+**You write it, not the user.** The brainstorming dialogue has already surfaced the intent; this step just crystallizes it. Draft the statements yourself from what the user said, then present them for a quick confirm-or-adjust — the same lightweight gate as design approval, not a separate authoring task handed back to the user. Do not ask the user to compose the statements.
+
 - **Content:** ≤7 observable acceptance statements — outcomes you could watch the running system produce and judge met-or-not. Quote the user where you can. Not implementation steps, not design decisions.
-- **Approval:** present the statements and get explicit sign-off. The ledger is the user's record, not yours.
+- **Approval:** present your draft and get a quick sign-off (the user may edit). The ledger is the user's record, but the drafting work is yours.
 - **Frozen:** once approved it changes only by explicit user decision — never edited to match what the spec or the implementation later turned out to be. Drift in the ledger defeats its purpose.
 - **Location:** `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md`.
 
