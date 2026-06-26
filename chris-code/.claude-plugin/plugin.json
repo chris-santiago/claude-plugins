@@ -14,6 +14,8 @@
     "./agents/pytorch-coder.md",
     "./agents/pytorch-quality-reviewer.md",
     "./agents/python-design-reviewer.md",
-    "./agents/rust-design-reviewer.md"
+    "./agents/rust-design-reviewer.md",
+    "./agents/spec-reviewer.md",
+    "./agents/intent-reviewer.md"
   ]
 }

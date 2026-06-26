@@ -27,10 +27,11 @@ You MUST create a task for each of these items and complete them in order:
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Spec readiness check** — read `lean-spec`'s output structure (sections 1–10) and verify you have enough context to fill each one. If gaps exist, ask the remaining questions before proceeding.
-7. **Write spec** — invoke `lean-spec` skill, save to `.claude/output/specs/YYYY-MM-DD-<topic>-design.md` and commit
-8. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
-9. **User reviews written spec** — ask user to review the spec file before proceeding
-10. **Transition to implementation** — invoke `lean-plan` skill to create implementation plan
+7. **Freeze the intent ledger** — capture ≤7 observable acceptance statements in the user's own words, get explicit approval, save to `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md` (see The Intent Ledger below)
+8. **Write spec** — invoke `lean-spec` skill, save to `.claude/output/specs/YYYY-MM-DD-<topic>-design.md` and commit
+9. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+10. **User reviews written spec** — ask user to review the spec file before proceeding
+11. **Transition to implementation** — invoke `lean-plan` skill to create implementation plan
 
 ## Process Flow
 
@@ -43,6 +44,7 @@ flowchart TB
     approaches["Propose 2-3 approaches"]
     design["Present design sections"]
     approve{"User approves design?"}
+    ledger["Freeze intent ledger"]
     write["Write design doc"]
     selfreview["Spec self-review<br/>(fix inline)"]
     userreview{"User reviews spec?"}
@@ -56,7 +58,8 @@ flowchart TB
     approaches --> design
     design --> approve
     approve -->|"no, revise"| design
-    approve -->|yes| write
+    approve -->|yes| ledger
+    ledger --> write
     write --> selfreview
     selfreview --> userreview
     userreview -->|changes requested| write
@@ -102,6 +105,17 @@ flowchart TB
 - Explore the current structure before proposing changes. Follow existing patterns.
 - Where existing code has problems that affect the work (e.g., a file that's grown too large, unclear boundaries, tangled responsibilities), include targeted improvements as part of the design - the way a good developer improves code they're working in.
 - Don't propose unrelated refactoring. Stay focused on what serves the current goal.
+
+## The Intent Ledger
+
+Before the spec is written, freeze a small record of what the user actually asked for — in their words, not the spec's. The spec will elaborate, reframe, and add structure; the ledger stays as the original ask, so a later gate can check shipped behavior against intent without the spec's framing standing in the way.
+
+- **Content:** ≤7 observable acceptance statements — outcomes you could watch the running system produce and judge met-or-not. Quote the user where you can. Not implementation steps, not design decisions.
+- **Approval:** present the statements and get explicit sign-off. The ledger is the user's record, not yours.
+- **Frozen:** once approved it changes only by explicit user decision — never edited to match what the spec or the implementation later turned out to be. Drift in the ledger defeats its purpose.
+- **Location:** `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md`.
+
+This is the oracle the `intent-reviewer` reads at the verification gate (`verification-before-completion` Step 5). It deliberately lives outside the spec: it is the one artifact a spec-conformance check cannot quietly redefine.
 
 ## After the Design
 

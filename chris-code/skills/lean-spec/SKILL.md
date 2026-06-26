@@ -108,7 +108,7 @@ Every line must be load-bearing: behavior, an interface, an invariant, a decisio
 After writing, check:
 
 1. **Leanness:** Remove any sentence that tells the implementer which file to edit, dictates coding order, or contains near-production code.
-2. **Completeness:** Can a competent engineer design the implementation from this spec? Are all interfaces, invariants, and acceptance criteria defined?
+2. **Completeness:** Can a competent engineer design the implementation from this spec? Are all interfaces, invariants, and acceptance criteria defined? Do the acceptance criteria name the edge cases and failure modes they must cover — not just the happy path — and where a class of input or state is deliberately excluded, does the spec say so? If you can't state how you checked for missing cases, the coverage isn't proven.
 3. **Durability:** Would this content survive a complete reimplementation in a different language or architecture?
 
 Fix issues inline, then move on.

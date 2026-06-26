@@ -186,9 +186,8 @@ Handle block/escalate exactly as at a per-commit gate (including the `cycle` cou
 ## Prompt Templates
 
 - `./implementer-prompt.md` - Dispatch implementer subagent (used when no `*-coder` agent matches)
-- `./spec-reviewer-prompt.md` - Dispatch spec compliance reviewer subagent
 
-Quality review is handled by `*-quality-reviewer` agents (e.g., `python-quality-reviewer`, `rust-quality-reviewer`), dispatched by scope matching — no prompt template needed.
+Spec compliance review is handled by the registered `spec-reviewer` agent (read-only, language-agnostic) — dispatch it explicitly per task; it carries its own mandate (do-not-trust-the-report, instruction precedence), so no prompt template is needed. Quality review is handled by `*-quality-reviewer` agents (e.g., `python-quality-reviewer`, `rust-quality-reviewer`), dispatched by scope matching.
 
 All dispatches use file handoffs (see File Handoffs): pass brief, report, and constraint content as file paths plus verbatim Constraints, never pasted task text or diffs.
 
@@ -248,6 +247,7 @@ Stage 3 — dispatching 2 tasks in parallel:
 
 **Agents:**
 - **`*-coder` agents** - Specialized implementers, auto-dispatched by file type
+- **`spec-reviewer`** - Read-only spec-compliance gate, dispatched explicitly per task (language-agnostic)
 - **`*-quality-reviewer` agents** - Design quality + bug detection review, auto-dispatched by file type
 - **`*-review-lite` agents** - Commit gates (idiom + lint), auto-dispatched by file type
 

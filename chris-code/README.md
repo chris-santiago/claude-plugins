@@ -12,7 +12,7 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 **Shadow code.** Superpowers' writing-plans mandated "complete code in every step." In practice this produced prescriptive scaffolding that agents discarded — the work of writing it was wasted and the mismatch between plan code and actual codebase state caused confusion. chris-code plans tell executors *what* to do and *where*, trusting agents to read the spec and write code fit for the real codebase.
 
-**Inconsistent review discipline.** superpowers already runs two-stage review (spec compliance, then code quality) per task via dispatched reviewer subagents. chris-code keeps those gates but applies them uniformly through dedicated, scope-dispatched agents, adds a lint-aware pre-commit gate, and maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer prompt keeps a "Do Not Trust the Report" check: verify implementations by reading actual code, not agent summaries.
+**Inconsistent review discipline.** superpowers already runs two-stage review (spec compliance, then code quality) per task via dispatched reviewer subagents. chris-code keeps those gates but applies them uniformly through dedicated, scope-dispatched agents, adds a lint-aware pre-commit gate, and maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer agent keeps a "Do Not Trust the Report" check: verify implementations by reading actual code, not agent summaries.
 
 <details>
 
@@ -83,7 +83,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements. |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Five-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`). |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -145,13 +145,13 @@ flowchart TB
 
     subgraph Per Task
         coder["*-coder agent<br/>(python-coder, rust-coder)"]:::agent
-        spec_review["spec-reviewer<br/>(opus, prompt template)"]
+        spec_review["spec-reviewer<br/>(opus, agent)"]:::reviewer
         quality["*-quality-reviewer agent<br/>(python-quality-reviewer,<br/>rust-quality-reviewer)"]:::reviewer
         commit_gate["*-review-lite agent<br/>(python-review-lite,<br/>rust-review-lite)"]:::gate
     end
 
     subgraph Completion Phase
-        verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-review skills<br/>4. Requirements check"]
+        verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-design-reviewer agents<br/>4. Requirements check<br/>5. Intent re-check (intent-reviewer)"]
         finish["finishing-a-development-branch<br/>(merge / PR / keep / discard)"]
     end
 
@@ -260,6 +260,17 @@ Dispatched by `verification-before-completion` as the heavyweight, read-only gat
 | `python-design-reviewer` | opus | `.py` | Senior Python cohesion/API-design findings, returns PASS/CONCERNS |
 | `rust-design-reviewer` | opus | `.rs` | Senior Rust cohesion/API-design findings, returns PASS/CONCERNS |
 
+### Conformance Agents (language-agnostic, dispatched explicitly)
+
+Not scope-matched — these review conformance and behavior, not language idioms, so they are dispatched by name rather than by file extension. Read-only; never edit code.
+
+| Agent | Model | Reference axis | Role |
+|-------|-------|----------------|------|
+| `spec-reviewer` | opus | the spec/brief | Per-task code↔spec conformance in `subagent-driven-development` (before quality review); "Do Not Trust the Report" |
+| `intent-reviewer` | opus | the intent ledger | **Spec-blind** behavior↔intent re-check, final step of `verification-before-completion`; reads the frozen ledger + the running system, never the spec |
+
+Together these are the *conformance pair*: `spec-reviewer` catches code that drifted from the spec, `intent-reviewer` catches a spec that drifted from the original ask.
+
 ### Campaign Agent
 
 Dispatched by the `bug-hunt` skill.
@@ -279,6 +290,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-review-lite` | **Additive** — all matching fire | `python-review-lite` |
 | `*-design-reviewer` | **Additive** — all matching fire | `python-design-reviewer` + `rust-design-reviewer` |
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
+| `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 

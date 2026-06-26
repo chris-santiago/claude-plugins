@@ -93,6 +93,8 @@ The signature artifact, presented at the stage-4 checkpoint before any code chan
 |------|-------|------------------|--------|
 | …    | …     | …                | changed / unchanged |
 
+**Completeness — required line under the table:** *cases I might be missing, and how I'd find them.* Name where you searched for siblings, producers, and inputs (the `grep`, the call-site scan, the type's consumers) and what would surface one you overlooked. A table listing only the cases you already found proves coverage of those, not of the change's full reach.
+
 **4. Why it's the most coherent and user-friendly choice.** Cover: reuse (which existing helper or abstraction it leans on), idiom-fit, whether it *mirrors an existing strategy* in the codebase, contract-preservation, smallest correct blast radius, project-constraint fit (cite `CLAUDE.md` where relevant), and the end-user / API payoff.
 
 **5. Defense against the alternatives.** Every rejected candidate gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it.

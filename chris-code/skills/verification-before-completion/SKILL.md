@@ -87,9 +87,29 @@ Re-read the plan or spec that drove this work. For each requirement:
 
 **Must see:** Every requirement covered. If gaps exist, report them — do not claim completion.
 
+### Step 5: Intent Re-check
+
+Steps 1–4 all compare the work to the spec (tests, lint, design cohesion, spec conformance). None of them asks the one question the spec cannot answer: **does the shipped behavior do what the user originally asked for?** A build can pass every spec gate while the spec itself drifted from the ask. This step closes that seam.
+
+Dispatch the read-only **`intent-reviewer`** agent. It is **spec-blind** — give it the frozen intent ledger and the running system, never the spec, plan, or task briefs:
+
+```
+Inputs (exactly two):
+  - Intent ledger: <.claude/output/intent/YYYY-MM-DD-<topic>-intent.md>
+    (for a bug remediation, the issue text IS the ledger — pass it instead)
+  - The running system (the agent inspects and exercises it read-only)
+
+Do NOT pass the spec, the plan, the design doc, or the implementer's report —
+the agent's independence depends on judging behavior against the ask alone.
+```
+
+If no intent ledger exists and no original-ask statement is recoverable (a change that never had one), note that explicitly and skip this step — do not fabricate a ledger after the fact.
+
+**Must see:** Verdict PASS (no `not-met` statements). A `not-met` is a real gap between behavior and the ask — fix it (or, if the ledger itself is wrong, that is a user decision). Resolve every `can't-tell` before claiming completion.
+
 ## After Verification Passes
 
-All four steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+All five steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
 ## Rationalizations — All Mean "Run the Verification"
 
@@ -108,6 +128,7 @@ All four steps green → you may claim completion. Then invoke `chris-code:finis
 
 **This skill dispatches:**
 - **`*-design-reviewer` agents** — read-only senior-level review, auto-dispatched by scope (Step 3)
+- **`intent-reviewer`** — read-only, spec-blind behavior-vs-intent re-check (Step 5)
 
 **Related skills:**
 - **chris-code:test-driven-development** — TDD ensures tests exist; this skill ensures they pass

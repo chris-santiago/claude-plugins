@@ -56,7 +56,7 @@ One issue is the atom. Work it through these stages. (A set of issues is just fa
 **3. Close it — the bug gates.** With the lite-reviewed fix in hand, run the close in order:
 
 1. **`chris-code:regression-test` (REQUIRED — the mandatory bug gate).** Durable coverage of the *specific failure mode*, proven RED on the pre-fix code. Run the proof **before staging**, while the fix is still unstaged: `git stash push -- <changed source>` → it fails → `git stash pop` → then `git add` once. (`git stash pop` restores the working tree but **not** the index, so stashing *after* `git add` silently un-stages the fix and it drops from the commit; recover with `git stash pop --index`.) An *inert* defect (no observable symptom, per stage 1) is instead proven structurally — assert the inconsistency itself is gone. The fix is not complete until this passes.
-2. **`chris-code:verification-before-completion`** (REQUIRED) — tests, lint, and the `python-design-reviewer` / `rust-design-reviewer` cohesion gate. A PASS can carry findings, and **PASS-with-findings is not clean**: verify each is real (`chris-code:receiving-code-review`), then apply *Fix Fully, Defer Only the Separable* — fix the **in-scope** findings *in this fix*, defer only a separable, larger improvement. Shipping a flagged in-scope finding as "fix later" defeats the gate.
+2. **`chris-code:verification-before-completion`** (REQUIRED) — tests, lint, and the `python-design-reviewer` / `rust-design-reviewer` cohesion gate. A PASS can carry findings, and **PASS-with-findings is not clean**: verify each is real (`chris-code:receiving-code-review`), then apply *Fix Fully, Defer Only the Separable* — fix the **in-scope** findings *in this fix*, defer only a separable, larger improvement. Shipping a flagged in-scope finding as "fix later" defeats the gate. There is no separate intent ledger for a remediation: the **issue text is the ledger**, so the gate's spec-blind intent re-check (Step 5) confirms the originally-reported symptom is observably gone.
 3. **`chris-code:finishing-a-development-branch`** — integration (merge / PR / keep / discard).
 
 **4. Record the resolution against the origin.** GitHub → reference in the commit and close it *with confirmation*; review/audit finding → mark it addressed; interactive → confirm with the user.
@@ -74,6 +74,8 @@ The signature artifact, presented at the stage-4 checkpoint before any code chan
 | Case | Today | Under the fix | Result |
 |------|-------|---------------|--------|
 | …    | …     | …             | fixed / unchanged |
+
+**Completeness — required line under the table:** *cases I might be missing, and how I'd find them.* Name where you searched for same-root-cause siblings, producers, and inputs (the `grep`, the call-site scan, the type's consumers) and what would surface one you overlooked. A table listing only the cases you already found proves coverage of those, not of the bug's full reach.
 
 **4. Why it's the most coherent and user-friendly choice.** Cover: reuse (which existing helper or abstraction it leans on), idiom-fit, whether it *mirrors an existing strategy* elsewhere in the codebase, contract-preservation, smallest correct blast radius, project-constraint fit (cite `CLAUDE.md` where relevant), and the end-user / API payoff.
 
