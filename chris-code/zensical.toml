@@ -40,6 +40,7 @@ nav = [
         { "The pipeline"              = "explanation/the-pipeline.md" },
         { "The assurance model"       = "explanation/the-assurance-model.md" },
         { "Context & dispatch"        = "explanation/context-and-dispatch.md" },
+        { "Execution mechanics"       = "explanation/execution-mechanics.md" },
         { "Relationship to superpowers" = "explanation/vs-superpowers.md" },
     ] },
 ]
@@ -53,7 +54,7 @@ nav = [
 # Theme: modern variant of Material's look and feel.
 # ----------------------------------------------------------------------------
 [project.theme]
-variant  = "modern"
+variant  = "classic"
 language = "en"
 
 features = [
