@@ -95,7 +95,7 @@ style: |
 
 Design before it codes. Review before it lands.
 
-`25 skills · 11 agents · uniform review gates`
+`25 skills · 13 agents · uniform review gates`
 
 ---
 

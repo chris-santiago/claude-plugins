@@ -28,11 +28,17 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 **The why.** superpowers is skills-only. Its coding and review happen inline or through generic subagents steered by prompt-template files (`implementer-prompt.md`, `code-reviewer.md`). That works, but every dispatch is hand-rolled.
 
-chris-code adds **nine dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
+chris-code adds **thirteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
 
 ### 3. Review is a uniform, multi-stage gate
 
 **The why.** superpowers already reviews every task in two stages (spec compliance, then code quality) through dispatched reviewer subagents, plus a final whole-branch pass. chris-code keeps that spine and hardens it: the reviewers are dedicated, scope-dispatched agents rather than generic subagents driven by prompt templates; lint becomes its own mandatory gate; a `*-review-lite` idiom check runs pre-commit; and a final full-diff pass catches cross-task drift. Every gate re-reads the actual code, not the agent's summary ("Do Not Trust the Report").
+
+A more recent pass hardens *assurance* — what the gates actually prove:
+
+- **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
+- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it re-reads the actual code slice rather than the summary — and reviewers flag their own lossiness to point it where to look.
+- **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only ~2 axes are truly independent (a deterministic linter, a spec-blind check), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun
 
@@ -66,18 +72,20 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Four-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-review` skills) → Requirements. |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Five-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`). |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
 
 ## What's new, and why
 
-### New skills (9)
+### New skills (11)
 
 | Skill | Why it exists |
 |---|---|
 | `lean-spec` | Promotes the spec to a dedicated skill. superpowers produced a design/spec doc inside `brainstorming`; chris-code makes writing it a first-class step. |
+| `coherent-change` | The determined-change engine: research the codebase, defend the most coherent implementation against the alternatives, then implement and lite-review. |
+| `remediating-issues` | Bug specialization of `coherent-change`: frame the issue, build the fix, then run the regression and verification gates. |
 | `regression-test` | Lock in every bug fix with a test for the bug and its siblings before moving on. |
 | `python-review` | Senior Python refactor/API-design review as an on-demand pass. |
 | `rust-review` | The same, for Rust. |
@@ -87,13 +95,15 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `code-archaeology` | Surface dead code, stubs, and spec-vs-impl gaps before a milestone. |
 | `release` | Version bump + changelog + GitHub release in one flow. |
 
-### New agents (9) — the layer superpowers doesn't have
+### New agents (13) — the layer superpowers doesn't have
 
 | Agents | Role |
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
 | `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive post-spec quality review; all matching fire. |
 | `python-review-lite`, `rust-review-lite` | Fast pre-commit idiom/lint gate returning clean / block / escalate. |
+| `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
+| `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
 
 ---
@@ -117,8 +127,8 @@ Verified against two agreeing sources: the local plugin catalog cache (superpowe
 
 | | superpowers | chris-code |
 |---|---|---|
-| Skills | 14 | 23 |
-| Agents | 0 | 9 |
+| Skills | 14 | 25 |
+| Agents | 0 | 13 |
 | Commands | 0 | 0 |
 | Hooks | 1 | 0 |
 
