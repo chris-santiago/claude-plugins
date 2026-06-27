@@ -44,7 +44,8 @@ flowchart TB
     read["Read plan + progress ledger,<br/>pre-flight conflict scan,<br/>extract tasks, map footprints, group into stages"]
     more_tasks{"More tasks in stage?"}
     more_stages{"More stages?"}
-    final_gate["Final gate: scripts/review-package merge-base..HEAD<br/>→ *-review-lite reads the package file"]
+    final_gate["Whole-change commit gate (lite): scripts/review-package merge-base..HEAD<br/>→ *-review-lite reads the package file"]
+    verification["Completion close (caller): chris-code:verification-before-completion<br/>→ *-design-reviewer + intent-reviewer"]
     finish["chris-code:finishing-a-development-branch"]:::finish
 
     read --> coder
@@ -67,7 +68,8 @@ flowchart TB
     more_tasks -->|no| more_stages
     more_stages -->|"yes (next stage)"| coder
     more_stages -->|no| final_gate
-    final_gate --> finish
+    final_gate --> verification
+    verification --> finish
 
     classDef finish fill:#90EE90,stroke:#333
 ```
@@ -185,7 +187,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 
 **Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
 
-## Final Gate
+## Whole-Change Commit Gate (lite — NOT the completion gate)
 
 After the last stage, run one review over the whole change. The per-commit gates each saw a single commit in isolation, so cross-commit idiom drift — a helper duplicated across two tasks, an inconsistency between Task 1 and Task 5 — can pass every per-commit gate and still land.
 
@@ -196,6 +198,8 @@ The task commits are already in, so `git diff --cached` is empty and `*-review-l
 3. Dispatch each matching `*-review-lite` agent with that package-file path. The agent reads the package and reviews the whole-change diff, not `--cached`.
 
 Handle block/escalate exactly as at a per-commit gate (including the `cycle` counter on re-dispatch).
+
+**This lite whole-change gate is necessary, not sufficient — it is NOT the completion gate.** It is an idiom/regression check, the diff-level discipline applied across commits. It does not exercise behavior or assess architecture. After it passes, the **caller** still owes the heavyweight close: `chris-code:verification-before-completion`, which runs the `*-design-reviewer` cohesion gate and the `intent-reviewer` spec-blind behavior check, *before* `chris-code:finishing-a-development-branch`. Do not treat a passing lite gate plus a green suite as "verified." A green suite proves the assertions you wrote pass; it does not prove behavior is correct or the design is coherent — that is exactly what the design and intent reviews are for, and they routinely catch shipped bugs a green suite cannot. If SDD was driven by a front-end (`coherent-change`, `remediating-issues`), that front-end owns the close; on direct invocation, you are the caller — run it yourself.
 
 ## Prompt Templates
 
@@ -233,7 +237,8 @@ Stage 3 — dispatching 2 tasks in parallel:
 
   [Both complete → reviews → commit gates (rust-review-lite + python-review-lite) → mark complete]
 
-[Final gate: scripts/review-package base..HEAD → python-review-lite + rust-review-lite read the package file]
+[Whole-change commit gate (lite): scripts/review-package base..HEAD → python-review-lite + rust-review-lite read the package file]
+[Completion close (caller): chris-code:verification-before-completion → *-design-reviewer + intent-reviewer]
 [chris-code:finishing-a-development-branch]
 ```
 

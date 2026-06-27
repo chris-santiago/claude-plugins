@@ -107,6 +107,13 @@ If no intent ledger exists and no original-ask statement is recoverable (a chang
 
 **Must see:** Verdict PASS (no `not-met` statements). A `not-met` is a real gap between behavior and the ask — fix it (or, if the ledger itself is wrong, that is a user decision). Resolve every `can't-tell` before claiming completion.
 
+### Discriminating checks, and re-running after remediation
+
+Two failure modes quietly turn a green gate into a false pass:
+
+- **A behavioral check that doesn't discriminate proves nothing — even when it passes.** Whether it's the intent-reviewer exercising the system or you confirming a fix by observation, the check must be true under correct behavior *and false under the bug*. "Both ranges render", "output is present", "renders without error", "is not None" are satisfied by the broken state too, so they launder the regression into a pass. Name the broken state and confirm the observation flips on it — simulate the broken output, or assert a property the bug necessarily violates (e.g. the *gap* between two ranges is empty, which a collapsed union fills). A design or intent reviewer can be fooled by the same weak heuristic you would be; treat a PASS built on a non-discriminating observation as unproven.
+- **A CONCERNS→fix leaves a STALE verdict until you re-run.** When Step 3 (design) or Step 5 (intent) returns findings and you remediate, re-run that gate on the fixed code — the prior PASS describes the pre-fix system, not what now ships. If the fix changed behavior at all, re-run **both** the design and intent gates, not only the one that flagged. Never substitute "it's byte-identical so the verdict still holds" for the re-run: *prove* byte-identity first (stash the fix, diff the output / hashes), and if it isn't identical, every golden or observation it touched must be regenerated and re-inspected before the verdict counts.
+
 ## After Verification Passes
 
 All five steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).

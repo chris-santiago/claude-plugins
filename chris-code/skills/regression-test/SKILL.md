@@ -42,7 +42,8 @@ From the diff, answer:
 A good regression test:
 - **Reproduces the symptom**, not just the fix. Test the output a user would see, not internal implementation details.
 - **Is minimal**. Smallest input that triggers the bug.
-- **Fails on the old code, passes on the new code.** Mentally revert the fix and confirm the test would fail.
+- **Fails on the old code, passes on the new code.** Mentally revert the fix and confirm the test would fail. **Better: prove it.** Stash the fix, run the test, watch it fail, restore — assumptions about "this would fail" are often wrong.
+- **The assertion must DISCRIMINATE.** It has to be true under correct behavior and false under the bug. An assertion satisfied by *both* states proves nothing, even if it passes. Classic trap: asserting "both value ranges appear" to guard against two scales being collapsed onto one — but a collapsed union range *also* contains both endpoints, so the check passes under the bug. Before trusting a check, name the broken state and confirm the assertion flips on it (e.g. assert the gap *between* the ranges is empty — a collapsed axis fills it; or simulate the broken output and confirm the assertion fails). A non-discriminating check (and the weak "rendering looks present" / "both ranges appear" / "is not None" family) is worse than no check: it manufactures false confidence and hides the regression it was written to catch.
 - **Has a descriptive name** that explains the regression: `test_empty_input_returns_error`, not `test_fix_123`.
 - **Includes a docstring or comment** starting with "Regression:" that explains what broke and when.
 

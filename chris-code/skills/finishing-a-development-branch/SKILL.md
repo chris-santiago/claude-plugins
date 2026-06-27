@@ -19,6 +19,8 @@ Guide completion of development work by presenting clear options and handling ch
 
 **PREREQUISITE:** `chris-code:verification-before-completion` must have passed (tests, lints, full review, requirements check). If it hasn't been run yet, invoke it now and wait for all four steps to pass before proceeding.
 
+A green test suite, a passing `*-review-lite` commit gate, or a passing subagent-driven-development "whole-change commit gate" do **NOT** satisfy this prerequisite. Those are diff-level / regression checks; the verification close adds two distinct gates they never run — the `*-design-reviewer` cohesion review and the `intent-reviewer` spec-blind behavior check — which routinely catch shipped bugs a green suite cannot. If the only things you have run are tests, lint, and a lite gate, you have NOT run verification-before-completion. Do not present integration options until its design and intent reviews have actually passed (and any remediation has been re-reviewed, not assumed).
+
 ### Step 2: Detect Environment
 
 **Determine workspace state before presenting options:**

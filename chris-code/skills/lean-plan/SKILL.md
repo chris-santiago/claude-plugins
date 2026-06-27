@@ -109,6 +109,7 @@ After writing, check against the spec:
 1. **Spec coverage:** Can you point to a task for each spec requirement? List any gaps.
 2. **Bloat scan:** Any prose that restates the spec? Any code blocks an executor would rewrite? Cut them.
 3. **Name consistency:** Do types, signatures, and paths used in later tasks match earlier tasks?
+4. **Verify scope vs. shared contracts:** Does any task change a *shared contract* — a test file several tasks edit (a central exclusions list, a fixtures module), an enum, an allow/deny list, a public signature consumed elsewhere? If so, its `Verify:` (and its slice of the acceptance checks) must run the **full suite or grep every assertion of that contract**, not just a local `-k` subset scoped to the task's own module. A narrow filter passes green while hiding orphaned failures the change created in sibling files — the assertion a *different* task already wrote against the contract you just flipped. When in doubt, the verify for a shared-contract task is suite-wide.
 
 Fix issues inline, then move on.
 
