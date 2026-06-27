@@ -108,19 +108,20 @@ Drop it into any repo. Describe a feature (or type `/brainstorming`) and the wor
 
 > brainstorm intent → write a lean spec → hand off a thin plan → dispatch a coder per task → review in stages → gate every commit.
 
-Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned around three failures it kept hitting:
+Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned around four failures it kept hitting:
 
 ---
 
-## Why it exists: three failures
+## Why it exists: four failures
 
-<div class="cards">
+<div class="cards" style="flex-wrap:wrap; gap:16px">
 <div class="card"><div class="cardnum">1</div><div class="cardttl">Spec &amp; plan bloat</div><div class="cardtxt">Specs grew past 2,500 words; plans piled on another 5,000–10,000 words of code.</div></div>
 <div class="card"><div class="cardnum">2</div><div class="cardttl">Shadow code</div><div class="cardtxt">Plans mandated complete code per step. Agents discarded it and rewrote against the real repo.</div></div>
 <div class="card"><div class="cardnum">3</div><div class="cardttl">Inconsistent review</div><div class="cardtxt">Review folded into a single self-check pass, applied unevenly across tasks.</div></div>
+<div class="card"><div class="cardnum">4</div><div class="cardttl">No coherence enforcement</div><div class="cardtxt">Changes patched in place. The first impl that works lands — even when the repo already has a pattern for it.</div></div>
 </div>
 
-> The rest of this deck is how chris-code answers each.
+> The rest of this deck is how chris-code answers each. The fourth — the largest divergence — is the engine on the next-to-last slide.
 
 ---
 
@@ -240,19 +241,35 @@ On-demand skills for when you want to go hunting:
 
 ---
 
-## Remediation & coherent change
+## One engine for every determined change
 
-<p class="cap" style="margin-top:6px">A bug, a refactor, an API alignment — the behavior is settled, only the <b>implementation</b> is open. One engine handles all of them: find the fix that fits the codebase, and defend it against the alternatives.</p>
+<p class="cap" style="margin-top:4px">A bug, a refactor, an API alignment, a finding from a review — the behavior is settled, only the <b>implementation</b> is open. chris-code routes them all through a single <b>application engine</b>.</p>
 
 <div class="flow">
-<div class="node design">remediating-issues &nbsp;·&nbsp; systematic-debugging &nbsp;·&nbsp; lean-spec &nbsp;·&nbsp; direct</div>
+<div class="node design">fix &amp; design front-ends &nbsp;·&nbsp; remediating-issues · systematic-debugging · lean-spec</div>
+<div class="chev">+</div>
+<div class="node design">discovery — <i>propose &amp; hand off</i> &nbsp;·&nbsp; code-archaeology · bug-hunt · python/rust-review</div>
+<div class="chev">+</div>
+<div class="node design">direct invocation</div>
 <div class="chev">↓ &nbsp; feed a <b>determined</b> change</div>
-<div class="node exec">coherent-change &nbsp;·&nbsp; research → defend the most coherent fix → implement → lite-review</div>
-<div class="chev">↓ &nbsp; hand back a working, lite-reviewed change</div>
-<div class="node task">caller closes &nbsp;·&nbsp; regression / coverage → design-reviewer gate → land</div>
+<div class="node exec">coherent-change &nbsp;·&nbsp; research the codebase → defend the most coherent change</div>
 </div>
 
-<p class="cap">Signature output: a <b>defended choice</b> — every candidate rooted in how the codebase already solves it, plus why the chosen one wins. Ship the fix that looks like it was always there.</p>
+<p class="cap"><b>Discovery is separated from application:</b> audits and reviews propose end-states and hand off — they never land their own patches. Signature output: a <b>defended choice</b> — every candidate rooted in how the codebase already solves it, plus why the chosen one wins.</p>
+
+---
+
+## Size the change — or batch the set
+
+<p class="cap" style="margin-top:4px">After the defended choice, the engine <b>sizes the work</b> and routes it — so no determined change is built bigger than it should be, or smaller.</p>
+
+<div class="cards" style="flex-wrap:wrap; gap:16px">
+<div class="card"><div class="cardttl">Single coherent edit</div><div class="cardtxt">Build <b>inline</b> — coder agent → <code>*-review-lite</code> self-gate → hand back. The caller runs the close.</div></div>
+<div class="card"><div class="cardttl">Major / multi-task</div><div class="cardtxt">Settled design, not a one-shot build — route it to planned execution: <code>lean-spec</code> → <code>lean-plan</code> → <code>subagent-driven-development</code>.</div></div>
+<div class="card"><div class="cardttl">A set of findings — <b>batch</b></div><div class="cardtxt">One consolidated research pass, a defended choice per change, the whole set into <b>one</b> spec → plan → SDD.</div></div>
+</div>
+
+<p class="cap">Same defend-and-prove discipline at every scale. A change <b>closes its whole scope</b> — every sibling case its intent reaches — and defers only what's genuinely separate. Ship the change that looks like it was always there.</p>
 
 ---
 

@@ -130,7 +130,7 @@ This deck is the other **20%**, and the *why*.
 
 ---
 
-## Five thematic shifts
+## Six thematic shifts
 
 <div class="shiftlist">
 <div class="shift"><span class="gnum">1</span><span><b>Lean artifacts</b> over exhaustive ones</span></div>
@@ -138,6 +138,7 @@ This deck is the other **20%**, and the *why*.
 <div class="shift"><span class="gnum">3</span><span><b>Review</b> is a uniform, multi-stage gate</span></div>
 <div class="shift"><span class="gnum">4</span><span><b>Parallelism</b> is a feature, not a footgun</span></div>
 <div class="shift"><span class="gnum">5</span><span><b>Native tools</b> first, with a hard gate</span></div>
+<div class="shift"><span class="gnum">6</span><span><b>Coherence enforcement</b> — every determined change fits the codebase <i>(the largest divergence)</i></span></div>
 </div>
 
 ---
@@ -201,6 +202,18 @@ This deck is the other **20%**, and the *why*.
 </div>
 
 <p class="cap">The split is only at "no native tool": superpowers falls back; chris-code refuses, because a silent fallback once caused real damage.</p>
+
+---
+
+## 6 · Coherence enforcement — the largest divergence
+
+<div class="cmp">
+<div class="panel sp"><h3>superpowers</h3><div class="r">A review refactors in place</div><div class="r">A fix is patched directly</div><div class="r">A determined change is just coded</div><div class="note">the first impl that works lands — even when the repo already has a pattern</div></div>
+<div class="vsbadge">→</div>
+<div class="panel cc"><h3>chris-code</h3><div class="r">One <b>application engine</b>: <code>coherent-change</code></div><div class="r">Every determined change routes through it</div><div class="r">defend → size → (batch a whole set)</div><div class="note">discovery proposes &amp; hands off — it never lands its own patches</div></div>
+</div>
+
+<p class="cap">superpowers has no step that makes a change <b>fit the codebase it lands in</b>. chris-code adds one: discover candidates from the existing code, defend the most coherent against the alternatives (a correctness table + a real rebuttal of each), <b>size</b> the work (build inline, or route to spec → plan → execution), and <b>batch</b> a whole set of findings into one coordinated change.</p>
 
 ---
 

@@ -16,7 +16,7 @@ Everything below is the reasoning behind those, then the specifics.
 
 ---
 
-## The big picture: five thematic shifts
+## The big picture: six thematic shifts
 
 ### 1. Lean artifacts over exhaustive ones
 
@@ -48,7 +48,13 @@ A more recent pass hardens *assurance* — what the gates actually prove:
 
 **The why.** superpowers already prefers native worktree tools (its rewrite names `EnterWorktree`) and asks consent, falling back to a manual `git worktree` only when no native tool exists, and announcing the fallback when it happens. chris-code shares that native-first preference but replaces the fallback with a **hard gate**: if the native tool is unavailable, **stop and warn**, never fall back to working in place. The gate exists because a silent fallback once caused real damage (subagents targeting the wrong directory).
 
-There's also a quieter sixth shift in **voice**: chris-code strips superpowers' persuasion scaffolding (Real-World-Impact stat blocks, "Red Flags - STOP" lists, rationalization tables, the "your human partner" framing) in favor of terse, mechanical instructions. Same rules, less rhetoric.
+### 6. Coherence enforcement (the largest divergence)
+
+**The why.** superpowers applies a change wherever it's proposed — a review refactors in place, a fix is patched directly, a determined change is just coded. Nothing makes the change *fit the codebase it lands in*: the first implementation that works becomes the implementation, even when the repo already has a pattern for it, so changes accrete as debt.
+
+chris-code adds the missing step — a single **application engine**, `coherent-change`, that every determined change routes through (a fix, a refactor, an API alignment, a review or audit finding). It discovers candidate implementations from the existing code, defends the most coherent one against the alternatives (the *defended choice*: a correctness table over every affected case plus a real rebuttal of each rejected option), then **sizes the work** and routes it — a single coherent edit builds inline; a major, multi-task change routes to `lean-spec → lean-plan → subagent-driven-development`; a whole **set** of findings runs in *batch mode* (one consolidated research pass, a defended choice per change, the set into one spec → plan → execution). Crucially, **discovery is separated from application**: the audits and reviews (`code-archaeology`, `bug-hunt`, `technical-review`, `python-review`, `rust-review`) propose end-states and hand off — they never apply their own patches — so every change earns the same defend-and-prove discipline instead of unreviewed patches landing because a review happened to touch the code.
+
+There's also a quieter seventh shift in **voice**: chris-code strips superpowers' persuasion scaffolding (Real-World-Impact stat blocks, "Red Flags - STOP" lists, rationalization tables, the "your human partner" framing) in favor of terse, mechanical instructions. Same rules, less rhetoric.
 
 ---
 
@@ -84,8 +90,8 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | Skill | Why it exists |
 |---|---|
 | `lean-spec` | Promotes the spec to a dedicated skill. superpowers produced a design/spec doc inside `brainstorming`; chris-code makes writing it a first-class step. |
-| `coherent-change` | The determined-change engine: research the codebase, defend the most coherent implementation against the alternatives, then implement and lite-review. |
-| `remediating-issues` | Bug specialization of `coherent-change`: frame the issue, build the fix, then run the regression and verification gates. |
+| `coherent-change` | The **application engine** every determined change routes through: research the codebase, defend the most coherent implementation against the alternatives, then **size the work** — build inline, route a major change to spec → plan → execution, or **batch** a whole set of findings into one coordinated change. Discovery skills propose end-states and hand off here; they never apply their own patches. |
+| `remediating-issues` | Bug specialization of `coherent-change`: frame the issue (or a whole set, via batch mode), build the fix, then run the regression and verification gates. |
 | `regression-test` | Lock in every bug fix with a test for the bug and its siblings before moving on. |
 | `python-review` | Senior Python refactor/API-design review as an on-demand pass. |
 | `rust-review` | The same, for Rust. |
