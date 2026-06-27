@@ -21,8 +21,11 @@ nav = [
 
     { "How-to" = [
         { "Overview"                  = "how-to/index.md" },
-        { "Remediate a bug"           = "how-to/remediate-a-bug.md" },
+        { "Build a new feature"       = "how-to/build-a-feature.md" },
         { "Make a determined change"  = "how-to/make-a-determined-change.md" },
+        { "Fix a bug (known cause)"   = "how-to/remediate-a-bug.md" },
+        { "Fix a bug (unknown cause)" = "how-to/debug-unknown-cause.md" },
+        { "Remediate in batch"        = "how-to/remediate-in-batch.md" },
         { "Review a branch"           = "how-to/review-a-branch.md" },
         { "Run a quality campaign"    = "how-to/run-a-quality-campaign.md" },
         { "Cut a release"             = "how-to/cut-a-release.md" },

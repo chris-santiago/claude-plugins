@@ -43,17 +43,23 @@ flowchart TB
 
     rem -->|build mode| engine
     dbg -->|build mode| engine
-    direct -->|build mode| engine
+    direct --> engine
     spec -->|decision-only| engine
 
-    engine -->|"build: working,<br/>lite-reviewed change"| close["caller's close<br/>regression / durable coverage →<br/>verification-before-completion →<br/>finishing-a-development-branch"]
-    engine -->|"decision-only:<br/>defended choice only"| splan["into lean-spec's plan"]
+    engine -->|"build: single coherent edit<br/>(working, lite-reviewed change)"| close["caller's close<br/>regression / durable coverage →<br/>verification-before-completion →<br/>finishing-a-development-branch"]
+    engine -->|"decision-only: major change,<br/>or lean-spec called in"| splan["lean-spec → lean-plan →<br/>subagent-driven-development"]
 
     classDef eng fill:#e8eaf6,stroke:#9fa8da
     class engine eng
 ```
 
-Two modes turn on one question — *does a downstream workflow own implementation?* In **build mode** (the default), the engine implements via a coder agent, runs its `*-review-lite` self-gate, and hands back a working change; the caller owns the heavyweight close. In **decision-only mode**, it stops after the defended choice, because `lean-spec` owns implementation itself.
+What happens after the defended choice turns on two questions — *does a downstream workflow already own implementation, and is the change small enough to build inline?* In **build mode** (the default, for a single coherent edit), the engine implements via a coder agent, runs its `*-review-lite` self-gate, and hands back a working change; the caller owns the heavyweight close. It switches to **decision-only** — defend, then stop — in two cases: when `lean-spec` called it for a determined decision, or when a directly-invoked change is **too large to build inline**. A major determined change is settled design, so like a brainstorming output it routes to `lean-spec` → `lean-plan` → `subagent-driven-development` rather than being built in one shot; the engine recommends that route at the approval checkpoint, and you confirm.
+
+## One engine, fed by discovery
+
+`coherent-change` is the framework's single *application* point: anything with a settled end-state runs through it. The audits and reviews — `code-archaeology`, `bug-hunt`, `technical-review`, `python-review`, `rust-review` — are *discovery*: they recover intent and propose changes, but they never apply them. They terminate at an artifact and **offer** the handoff (remediate in batch, or defer). Separating proposal from application is what gives every change the same defend-and-prove discipline, instead of letting a review quietly land its own unreviewed patches.
+
+When the handoff is a *set* of changes, the engine runs **batch mode**: one consolidated research pass over the subsystem (not once per finding), a defended choice per change reconciled against that shared map so conflicts surface, then the whole set routed into **one** `lean-spec` → **one** `lean-plan` → `subagent-driven-development`. A batch is inherently major, so it always takes the planned path; decomposition and staging are the plan's job, not something the engine re-implements. The invariant that makes this work: a finding supplies an *end-state* (what should be true), never a method — method-finding stays the engine's job.
 
 ## Change fully, defer only the separable
 

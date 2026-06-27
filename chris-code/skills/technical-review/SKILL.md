@@ -161,3 +161,14 @@ For each finding, include:
 - Whether external domain expert review is needed
 
 Save the review to `.claude/output/reviews/YYYY-MM-DD-technical-review.md`.
+
+## Remediate, or defer
+
+The review is the deliverable — technical-review finds, it never fixes. Before stopping, **offer the handoff**: *"Findings saved to `<review>`. Remediate now in batch, or keep for later?"*
+
+On accept, triage by tag and route the set — framing each as an observable **end-state** (correct output, matched paper, stable computation), not a prescribed fix:
+
+- **Correctness bugs** (`[math-bug]`, `[logic-bug]`) → `chris-code:remediating-issues` (batch).
+- **Algorithmic / numerical / structural changes** (`[research-mismatch]`, `[stability-risk]`, `[perf-bottleneck]`) → `chris-code:coherent-change` (batch mode) — one spec → plan → execution for the set.
+
+On defer, the review is the deliverable; pick it up later by handing it to the same route.

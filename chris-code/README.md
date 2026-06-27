@@ -198,36 +198,36 @@ The pipeline above is for **design-open** work — when *what to build* is still
 
 Its signature output, produced every time, is a **defended choice**: every genuine candidate rooted in how the codebase already solves the problem, the one selected, proof it's correct across *all* affected cases (a per-case table), and why it beats the alternatives on reuse, idiom-fit, contract-preservation, least surprise, and ergonomics. That artifact — not just a working diff — is the point.
 
-`coherent-change` is an **engine, rarely invoked alone.** Front-ends own the *framing* and the *close*, and delegate the *build* to it:
+`coherent-change` is the **universal application engine** — anything with a settled end-state runs through it, rarely invoked alone. Three kinds of caller feed it:
 
-- **`remediating-issues`** — a known bug or review/audit finding. Confirms the issue is real and still open, runs `systematic-debugging`'s root-cause phase, delegates the build, then runs the **bug close**: `regression-test` → `verification-before-completion` → `finishing-a-development-branch`.
-- **`systematic-debugging`** — a bug under investigation. Root-causes it, hands the *diagnosed fix* to the engine, then closes.
-- **`lean-spec`** — design-time. Calls the engine **decision-only**: it takes just the defended choice into its plan and owns implementation itself.
-- **Direct** — invoke it yourself; then *you* are the caller and run the close.
+- **Fix / design front-ends** own framing + close and delegate the build: `remediating-issues` (a known bug — confirms it, root-causes via `systematic-debugging`, then `regression-test` → verification → finishing), `systematic-debugging` (a bug under investigation — root-causes, hands the diagnosed fix over), `lean-spec` (design-time — calls it **decision-only** and owns the build itself).
+- **Discovery skills** *propose and hand off*: `code-archaeology`, `bug-hunt`, `technical-review`, `python-review`, `rust-review` recover intent and propose changes as **end-states**, terminate at an artifact, and offer batch remediation — they never apply changes themselves.
+- **Direct** — you invoke it; you run the close.
 
-Two modes turn on one question — *does a downstream workflow own implementation?*
+After the defended choice, the engine **sizes the work** and routes:
 
-- **Build (default).** research → defend → implement (coder agent) → `*-review-lite` self-gate → hand back a working, lite-reviewed change. The caller owns the heavyweight close.
-- **Decision-only.** research → defend, then stop and hand back the defended choice (for `lean-spec`, which owns implementation).
+- **Single coherent edit** → build inline (coder → `*-review-lite`), hand back; the caller closes.
+- **Major / multi-task change** → settled design, so route to `lean-spec` → `lean-plan` → `subagent-driven-development` instead of building in one shot (recommended at the checkpoint, you confirm).
+- **A set of changes** (audit/review findings) → **batch mode**: one consolidated research pass, a defended choice per change, the whole set into **one** `lean-spec` → `lean-plan` → SDD.
+- **Decision-only** (when `lean-spec` called in) → defend, then stop.
 
 The discipline that keeps it honest: a determined change **closes its whole scope** — every sibling branch, producer, and input its intent reaches (the per-case table lists them). No stubs, no "handle the rest later"; only a genuinely separate, larger improvement is logged and deferred.
 
 ```mermaid
 flowchart TB
-    rem["remediating-issues<br/>known bug / review finding"]
-    dbg["systematic-debugging<br/>diagnosed fix"]
+    front["fix / design front-ends<br/>remediating-issues · systematic-debugging · lean-spec"]
+    disc["discovery — propose + offer<br/>code-archaeology · bug-hunt · *-review"]
     direct["direct invocation"]
-    spec["lean-spec<br/>design-time"]
 
-    engine["coherent-change<br/>the determined-change engine<br/>research → defend the most coherent change → implement → *-review-lite"]
+    engine["coherent-change<br/>the application engine<br/>research → defend → size the change"]
 
-    rem -->|build mode| engine
-    dbg -->|build mode| engine
-    direct -->|build mode| engine
-    spec -->|decision-only| engine
+    front --> engine
+    disc -->|"batch of end-states"| engine
+    direct --> engine
 
-    engine -->|"build: working,<br/>lite-reviewed change"| close["caller's close<br/>regression / durable coverage →<br/>verification-before-completion →<br/>finishing-a-development-branch"]
-    engine -->|"decision-only:<br/>defended choice only"| splan["into lean-spec's plan"]
+    engine -->|"single coherent edit"| inline["build inline → caller's close"]
+    engine -->|"major change, or a batch"| planned["one lean-spec → lean-plan →<br/>subagent-driven-development → close"]
+    engine -->|"decision-only (lean-spec)"| splan["into lean-spec's plan"]
 
     classDef eng fill:#e8eaf6,stroke:#9fa8da
     class engine eng

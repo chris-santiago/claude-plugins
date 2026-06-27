@@ -87,7 +87,7 @@ Then ask to proceed.
 
 ## Batch Path
 
-One issue is the atom; a set is fan-out. Triage all issues, rank them, and footprint each by the files it touches. Issues with no file overlap fan out to coder agents in parallel (the `chris-code:subagent-driven-development` staging pattern); overlapping issues serialize. Each issue still runs its own frame → build → close. Close with one synthesized remediation report.
+A set of issues is a **batch**, not a per-issue fan-out. Triage and rank them, frame each as an observable end-state (the symptom gone — the *intent*, not a prescribed fix), then hand the whole set to `chris-code:coherent-change` **batch mode**: one consolidated research pass over the affected code, a defended fix per issue reconciled against that shared map, and the set routed into **one** `chris-code:lean-spec` → **one** `chris-code:lean-plan` → `chris-code:subagent-driven-development`. The bug framing rides inside that one plan — each fix carries its `chris-code:regression-test` coverage as part of its task, and origins are recorded at the end. Decomposition and footprint staging are the plan's and SDD's job, not something this skill re-implements. Close with one synthesized remediation report.
 
 ## Rationalizations — All Mean "Do the Research and Write the Defense"
 

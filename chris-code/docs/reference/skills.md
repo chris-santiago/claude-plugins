@@ -38,10 +38,10 @@ Ensures work happens in an **isolated workspace** before execution begins. It pr
 ## The change engine
 
 ### `coherent-change`
-The engine for **determined** work — changes whose intended behavior is already settled (a refactor, a migration, an API alignment, an already-specced behavior) where the only open question is *which implementation fits the codebase*. It researches the codebase with parallel `Explore` agents, generates two to four grounded candidates, and produces a **defended choice**: the selected approach, a correctness table over every affected case, and a real rebuttal of each alternative. In build mode it implements and lite-reviews; in decision-only mode it stops at the defended choice. See [The determined-change engine](../explanation/the-pipeline.md#the-determined-change-engine).
+The engine for **determined** work — changes whose intended behavior is already settled (a refactor, a migration, an API alignment, an already-specced behavior) where the only open question is *which implementation fits the codebase*. It researches the codebase with parallel `Explore` agents, generates two to four grounded candidates, and produces a **defended choice**: the selected approach, a correctness table over every affected case, and a real rebuttal of each alternative. In **build mode** it implements and lite-reviews a single coherent edit; a **major** change it instead routes to planned execution (`lean-spec` → `lean-plan` → `subagent-driven-development`), and in **decision-only mode** (when `lean-spec` calls it for a decision) it stops at the defended choice. Handed a **set** of changes (audit / review findings), **batch mode** runs one consolidated research pass and routes the whole set into one `lean-spec` → `lean-plan` → SDD. It is the universal *application* engine — anything with a settled end-state runs through it. See [The determined-change engine](../explanation/the-pipeline.md#the-determined-change-engine).
 
 ### `remediating-issues`
-The bug specialization of the engine. For a known defect with more than one plausible fix, it confirms the bug is real and still open, completes `systematic-debugging`'s root-cause phase, delegates the build to `coherent-change`, then runs the bug close — `regression-test` → `verification-before-completion` → `finishing-a-development-branch` — and records the resolution against its origin.
+The bug specialization of the engine. For a known defect with more than one plausible fix, it confirms the bug is real and still open, completes `systematic-debugging`'s root-cause phase, delegates the build to `coherent-change`, then runs the bug close — `regression-test` → `verification-before-completion` → `finishing-a-development-branch` — and records the resolution against its origin. A *set* of bugs runs through `coherent-change` batch mode (one consolidated spec → plan), with regression coverage and origin recording folded into the one plan.
 
 ### `systematic-debugging`
 The four-phase root-cause method for any bug, test failure, or unexpected behavior — invoked **before** proposing a fix, because random patches mask the underlying issue and breed new bugs. Phase 1 (root cause) is a required sub-step of `remediating-issues`. It includes a System Boundaries check (FFI, serialization, type coercion) and a mandatory `regression-test` follow-up.
@@ -77,23 +77,23 @@ Ad-hoc review outside the automated gates — when you're stuck, before a refact
 The discipline for *handling* review feedback: technical evaluation, not performative agreement. Verify each finding against the actual code before acting; a stated rationale never auto-downgrades a real finding, and a questionable suggestion is checked, not blindly implemented.
 
 ### `python-review` · `rust-review`
-Senior-level, hands-on refactoring and API-design review of a package/module/subsystem. They recover architectural intent, identify drift (utility-module sprawl, dict-shaped domain data, mode-flag creep, leaky internals), and propose **small reviewable patches**. These are the standalone, apply-changes counterparts to the read-only `*-design-reviewer` agents.
+Senior-level, interactive refactoring and API-design review of a package/module/subsystem. They recover architectural intent, identify drift (utility-module sprawl, dict-shaped domain data, mode-flag creep, leaky internals), and propose changes as **end-states**. They are *discovery* — they do **not** apply patches; they route the proposed changes to `coherent-change` (single or batch), which finds the method and runs the close. (The read-only `*-design-reviewer` agents are the automated-gate counterparts.)
 
 ### `technical-review`
-For Python ML code: reviews mathematical correctness, algorithmic logic, numerical stability, and research alignment — loss functions, estimators, optimization steps, anything implementing a published algorithm. Covers PyTorch, Lightning, scikit-learn, scipy, numpy, lightgbm.
+For Python ML code: reviews mathematical correctness, algorithmic logic, numerical stability, and research alignment — loss functions, estimators, optimization steps, anything implementing a published algorithm. Covers PyTorch, Lightning, scikit-learn, scipy, numpy, lightgbm. Terminates at a review artifact, then offers batch remediation (correctness bugs → `remediating-issues`, algorithmic/structural changes → `coherent-change` batch) or defer.
 
 ---
 
 ## Quality campaigns
 
 ### `bug-hunt`
-A repeatable parallel campaign: one `bug-hunter` agent per subsystem, each writing edge-case tests and reporting failures as bugs. Pass a subsystem name to scope it. The agents find bugs; they don't fix them — feed confirmed failures to `remediating-issues`.
+A repeatable parallel campaign: one `bug-hunter` agent per subsystem, each writing edge-case tests and reporting failures as bugs. Pass a subsystem name to scope it. The agents find bugs; they don't fix them — bug-hunt ends by offering batch remediation via `remediating-issues`, or you keep the report for later.
 
 ### `test-sweep`
 An iterative combinatorial test-and-fix campaign: write systematic test modules across cross-cutting dimensions of the API, run them, fix failures via TDD, then use the failure patterns to derive the next suite. Runs for N rounds or until convergence, pausing only for genuine design decisions.
 
 ### `code-archaeology`
-Surfaces unimplemented features, silently dropped parameters, dead code paths, skipped tests, and spec-vs-implementation gaps — run it before declaring a milestone done or before a major refactor, or when behavior a user expects is mysteriously absent.
+Surfaces unimplemented features, silently dropped parameters, dead code paths, skipped tests, and spec-vs-implementation gaps — run it before declaring a milestone done or before a major refactor, or when behavior a user expects is mysteriously absent. It ends at a prioritized report and offers batch remediation — bug-type findings → `remediating-issues`, structural findings → `coherent-change` batch — or defer.
 
 ---
 

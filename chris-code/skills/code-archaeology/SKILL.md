@@ -105,3 +105,14 @@ After all agents return, group findings into a prioritized report:
 6. **Stale docs** — comments/docstrings that no longer match the implementation
 
 Save the report to `.claude/output/code-archaeology/YYYY-MM-DD-code-archaeology.md`.
+
+## Remediate, or defer
+
+The report is the deliverable — code-archaeology terminates at the artifact, it never applies changes. Before stopping, **offer the handoff**: *"Findings saved to `<report>`. Remediate now in batch, or keep for later?"*
+
+On accept, triage by type and route the set — framing each finding as an observable **end-state** (what should be true), not a prescribed fix; the engine finds the method:
+
+- **Bug-type** findings (active bugs, skipped-test bugs) → `chris-code:remediating-issues` (batch).
+- **Structural / missing-implementation** findings → `chris-code:coherent-change` (batch mode) — one consolidated research pass, then one `chris-code:lean-spec` → `chris-code:lean-plan` → execution for the whole set.
+
+On defer, the report is the deliverable; pick it up later by handing it to the same route.

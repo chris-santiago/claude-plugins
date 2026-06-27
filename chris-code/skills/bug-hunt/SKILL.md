@@ -94,6 +94,12 @@ Then list every failing test with its error, grouped by subsystem. These are the
 
 All test files are real and should be committed after review. Failing tests are kept with a `# BUG:` / `// BUG:` comment — they are the bug evidence.
 
+## Remediate, or defer
+
+bug-hunt finds, it never fixes. Before stopping, **offer the handoff**: *"Bugs captured in `BUG_REPORT.md` and as failing tests. Remediate now in batch, or keep for later?"*
+
+On accept, hand the bug-set to `chris-code:remediating-issues` (batch) — it frames each as an end-state and fixes them through `chris-code:coherent-change` batch mode (one `chris-code:lean-spec` → `chris-code:lean-plan` → execution), with the failing tests becoming the regression coverage. On defer, the report and tests wait for that same route.
+
 ## Repeatability
 
 Running `/bug-hunt` again reruns all agents. Each agent overwrites its test file (fresh read of current source). Previously-fixed bugs will now pass. `BUG_REPORT.md` accumulates all runs with timestamps.

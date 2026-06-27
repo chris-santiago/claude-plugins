@@ -110,13 +110,12 @@ Before any non-trivial refactor, present:
 
 If multiple good options exist, show 2–3 and recommend one.
 
-### Phase 4 — Execute in small patches
-Apply changes in small, logical increments. After each:
-- summarize what changed
-- list affected modules
-- note any migration implications
-- run relevant tests/lints if available
-- mention unresolved follow-ups
+### Phase 4 — Route changes to coherent-change
+This skill is *discovery*: it recovers intent, diagnoses drift, and proposes changes — it does **not** apply patches itself. Hand the proposed changes to `chris-code:coherent-change`, each framed as an observable **end-state** (what should be true), not a prescribed patch:
+- **One change** → `coherent-change` single mode — it defends the method and runs its scale fork (inline, or spec → plan → execution).
+- **Several changes** (a crate cleanup) → `coherent-change` **batch mode** — one consolidated research pass, a defended choice per change, and the whole set routed into one `chris-code:lean-spec` → `chris-code:lean-plan` → execution.
+
+The engine owns the method, the verification gate, and the close. Your job is *what should change and why*, not the application — a senior review that blindly applies its own patches skips the defend-and-prove discipline every change is owed.
 
 ### Phase 5 — Review the result
 After each completed area, evaluate: Is the API more coherent? Did we reduce special cases? Did we improve naming consistency? Did we remove duplication? Did ownership/data flow become easier to understand? Did we add any abstraction that should be simplified further?
@@ -237,7 +236,7 @@ When this skill is invoked, **do not jump into code changes**. Begin by producin
 - medium-risk cleanups
 - high-risk / high-value architectural repairs
 
-**D. First patch proposal**
-Pick the **safest, highest-leverage** improvement. Propose it (Phase 3 format) before editing anything.
+**D. First change proposal**
+Pick the **safest, highest-leverage** improvement. Propose it (Phase 3 format), then route it to `chris-code:coherent-change` (Phase 4) — don't edit it yourself.
 
 Understand the shape of the system first, then make the smallest meaningful improvement. **Optimize for coherence, not activity.**

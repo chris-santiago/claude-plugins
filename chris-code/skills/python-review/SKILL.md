@@ -127,14 +127,12 @@ Before any non-trivial refactor, present:
 
 If several good options exist, show 2–3 and recommend one.
 
-### Phase 4 — Execute in small patches
-Refactor in small increments. After each:
-- summarize what changed
-- list files/modules touched
-- state whether public API changed
-- mention migration implications
-- run relevant tests/lints/type checks if available (`pytest`, `ruff`, `mypy`, `pyright`, project-specific tooling)
-- note unresolved follow-ups
+### Phase 4 — Route changes to coherent-change
+This skill is *discovery*: it recovers intent, diagnoses drift, and proposes changes — it does **not** apply patches itself. Hand the proposed changes to `chris-code:coherent-change`, each framed as an observable **end-state** (what should be true), not a prescribed patch:
+- **One change** → `coherent-change` single mode — it defends the method and runs its scale fork (inline, or spec → plan → execution).
+- **Several changes** (a subsystem cleanup) → `coherent-change` **batch mode** — one consolidated research pass, a defended choice per change, and the whole set routed into one `chris-code:lean-spec` → `chris-code:lean-plan` → execution.
+
+The engine owns the method, the verification gate, and the close. Your job is *what should change and why*, not the application — a senior review that blindly applies its own patches skips the defend-and-prove discipline every change is owed.
 
 ### Phase 5 — Review
 After each area is complete: Is the API more coherent? Are responsibilities clearer? Are side effects better contained? Did we reduce branching and duplication? Did package boundaries improve? Did we add any abstraction that should be simplified further?
@@ -265,7 +263,7 @@ When this skill is invoked, **do not jump into a rewrite**. Begin by producing, 
 - medium-risk cleanups
 - high-risk / high-value repairs
 
-**D. First patch proposal**
-Pick the **safest, highest-leverage** improvement. Propose it (Phase 3 format) before editing.
+**D. First change proposal**
+Pick the **safest, highest-leverage** improvement. Propose it (Phase 3 format), then route it to `chris-code:coherent-change` (Phase 4) — don't edit it yourself.
 
 Understand the actual shape of the system first. **Optimize for coherence, not activity.**
