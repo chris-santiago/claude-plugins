@@ -127,10 +127,18 @@ Anything you paste into a dispatch — and anything a subagent prints back — s
 
 - **Task brief:** the brief is a *reference sheet*, not a restatement of the spec. Run `scripts/task-brief PLAN_FILE N` to extract the plan's task entry (its actions, `Consumes:` pointers, and spec §-references) to a file, then add any cross-task notes only you hold (next bullet). The dispatch carries only: (1) one line on where this task fits **and the observable outcome it must produce — the *why* (see Intent below)**; (2) the brief path, introduced as "read this first — your task and the sections to read"; (3) the spec path, where the coder reads the referenced §§; for a contract built by an earlier task, name the file or spec § rather than restating its signature; (4) the Global Constraints copied verbatim; (5) the report-file path.
 - **Intent (the *why*) — required:** a coder recovers *what* and *where* by reading the brief, the spec, and the repo, but it cannot recover *why* — the observable outcome this task serves. A fresh subagent does not inherit your conversation, so the brief is intent's only channel: the dispatch must carry it — one or two lines on the outcome this task must produce, quoting the relevant intent-ledger statement where one exists. Hand over the goal, not just the change — a coder given only *what* and *where* optimizes the diff and can ship the wrong thing correctly. If you cannot state the why, the task isn't ready to dispatch (the intent lives only in your head — externalize it or keep the task in-session).
-- **Cross-task notes (orchestrator-only, terse):** beyond intent (above), the other thing the coder cannot recover by reading the spec and the repo is cross-task context. Add it to the brief as pointers and decisions, never as dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict adjudication (`finding §5 governs the extent→band call`), or a code entry point (the landing symbol, plus any new wire-key value). Grounding beyond the entry point is the coder's job (its first step is to read the files it will touch), so point at the entry and let it trace the chain. Keep this to a few lines; if it grows, the requirement belongs in the spec, or the conflict belonged in the Pre-Flight Plan Review.
+- **Cross-task notes (orchestrator-only, terse):** beyond intent (above), the other thing the coder cannot recover by reading the spec and the repo is cross-task context. Add it to the brief as pointers and decisions, never as dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict adjudication (`finding §5 governs the extent→band call`), a code entry point (the landing symbol, plus any new wire-key value), or a shared-shape pointer from the pattern ledger (see Cross-Task Pattern Ledger). Grounding beyond the entry point is the coder's job (its first step is to read the files it will touch), so point at the entry and let it trace the chain. Keep this to a few lines; if it grows, the requirement belongs in the spec, or the conflict belonged in the Pre-Flight Plan Review.
 - **Report file:** name it after the brief (`task-N-brief.md` → `task-N-report.md`). The implementer writes its full report there and returns only status, the changed-file list, a one-line test summary, and concerns.
 - **Reviewer inputs:** spec-reviewer and `*-quality-reviewer` agents get the brief path, the report path, the changed-file list, and the verbatim Constraints, and read the actual changed files. Do not paste diffs.
 - **Never** paste task text, prior-task summaries, or diffs into a dispatch or into your own context. A fresh subagent needs its brief, the interfaces it touches, and the constraints — nothing else.
+
+## Cross-Task Pattern Ledger
+
+You are the only actor who sees the task sequence — briefs carry intent and contracts, coders are scope-disciplined against out-of-task refactoring, reviewers see one diff. Cross-task shape tracking is therefore yours; untracked, a shape repeated across tasks lands as N verbatim copies that every per-task gate passes.
+
+- **After each task:** note any newly added multi-line shape (shared helper, call sequence, dispatch block) that later same-family tasks will need. Record it durably alongside progress: `scripts/progress append "Task N: shared shape — <symbol> at <path>"`.
+- **Before each dispatch:** check the ledger; a later same-family task's brief carries the pointer as a cross-task note — "the composite dispatch lives at `<symbol>` — call it, don't re-inline."
+- **On `DUPLICATION-PENDING: <sites>` in a coder report:** record it in the ledger and assign the hoist to the next task whose footprint covers the owning file, or append a small hoist task if none does. Don't let the flag ride to the whole-change commit gate — by then the copies are committed and the fix is rework across N commits.
 
 ## Global Constraints
 
@@ -252,6 +260,7 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never start quality review before spec compliance passes
 - Never mark a task complete with an unresolved ⚠️ item
 - Never re-dispatch a task the ledger lists as complete
+- Never dispatch a later same-family task without carrying the pattern ledger's shared-shape pointer into its brief
 - Never move to next task while any review has open issues
 - If a reviewer finds issues: coder fixes → reviewer re-reviews → repeat until approved
 - If a subagent is blocked: provide more context, upgrade model, or break the task apart — never force retry without changes

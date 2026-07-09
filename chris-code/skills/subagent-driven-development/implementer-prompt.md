@@ -39,7 +39,10 @@ Agent tool:
     2. Write tests (following TDD if the brief says to)
     3. Verify implementation works
     4. Self-review against your embedded checklist
-    5. Write your full report to [REPORT_FILE], then return only the summary below
+    5. If you copied ≥5 lines near-verbatim from a sibling site, flag
+       `DUPLICATION-PENDING: <sites>` in your report (hoist instead when the
+       owning file is already in your task's footprint)
+    6. Write your full report to [REPORT_FILE], then return only the summary below
 
     Work from: [directory]
 

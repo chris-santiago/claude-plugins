@@ -110,6 +110,7 @@ After writing, check against the spec:
 2. **Bloat scan:** Any prose that restates the spec? Any code blocks an executor would rewrite? Cut them.
 3. **Name consistency:** Do types, signatures, and paths used in later tasks match earlier tasks?
 4. **Verify scope vs. shared contracts:** Does any task change a *shared contract* (a test file several tasks edit, such as a central exclusions list or fixtures module; an enum; an allow/deny list; a public signature consumed elsewhere)? If so, its `Verify:` and its slice of the acceptance checks must run the **full suite, or grep every assertion of that contract**, not just a local `-k` subset scoped to the task's own module. A narrow filter passes green while hiding orphaned failures in sibling files: the assertion a *different* task already wrote against the contract you just flipped. When in doubt, a shared-contract task verifies suite-wide.
+5. **Repeated shapes are contracts:** Do 3+ tasks perform the same operation (the same call pair, construction, or dispatch block)? Name the shared helper as a contract with an owner — one task builds it, every later consumer carries a `Consumes:` pointer to it. A shape left inline in the plan becomes N verbatim copies at execution: coders are scope-disciplined and will not hoist it for you.
 
 Fix issues inline, then move on.
 
