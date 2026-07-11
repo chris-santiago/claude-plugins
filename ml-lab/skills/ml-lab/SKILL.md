@@ -730,9 +730,19 @@ Dispatch the `research-reviewer` subagent via the Agent tool with `subagent_type
 
 1. Read `REPORT.md` as the primary document
 2. Also read `CONCLUSIONS.md`, `REPORT_ADDENDUM.md`, and `SENSITIVITY_ANALYSIS.md` (if it exists)
-3. Produce a structured peer review with Summary, Strengths, Critical Issues (MAJOR/MINOR), and Prioritized Recommendations
+3. Run its full adversarial review: audit every load-bearing claim first (prior art / folklore / incorrect / tautology), then produce the six-section output — Summary, Claim Audit, Strengths, Critical Issues (MAJOR/MINOR), Recommendations, and a **Disposition** (submit after fixes / reframe / kill and salvage)
 
 The reviewer writes its output to `PEER_REVIEW_R1.md`.
+
+### Disposition Gate — Round 1 Kill Check
+
+`research-reviewer` ends its review with a **Disposition** (its Phase 2 §6). Read it *before* planning any remediation, because the disposition decides whether remediation is even coherent:
+
+- **Kill and salvage** — the reviewer judges that no claim survives the audit: every contribution is prior art, folklore, incorrect, or true by construction. **Halt the loop.** Do not write a remediation plan and do not run Rounds 2–3 — there is nothing to verify. Surface the verdict to the user directly: quote the reviewer's Disposition and its salvage note (what is worth extracting — a diagnostic, a harness, a dataset, a lesson), then return control. A kill is a finding about the *investigation*, not a report defect to be edited away; only the user decides whether to salvage, reframe over the objection, or stop.
+- **Reframe** — surviving claims exist but the honest framing differs from the current one. Do not halt. Carry the reframe into Gate 3 as the **headline remediation item**: the plan's primary action is the reframe the reviewer named (e.g., negative-results paper, pitfalls-and-diagnostics writeup), not line-level fixes. Surface it explicitly in the Gate 3 plan for user approval.
+- **Submit after fixes** — proceed to Gate 3 normally; the disposition's per-claim sentences scope what the fixes must protect.
+
+This gate is a hard stop on **kill only**. Reframe and submit both continue to Gate 3.
 
 ### Gate 3 — Peer Review Remediation Plan
 
@@ -760,7 +770,7 @@ After addressing all actionable findings, update `REPORT.md` and all affected ar
 
 ### Rounds 2–3 — Verification Reviews (Haiku)
 
-Dispatch the `research-reviewer-lite` subagent via the Agent tool with `subagent_type: "research-reviewer-lite"`. Same instructions as Round 1, but the reviewer also reads the prior `PEER_REVIEW_R{N-1}.md` to verify that previous findings were addressed.
+Dispatch the `research-reviewer-lite` subagent via the Agent tool with `subagent_type: "research-reviewer-lite"`. This is a *verification* pass, not a second full audit: instruct it to read the prior `PEER_REVIEW_R{N-1}.md` alongside the updated `REPORT.md`, confirm that each Round 1 MAJOR finding was actually addressed, flag any regression the fixes introduced, and surface any new MAJOR issue the remediation created. It does not re-run the Round 1 claim audit — Round 1 already established which claims survive.
 
 The reviewer writes to `PEER_REVIEW_R{N}.md`. Same triage-and-address cycle as Round 1.
 

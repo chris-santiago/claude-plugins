@@ -9,7 +9,7 @@ This directory contains the Claude Code agents, skills, and scripts that power t
 | `ml-critic.md` | Adversarial critic — finds flaws the PoC hasn't tested (Stage A.1) | `/ml-lab` skill (Step 3: 1× in debate Stage A; 3× in ensemble mode) |
 | `ml-critic-r2.md` | R2 challenger — issues ACCEPT/CHALLENGE/PARTIAL verdicts on defender rebuttals (Stage B.1) | `/ml-lab` skill (Step 3: debate Stage B only) |
 | `ml-defender.md` | Design defender — 7-type structured rebuttal taxonomy; concedes, rebuts, or defers (Stage A.2 and B.2) | `/ml-lab` skill (Step 3 — **debate mode only**) |
-| `research-reviewer.md` | Deep peer reviewer — Opus-class structured review of REPORT.md | `/ml-lab` skill (Step 10, Round 1) |
+| `research-reviewer.md` | Adversarial peer reviewer — Opus-class claim audit + execution review; ends in a submit / reframe / kill disposition | `/ml-lab` skill (Step 10, Round 1) |
 | `research-reviewer-lite.md` | Verification reviewer — Haiku-class follow-up review | `/ml-lab` skill (Step 10, Rounds 2–3) |
 | `readme-rewriter.md` | Outside-reader README rewriter — diagnoses and rewrites for external audiences | `/ml-lab` skill (Step 13) |
 | `intent-monitor.md` | Pre-registration drift monitor — evaluates git changes in an experiment directory against binding constraints in a source-of-truth document; emits a clean-pass line or structured conflict report | `/intent-watch` skill (user-invoked) |

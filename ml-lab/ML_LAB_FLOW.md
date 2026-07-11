@@ -70,7 +70,9 @@ flowchart TD
     S9 --> PRGATE{"full_report<br/>+ run peer review?"}
     PRGATE -- "No" --> S11GATE
     PRGATE -- "Yes" --> R1["Step 10 Round 1<br/>research-reviewer · Opus<br/>PEER_REVIEW_R1.md"]
-    R1 --> G3[/"✋ Gate 3 — Remediation Plan<br/>User approval required"/]
+    R1 --> DISP{"R1 Disposition?"}
+    DISP -- "Kill & salvage" --> KILLGATE(["⛔ Kill Gate — no claim survives<br/>Surface verdict + salvage to user · loop halts"])
+    DISP -- "Reframe / Submit" --> G3[/"✋ Gate 3 — Remediation Plan<br/>User approval required"/]
     G3 --> FIX["Address findings"]
     FIX --> PRCHK{"MAJOR issues<br/>remain?"}
     PRCHK -- "No · converged" --> S11GATE
