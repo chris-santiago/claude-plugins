@@ -26,6 +26,7 @@ If the spec covers multiple independent subsystems, suggest breaking into separa
 1. Read the design spec (and any referenced docs) end to end
 2. Identify which details are already well-documented in the spec vs. which need to be stated in the plan
 3. Map out which files will be created or modified
+4. **Ground against existing code:** for the files in step 3, note the existing helpers, idioms, and patterns this change should build on rather than reinvent — the coherent implementation is usually already in the repo, and the planner is the last actor who sees the whole change before it fans out into isolated per-task coder contexts. Where the design implies an operation several tasks will share, decide its owner now (Self-Review §5 checks you did); where *which* existing approach best fits is genuinely contested, resolve it via `chris-code:coherent-change` in decision-only mode before writing tasks — don't defer the choice into the plan.
 
 ## Plan Format
 
