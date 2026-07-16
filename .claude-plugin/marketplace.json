@@ -11,15 +11,15 @@
       "name": "chris-code",
       "source": "./chris-code",
       "description": "Workflow skills, coding agents, review gates, and quality campaigns for Claude Code.",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "license": "MIT",
       "keywords": ["workflow", "agents", "review", "tdd", "debugging", "quality"]
     },
     {
       "name": "ml-lab",
       "source": "./ml-lab",
-      "description": "Structured ML hypothesis investigation — ensemble critique (default) or adversarial debate, empirical testing, peer review, coherence audit, and README rewrite.",
-      "version": "2.0.0",
+      "description": "Structured ML hypothesis investigation — adversarial debate (default) or ensemble critique, empirical testing, peer review, coherence audit, and README rewrite.",
+      "version": "2.1.0",
       "license": "MIT",
       "keywords": ["ml", "hypothesis-testing", "agents", "research"]
     },
