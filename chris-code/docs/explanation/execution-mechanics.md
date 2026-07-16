@@ -27,6 +27,14 @@ Before Task 1, the plan is scanned **once** for internal conflicts (tasks that c
 
 Conversation memory does not survive compaction, and a controller that loses its place can re-dispatch finished tasks. So progress is tracked in a **ledger**, not only in the live task list. When a task's reviews come back clean, it's appended to `.git/sdd/progress.md`. After compaction, the orchestrator rebuilds its task list from the ledger and trusts the ledger and `git log` over its own recollection — finished tasks are never re-run.
 
+## Cross-task pattern ledger
+
+Staged parallelism and file handoffs both work by keeping each coder's context small and disjoint — which is exactly what blinds a coder to what its siblings are doing. Four tasks that each need the same block of logic will each write it, and every per-task review passes, because no reviewer ever sees more than one diff. The orchestrator is the only actor that sees the whole task sequence, so preventing that duplication is its job alone.
+
+The **pattern ledger** is how it holds that view. After each task, the orchestrator records any newly added multi-line shape a later same-family task will need — a shared helper, a call sequence, a dispatch block — appended to the same `.git/sdd/` ledger as progress, so it survives compaction. Before dispatching a later task, it carries the pointer into that task's brief: *call this symbol, don't re-inline it.* When a coder reports a `DUPLICATION-PENDING` flag (it copied a block because the file that should own the helper was outside its footprint), the orchestrator records it and assigns the hoist to the next task whose footprint covers that file, rather than letting the copy ride to the commit.
+
+This is the execution-altitude link in a longer chain: `lean-plan` grounds against existing code and names a shape several tasks will share as a contract with an owner; the ledger carries that contract between tasks; the coder mirrors by reference. The chain exists because coherence established when a change is whole does not survive decomposition unless it is deliberately carried — see [Coherent change](coherent-change.md#coherence-has-to-survive-decomposition).
+
 ## Reviewer integrity
 
 The gates are only as good as their independence, so several rules protect it:

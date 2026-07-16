@@ -15,14 +15,14 @@ The mandatory front door for any creative work — a new feature, a component, a
 Writes the design as a **minimal durable document** — system behavior, architecture, interfaces, invariants, and acceptance criteria — and nothing else. Its governing rule is *"contracts stay, choreography goes"*: if a line would change when you reimplement in another language, it belongs in a plan, not the spec. A word-efficiency principle keeps it honest — every line must be load-bearing. Output lands in `.claude/output/specs/`.
 
 ### `lean-plan`
-Turns a spec into a **thin execution handoff**: what to do and where, never how. It does not paste code the implementer will discard; where a design spec already documents a requirement, it references the spec rather than restating it. This is the artifact `subagent-driven-development` executes. Output lands in `.claude/output/plans/`.
+Turns a spec into a **thin execution handoff**: what to do and where, never how. It does not paste code the implementer will discard; where a design spec already documents a requirement, it references the spec rather than restating it. Before decomposing it **grounds against existing code** — what the repo already provides to reuse, and any shape several tasks will share, which it names as a contract with an owner task so the fan-out doesn't reinvent it. This is the artifact `subagent-driven-development` executes. Output lands in `.claude/output/plans/`.
 
 ---
 
 ## Execution
 
 ### `subagent-driven-development`
-Executes a plan in the current session by dispatching a **fresh subagent per task**, with three review gates after each: spec compliance → code quality → commit-lite. It maps each task's file footprint up front and uses **staged parallelism** — independent tasks run concurrently, tasks that share a file are serialized. It hands artifacts over as files (not pasted text), keeps a durable progress ledger to survive compaction, and runs a final whole-diff review pass. See [Execution mechanics](../explanation/execution-mechanics.md).
+Executes a plan in the current session by dispatching a **fresh subagent per task**, with three review gates after each: spec compliance → code quality → commit-lite. It maps each task's file footprint up front and uses **staged parallelism** — independent tasks run concurrently, tasks that share a file are serialized. It hands artifacts over as files (not pasted text), keeps a durable progress ledger to survive compaction, and runs a final whole-diff review pass. A **cross-task pattern ledger** carries shared-shape pointers between tasks so a fanned-out change doesn't land the same block as N copies. See [Execution mechanics](../explanation/execution-mechanics.md).
 
 ### `executing-plans`
 The inline alternative to `subagent-driven-development`: load the plan, review it critically, and execute all tasks **without** dispatching subagents, with review checkpoints along the way. Use it when subagent overhead isn't worth it or the work is better kept in one context.

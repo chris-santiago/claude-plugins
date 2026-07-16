@@ -41,6 +41,7 @@ nav = [
     { "Explanation" = [
         { "Overview"                  = "explanation/index.md" },
         { "The pipeline"              = "explanation/the-pipeline.md" },
+        { "Coherent change"          = "explanation/coherent-change.md" },
         { "The assurance model"       = "explanation/the-assurance-model.md" },
         { "Context & dispatch"        = "explanation/context-and-dispatch.md" },
         { "Execution mechanics"       = "explanation/execution-mechanics.md" },

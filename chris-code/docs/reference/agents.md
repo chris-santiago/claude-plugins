@@ -34,13 +34,15 @@ One coder per task. When several match the same extension, `scope.require_depend
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-coder` | sonnet | `.py` | General Python implementation |
-| `pytorch-coder` | sonnet | `.py` (torch, lightning) | PyTorch/Lightning implementation |
+| `python-coder` | sonnet | `.py`, `.ipynb` | General Python implementation |
+| `pytorch-coder` | sonnet | `.py`, `.ipynb` (torch, lightning) | PyTorch/Lightning implementation |
 | `rust-coder` | sonnet | `.rs` | Rust implementation |
 
 Coders **internalize the review principles** so their code passes the lite-review gate on the first attempt — preserve behavior, clarity over cleverness, small reviewable steps, prefer deletion to invention, no speculative architecture. They follow `test-driven-development`, run the project's tests and linter, and self-review against the S3+ list before reporting.
 
 Crucially, a coder **reads the task's *intent* before the code** and builds toward the stated outcome, not just a passing diff. If a brief gives only *what* and *where* but no *why*, the coder **escalates for the intent** rather than guessing — one half of the loop that keeps intent flowing through dispatch (see [Context & dispatch](../explanation/context-and-dispatch.md)). Coders also escalate public-API changes, cross-language work, and changes to foundational invariants before implementing.
+
+Coders also **mirror by reference rather than copy**: if a task needs a block a sibling already wrote, the coder hoists it into a shared helper when the owning file is already in its footprint, and otherwise flags `DUPLICATION-PENDING` in its report so the orchestrator assigns the hoist instead of letting the copy land. This is the coder-altitude link in the chain that keeps a fanned-out change coherent — see [Coherent change](../explanation/coherent-change.md#coherence-has-to-survive-decomposition).
 
 ---
 
@@ -50,8 +52,8 @@ Dispatched per task **after** spec compliance passes. In a PyTorch project a `.p
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-quality-reviewer` | opus | `.py` | General Python principle adherence + bug detection |
-| `pytorch-quality-reviewer` | opus | `.py` (torch, lightning) | Lightning conventions + silent training bugs + reproducibility |
+| `python-quality-reviewer` | opus | `.py`, `.ipynb` | General Python principle adherence + bug detection |
+| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` (torch, lightning) | Lightning conventions + silent training bugs + reproducibility |
 | `rust-quality-reviewer` | opus | `.rs` | Rust principle adherence + bug detection |
 
 They verify the coder actually followed the principles it claims to internalize, catch bugs the coder missed, and validate test quality. Their verdict is **APPROVED** or **REVISE** (with a specific fix list). The PyTorch reviewer additionally flags any change to loss computation, gradient flow, or the data pipeline, even when the code is correct, so the orchestrator can confirm it was intentional.
@@ -77,7 +79,7 @@ The heavyweight, read-only gate in `verification-before-completion`. They produc
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-design-reviewer` | opus | `.py` | Senior Python cohesion / API-design review → PASS / CONCERNS |
+| `python-design-reviewer` | opus | `.py`, `.ipynb` | Senior Python cohesion / API-design review → PASS / CONCERNS |
 | `rust-design-reviewer` | opus | `.rs` | Senior Rust cohesion / API-design review → PASS / CONCERNS |
 
 They recover architectural intent, then find the drift that debugging and deadline pressure introduce — modules doing too many things, utility/`helpers` dumping grounds, dict-shaped domain data crossing boundaries, hidden side effects in "pure-looking" helpers, mode-flag creep, public-API hazards. They are the read-only counterparts to the hands-on `python-review` / `rust-review` skills.
