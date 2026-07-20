@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 460" font-family="Helvetica,Arial,sans-serif">
+<text x="560.0" y="34.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">The pipeline: every non-trivial change runs the same path</text>
+<rect x="33.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="107.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Brainstorm</text>
+<text x="107.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">settle intent</text>
+<text x="107.5" y="230.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">(hard gate)</text>
+<line x1="184.5" y1="198.0" x2="211.5" y2="198.0" stroke="#6b7280" stroke-width="2.4"/>
+<polygon points="211.5,198.0 202.5,202.9 202.5,193.1" fill="#6b7280"/>
+<rect x="214.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="288.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Lean spec</text>
+<text x="288.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">contracts,</text>
+<text x="288.5" y="230.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">not code</text>
+<line x1="365.5" y1="198.0" x2="392.5" y2="198.0" stroke="#6b7280" stroke-width="2.4"/>
+<polygon points="392.5,198.0 383.5,202.9 383.5,193.1" fill="#6b7280"/>
+<rect x="395.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="469.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Lean plan</text>
+<text x="469.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">what &amp; where</text>
+<line x1="546.5" y1="198.0" x2="573.5" y2="198.0" stroke="#6b7280" stroke-width="2.4"/>
+<polygon points="573.5,198.0 564.5,202.9 564.5,193.1" fill="#6b7280"/>
+<rect x="576.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#e4f0e6" stroke="#15803d" stroke-width="2"/>
+<text x="650.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Execute</text>
+<text x="650.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">coder agent</text>
+<text x="650.5" y="230.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">per task</text>
+<line x1="727.5" y1="198.0" x2="754.5" y2="198.0" stroke="#6b7280" stroke-width="2.4"/>
+<polygon points="754.5,198.0 745.5,202.9 745.5,193.1" fill="#6b7280"/>
+<rect x="757.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="831.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Verify</text>
+<text x="831.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">gates before</text>
+<text x="831.5" y="230.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">“done”</text>
+<line x1="908.5" y1="198.0" x2="935.5" y2="198.0" stroke="#6b7280" stroke-width="2.4"/>
+<polygon points="935.5,198.0 926.5,202.9 926.5,193.1" fill="#6b7280"/>
+<rect x="938.5" y="150.0" width="148.0" height="96.0" rx="8" fill="#eef0f2" stroke="#6b7280" stroke-width="2"/>
+<text x="1012.5" y="196.0" font-size="21" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Finish</text>
+<text x="1012.5" y="214.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">merge / PR</text>
+<text x="288.5" y="128.0" font-size="15" fill="#1a4a7a" text-anchor="middle" font-weight="bold">DESIGN  —  settle what &amp; why</text>
+<text x="650.5" y="128.0" font-size="15" fill="#15803d" text-anchor="middle" font-weight="bold">BUILD</text>
+<text x="831.5" y="128.0" font-size="15" fill="#d97706" text-anchor="middle" font-weight="bold">PROVE</text>
+<line x1="107.5" y1="252.0" x2="107.5" y2="324.0" stroke="#d97706" stroke-width="1.8" stroke-dasharray="4,4"/>
+<line x1="831.5" y1="252.0" x2="831.5" y2="324.0" stroke="#d97706" stroke-width="1.8" stroke-dasharray="4,4"/>
+<line x1="107.5" y1="324.0" x2="831.5" y2="324.0" stroke="#d97706" stroke-width="1.8"/>
+<polygon points="831.5,324.0 822.5,328.9 822.5,319.1" fill="#d97706"/>
+<text x="469.5" y="346.0" font-size="15" fill="#d97706" text-anchor="middle" font-weight="normal" font-style="italic">intent ledger  —  frozen in your words at brainstorm, re-checked against shipped behavior at verify</text>
+<text x="107.5" y="316.0" font-size="13" fill="#d97706" text-anchor="middle" font-weight="normal">freeze</text>
+<text x="831.5" y="316.0" font-size="13" fill="#d97706" text-anchor="middle" font-weight="normal">re-check</text>
+</svg>

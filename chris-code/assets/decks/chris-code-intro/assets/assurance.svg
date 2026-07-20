@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 500" font-family="Helvetica,Arial,sans-serif">
+<text x="540.0" y="32.0" font-size="22" fill="#1a4a7a" text-anchor="middle" font-weight="bold">What the gates prove — recall, not a proof of correctness</text>
+<rect x="70.0" y="70.0" width="430.0" height="300.0" rx="8" fill="#fbe4e4" stroke="#b91c1c" stroke-width="1.6"/>
+<text x="285.0" y="100.0" font-size="20" fill="#b91c1c" text-anchor="middle" font-weight="bold">Correlated re-reads</text>
+<text x="285.0" y="124.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">same model, distribution, framing</text>
+<rect x="130.0" y="148.0" width="310.0" height="34.0" rx="8" fill="#fff" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="285.0" y="170.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">spec review</text>
+<rect x="130.0" y="192.0" width="310.0" height="34.0" rx="8" fill="#fff" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="285.0" y="214.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">quality review</text>
+<rect x="130.0" y="236.0" width="310.0" height="34.0" rx="8" fill="#fff" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="285.0" y="258.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">design review</text>
+<rect x="130.0" y="280.0" width="310.0" height="34.0" rx="8" fill="#fff" stroke="#b91c1c" stroke-width="1.4"/>
+<text x="285.0" y="302.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">another LLM pass</text>
+<text x="285.0" y="340.0" font-size="15" fill="#b91c1c" text-anchor="middle" font-weight="bold">miss the same things together</text>
+<text x="285.0" y="362.0" font-size="13" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">more passes → higher recall, not residual proof</text>
+<rect x="580.0" y="70.0" width="430.0" height="300.0" rx="8" fill="#e4f0e6" stroke="#15803d" stroke-width="1.6"/>
+<text x="795.0" y="100.0" font-size="20" fill="#15803d" text-anchor="middle" font-weight="bold">Independent axes</text>
+<text x="795.0" y="124.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">each fails differently</text>
+<rect x="620.0" y="148.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="170.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">deterministic linter (not an LLM)</text>
+<rect x="620.0" y="192.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="214.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">spec-blind intent re-check</text>
+<rect x="620.0" y="236.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="258.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">a real failing test</text>
+<rect x="620.0" y="280.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="302.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">your own read</text>
+<text x="795.0" y="340.0" font-size="15" fill="#15803d" text-anchor="middle" font-weight="bold">diversity over quantity</text>
+<text x="795.0" y="362.0" font-size="13" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">decorrelated checks are what actually add assurance</text>
+<text x="540.0" y="430.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">“Conformance” = does the code match the spec. None of it asks: is the spec right?</text>
+<text x="540.0" y="460.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">Green means “nothing these lenses caught,” not “nothing is wrong.” That judgment stays with you.</text>
+</svg>

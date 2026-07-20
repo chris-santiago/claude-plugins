@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" font-family="Helvetica,Arial,sans-serif">
+<text x="500.0" y="32.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">The defended choice — the engine's signature output</text>
+<text x="500.0" y="58.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">Iron Law: research the codebase before proposing. Name only one candidate? The research isn’t finished.</text>
+<rect x="120.0" y="92.0" width="760.0" height="78.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<rect x="134.0" y="113.0" width="36.0" height="36.0" rx="18" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="152.0" y="137.0" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">1</text>
+<text x="188.0" y="122.0" font-size="19" fill="#1a1a2e" text-anchor="start" font-weight="bold">Reframe</text>
+<text x="188.0" y="146.0" font-size="14.5" fill="#6b7280" text-anchor="start" font-weight="normal">the 2–3 facts from research that change the problem — what’s in scope, where the boundary sits</text>
+<rect x="120.0" y="182.0" width="760.0" height="78.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<rect x="134.0" y="203.0" width="36.0" height="36.0" rx="18" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="152.0" y="227.0" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">2</text>
+<text x="188.0" y="212.0" font-size="19" fill="#1a1a2e" text-anchor="start" font-weight="bold">Proposed change</text>
+<text x="188.0" y="236.0" font-size="14.5" fill="#6b7280" text-anchor="start" font-weight="normal">concrete &amp; minimal: what changes, what’s deleted, what’s deliberately left untouched</text>
+<rect x="120.0" y="272.0" width="760.0" height="78.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<rect x="134.0" y="293.0" width="36.0" height="36.0" rx="18" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="152.0" y="317.0" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">3</text>
+<text x="188.0" y="302.0" font-size="19" fill="#1a1a2e" text-anchor="start" font-weight="bold">Correct across every case</text>
+<text x="188.0" y="326.0" font-size="14.5" fill="#6b7280" text-anchor="start" font-weight="normal">a table over ALL affected cases + “cases I might be missing, and how I’d find them”</text>
+<rect x="120.0" y="362.0" width="760.0" height="78.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<rect x="134.0" y="383.0" width="36.0" height="36.0" rx="18" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="152.0" y="407.0" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">4</text>
+<text x="188.0" y="392.0" font-size="19" fill="#1a1a2e" text-anchor="start" font-weight="bold">Why it’s most coherent</text>
+<text x="188.0" y="416.0" font-size="14.5" fill="#6b7280" text-anchor="start" font-weight="normal">reuse, idiom-fit, mirrors an existing strategy, smallest correct blast radius</text>
+<rect x="120.0" y="452.0" width="760.0" height="78.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<rect x="134.0" y="473.0" width="36.0" height="36.0" rx="18" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="152.0" y="497.0" font-size="20" fill="#fff" text-anchor="middle" font-weight="bold">5</text>
+<text x="188.0" y="482.0" font-size="19" fill="#1a1a2e" text-anchor="start" font-weight="bold">Defense of alternatives</text>
+<text x="188.0" y="506.0" font-size="14.5" fill="#6b7280" text-anchor="start" font-weight="normal">a real rebuttal of every rejected candidate — not a one-liner</text>
+<text x="500.0" y="562.0" font-size="17" fill="#15803d" text-anchor="middle" font-weight="bold">The point is not a working diff. It is a defensible one.</text>
+</svg>
