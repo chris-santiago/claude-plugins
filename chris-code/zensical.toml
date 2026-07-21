@@ -47,6 +47,8 @@ nav = [
         { "Execution mechanics"       = "explanation/execution-mechanics.md" },
         { "Relationship to superpowers" = "explanation/vs-superpowers.md" },
     ] },
+
+    {"The Guide" = "slides/chris-code-guide.html"}
 ]
 
 # Optional palette override — drop a stylesheet at docs/stylesheets/extra.css
