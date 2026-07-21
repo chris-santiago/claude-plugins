@@ -4,6 +4,12 @@ Personal Claude Code plugin — workflow skills, coding agents, review gates, an
 
 chris-code turns Claude Code into an opinionated software-engineering workflow rather than a free-form chat assistant. Once installed, it routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run two-stage review (spec compliance, then code quality), and gate every commit with a lint-aware idiom check. And every *determined* change — a fix, a refactor, a finding from a review — runs through a single engine that enforces coherence: it discovers and defends the implementation that best fits the existing code, rather than letting changes get patched in place. Use it when you want Claude to design before it codes, keep the main context window clean by offloading work to focused subagents, and catch agent-generated drift before it reaches `main`. Drop into any repo, type `/brainstorming` (or just describe a feature), and the workflow takes over from there.
 
+## Documentation
+
+**[Read the visual guide →](https://chris-santiago.github.io/claude-plugins/slides/chris-code-guide.html)** — a one-page overview of everything below: what chris-code is, spec-driven development, the coherent-change engine, the assurance model, the full skill and agent catalog, and how it compares to superpowers. Start here if you'd rather scan than read.
+
+The complete documentation — tutorials, how-to guides, reference, and design explanations — lives at the [documentation site](https://chris-santiago.github.io/claude-plugins/).
+
 ## Based on Superpowers
 
 chris-code is derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned around four problems observed in practice:
