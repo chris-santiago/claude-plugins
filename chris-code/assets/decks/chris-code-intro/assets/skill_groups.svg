@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 500" font-family="Helvetica,Arial,sans-serif">
+<text x="540.0" y="34.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">25 skills across 8 functional groups</text>
+<rect x="38.0" y="78.0" width="236.0" height="118.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="156.0" y="134.0" font-size="38" fill="#1a4a7a" text-anchor="middle" font-weight="bold">3</text>
+<text x="156.0" y="168.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Design &amp; planning</text>
+<rect x="294.0" y="78.0" width="236.0" height="118.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="412.0" y="134.0" font-size="38" fill="#1a4a7a" text-anchor="middle" font-weight="bold">4</text>
+<text x="412.0" y="168.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Execution</text>
+<rect x="550.0" y="78.0" width="236.0" height="118.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="668.0" y="134.0" font-size="38" fill="#1a4a7a" text-anchor="middle" font-weight="bold">3</text>
+<text x="668.0" y="168.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Change engine</text>
+<rect x="806.0" y="78.0" width="236.0" height="118.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="924.0" y="134.0" font-size="38" fill="#d97706" text-anchor="middle" font-weight="bold">2</text>
+<text x="924.0" y="168.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Testing</text>
+<rect x="38.0" y="220.0" width="236.0" height="118.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="156.0" y="276.0" font-size="38" fill="#d97706" text-anchor="middle" font-weight="bold">2</text>
+<text x="156.0" y="310.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Completion</text>
+<rect x="294.0" y="220.0" width="236.0" height="118.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="412.0" y="276.0" font-size="38" fill="#d97706" text-anchor="middle" font-weight="bold">5</text>
+<text x="412.0" y="310.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Review</text>
+<rect x="550.0" y="220.0" width="236.0" height="118.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="668.0" y="276.0" font-size="38" fill="#d97706" text-anchor="middle" font-weight="bold">3</text>
+<text x="668.0" y="310.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Quality campaigns</text>
+<rect x="806.0" y="220.0" width="236.0" height="118.0" rx="8" fill="#eef0f2" stroke="#6b7280" stroke-width="2"/>
+<text x="924.0" y="276.0" font-size="38" fill="#6b7280" text-anchor="middle" font-weight="bold">3</text>
+<text x="924.0" y="310.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Meta &amp; ops</text>
+<rect x="250.0" y="356.0" width="16.0" height="16.0" rx="4" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.5"/>
+<text x="274.0" y="370.0" font-size="14" fill="#6b7280" text-anchor="start" font-weight="normal">build — produce &amp; ship</text>
+<rect x="485.0" y="356.0" width="16.0" height="16.0" rx="4" fill="#fde8cc" stroke="#d97706" stroke-width="1.5"/>
+<text x="509.0" y="370.0" font-size="14" fill="#6b7280" text-anchor="start" font-weight="normal">assure — test / review / debug</text>
+<rect x="720.0" y="356.0" width="16.0" height="16.0" rx="4" fill="#eef0f2" stroke="#6b7280" stroke-width="1.5"/>
+<text x="744.0" y="370.0" font-size="14" fill="#6b7280" text-anchor="start" font-weight="normal">meta &amp; ops</text>
+<text x="540.0" y="402.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">13 of the 25 are testing, review, or debugging — assurance outnumbers authorship even among skills.</text>
+</svg>

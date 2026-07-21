@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 470" font-family="Helvetica,Arial,sans-serif">
+<text x="540.0" y="34.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">A true superset of superpowers</text>
+<rect x="70.0" y="90.0" width="300.0" height="150.0" rx="8" fill="#eef0f2" stroke="#6b7280" stroke-width="2"/>
+<text x="220.0" y="163.0" font-size="22" fill="#1a1a2e" text-anchor="middle" font-weight="bold">superpowers</text>
+<text x="220.0" y="181.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">skills-only</text>
+<text x="220.0" y="197.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">generic subagents</text>
+<text x="220.0" y="213.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">fork point: v5.1.0</text>
+<rect x="710.0" y="90.0" width="300.0" height="150.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="860.0" y="163.0" font-size="22" fill="#1a1a2e" text-anchor="middle" font-weight="bold">chris-code</text>
+<text x="860.0" y="181.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">+ 11 new skills</text>
+<text x="860.0" y="197.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">+ 13-agent layer</text>
+<text x="860.0" y="213.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">coherence engine</text>
+<line x1="378.0" y1="176.0" x2="702.0" y2="176.0" stroke="#15803d" stroke-width="3"/>
+<polygon points="702.0,176.0 690.0,182.6 690.0,169.4" fill="#15803d"/>
+<text x="540.0" y="143.0" font-size="14" fill="#15803d" text-anchor="middle" font-weight="bold">every superpowers</text>
+<text x="540.0" y="161.0" font-size="14" fill="#15803d" text-anchor="middle" font-weight="bold">skill carried over</text>
+<rect x="285.0" y="300.0" width="150.0" height="96.0" rx="8" fill="#fff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="360.0" y="324.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">Skills</text>
+<text x="360.0" y="366.0" font-size="26" fill="#15803d" text-anchor="middle" font-weight="bold">14 → 25</text>
+<rect x="465.0" y="300.0" width="150.0" height="96.0" rx="8" fill="#fff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="540.0" y="324.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">Agents</text>
+<text x="540.0" y="366.0" font-size="26" fill="#15803d" text-anchor="middle" font-weight="bold">0 → 13</text>
+<rect x="645.0" y="300.0" width="150.0" height="96.0" rx="8" fill="#fff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="720.0" y="324.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal">Hooks</text>
+<text x="720.0" y="366.0" font-size="26" fill="#b91c1c" text-anchor="middle" font-weight="bold">1 → 0</text>
+<text x="540.0" y="448.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">Same brainstorm → plan → execute → review → finish spine; the additions are where it diverges.</text>
+</svg>

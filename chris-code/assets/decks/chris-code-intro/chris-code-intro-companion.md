@@ -178,7 +178,61 @@ Stress two things. First, a PASS is not "nothing to do" — a gate can pass whil
 
 ---
 
-## Slide 13 — When to use it (and when not)
+## Slide 13 — Zooming out: the surface area
+
+Having walked the pipeline, pull back and show the whole toolbox — because newcomers routinely underestimate the breadth. Twenty-five skills, organized into eight functional groups: design and planning, execution, the change engine, testing, completion, review, quality campaigns, and meta. The reassuring part to say out loud: you don't memorize these. Most fire automatically — invoked by the pipeline, by another skill, or by a phrase in your request — so you describe the work and the right skill runs.
+
+Then land the quiet thesis on the figure's footer: even at the skill layer, thirteen of the twenty-five are about testing, review, or debugging, against nine about building. The tool spends more of itself on checking work than on producing it. That sets up the next slide, which makes the same point far more sharply at the agent layer.
+
+**Details not on the slide**
+
+- The color tags (build / assure / meta) are a soft visual; the precise claim is the 13-of-25 count in the footer.
+- The eight groups map to the docs' own Reference structure, so anyone who opens the docs later sees the same organization.
+
+---
+
+## Slide 14 — One coder, ten checkers
+
+This is the slide that makes the breadth *mean* something. Thirteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, ten check it. The row of squares makes it visceral; three blue, ten amber.
+
+Walk the roles so the ten isn't abstract: three coders (Python, PyTorch, Rust); three quality reviewers that check principle-adherence and bugs after spec compliance passes; two commit-lite gates for fast idiom-and-lint checks; two senior design reviewers at the final gate; the two-agent conformance pair (spec and intent); and one adversarial test-writer. For every agent that authors a change, more than three exist purely to verify it. That ratio *is* the philosophy — a free-form assistant is all author and no auditor, and chris-code deliberately inverts that.
+
+Note the dispatch mechanic in passing, because the next-but-one slide develops it: every one of these is scope-matched by file type, so you never pick an agent by hand.
+
+**Details not on the slide**
+
+- Coders are "exclusive" (the most specific one wins); reviewers are "additive" (all matching ones fire on the same diff). That's why one coder faces many reviewers.
+- The bug-hunter writes tests and never fixes — it's a test-writer, not a coder, which is why it sits on the assure side.
+
+---
+
+## Slide 15 — Lineage: a superset of superpowers
+
+Give credit and context. chris-code didn't appear from nowhere; it forked from the open-source *superpowers* project at v5.1.0 and kept the entire brainstorm → plan → execute → review → finish spine. If someone in the room knows superpowers, tell them they already know most of this. The inventory deltas tell the story: skills grew 14 → 25, agents 0 → 13, and a legacy hook went 1 → 0. Every superpowers skill still exists in chris-code — one renamed, one split — so it's a true superset, not a rewrite.
+
+Don't dwell here unless the audience is superpowers users. The single sentence that matters: chris-code is superpowers plus an agent layer, plus lean artifacts, plus a coherence engine. The next slide picks the most important of those additions and makes the case.
+
+**Details not on the slide**
+
+- The six thematic shifts (lean artifacts, scoped agents, uniform review gate, parallelism-as-feature, native-tools-hard-gate, coherence enforcement) are documented in full in the repo's `superpowers-comparison.md` if anyone wants receipts.
+- "Hooks 1 → 0" isn't a regression — chris-code moved that behavior into skills; call it out only if asked.
+
+---
+
+## Slide 16 — The dispatch difference
+
+This is the slide to slow down on, because it's the advantage people most often miss. Both projects dispatch subagents. The difference is *what the agent already knows when it arrives*. In superpowers, coding and review run through **generic** subagents steered by a prompt template the orchestrator supplies each time — so code quality depends on the orchestrator remembering to ask for it. If the prompt doesn't mention cohesion, idiom, and API design, the reviewer doesn't check them.
+
+chris-code inverts the burden. Each agent is a **named, scoped role whose system prompt already carries the quality bar**. The coders internalize the review principles so their code passes on the first attempt; the reviewers enforce cohesion, idiom, and API design by definition of what they are. Quality stops being a prompt the orchestrator might forget and becomes a property of *who runs the task*. That's the sentence to land: it can't be forgotten, because it's baked into the agent, not the request.
+
+**Details not on the slide**
+
+- Concrete dispatch example: in a PyTorch repo, `pytorch-coder` beats `python-coder` automatically, and both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on the diff.
+- This is why the ratio on slide 14 actually buys something: ten checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
+
+---
+
+## Slide 17 — When to use it (and when not)
 
 Be honest about fit, which builds credibility. Reach for chris-code when the change is substantial enough to deserve a design and a review, when you want intent settled before code and drift caught before `main`, and when you work in Python or Rust — because the coder and review agents are language-scoped (the workflow skills themselves are language-agnostic).
 
@@ -191,7 +245,7 @@ And the counter-case, stated plainly: if you just want a quick one-off answer, y
 
 ---
 
-## Slide 14 — Recap: five ideas
+## Slide 18 — Recap: five ideas
 
 Land the five takeaways as a memorable set. Design before code — brainstorming is a hard gate and intent is frozen in your words. Determined isn't design-open — settled behavior routes to the coherent-change engine, which defends its choice rather than shipping the first thing that works. Lean artifacts — contracts stay, choreography goes, and that leanness is what makes dispatch lossless. Dispatch by scope but carry intent — a fresh agent recovers what and where by reading, so the brief must carry the why. And green isn't correct — assurance comes from the independent checks, not the number of passes.
 

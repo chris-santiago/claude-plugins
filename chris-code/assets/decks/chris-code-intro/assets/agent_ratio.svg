@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 500" font-family="Helvetica,Arial,sans-serif">
+<text x="540.0" y="34.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">13 agents — 3 write code, 10 check it</text>
+<rect x="169.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1"/>
+<rect x="227.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1"/>
+<rect x="285.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#1a4a7a" stroke="#1a4a7a" stroke-width="1"/>
+<rect x="343.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="401.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="459.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="517.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="575.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="633.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="691.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="749.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="807.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<rect x="865.0" y="70.0" width="46.0" height="46.0" rx="7" fill="#d97706" stroke="#d97706" stroke-width="1"/>
+<text x="250.0" y="140.0" font-size="15" fill="#1a4a7a" text-anchor="middle" font-weight="bold">build</text>
+<text x="656.0" y="140.0" font-size="15" fill="#d97706" text-anchor="middle" font-weight="bold">assure</text>
+<rect x="36.0" y="232.0" width="320.0" height="96.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<text x="58.0" y="272.0" font-size="30" fill="#1a4a7a" text-anchor="start" font-weight="bold">3</text>
+<text x="106.0" y="266.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Coders</text>
+<text x="106.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">write the change</text>
+<rect x="380.0" y="232.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
+<text x="402.0" y="272.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">3</text>
+<text x="450.0" y="266.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Quality reviewers</text>
+<text x="450.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">principles + bugs</text>
+<rect x="724.0" y="232.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
+<text x="746.0" y="272.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">2</text>
+<text x="794.0" y="266.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Commit-lite gates</text>
+<text x="794.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">idiom + lint</text>
+<rect x="36.0" y="348.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
+<text x="58.0" y="388.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">2</text>
+<text x="106.0" y="382.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Design reviewers</text>
+<text x="106.0" y="406.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">cohesion / API</text>
+<rect x="380.0" y="348.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
+<text x="402.0" y="388.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">2</text>
+<text x="450.0" y="382.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Conformance pair</text>
+<text x="450.0" y="406.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">spec + intent</text>
+<rect x="724.0" y="348.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
+<text x="746.0" y="388.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">1</text>
+<text x="794.0" y="382.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Test-writer</text>
+<text x="794.0" y="406.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">bug-hunter</text>
+<text x="540.0" y="472.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">Every agent is scope-matched by file type — you describe the work, the routing is mechanical.</text>
+</svg>

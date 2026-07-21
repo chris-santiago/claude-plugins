@@ -56,7 +56,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h1 id="an-introduction-to-chris-code">An introduction to chris-code</h1>
 <h2 id="turning-claude-code-from-a-free-form-assistant-into-an-opinionated-engineering-workflow">Turning Claude Code from a free-form assistant into an opinionated engineering workflow</h2>
 <p>For engineers new to the plugin — what it is, why it's shaped this way, and how a change moves through it</p>
@@ -110,7 +110,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="the-starting-problem">The starting problem</h2>
 <p>A free-form coding assistant starts typing immediately.</p>
 <ul>
@@ -171,7 +171,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="what-chris-code-is">What chris-code is</h2>
 <p>It routes every non-trivial change through <strong>one pipeline</strong> instead of ad-hoc chat: <strong>DESIGN</strong> settles <em>what</em> and <em>why</em>, <strong>BUILD</strong> dispatches a coder per task, <strong>PROVE</strong> gates the result.</p>
 <p><img src="assets/pipeline.svg" alt="" style="width:880px;" /></p>
@@ -225,7 +225,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="principle-1--design-before-code">Principle 1 — design before code</h2>
 <p><code>brainstorming</code> is a <strong>hard gate</strong>: no implementation begins until a design exists and <em>you've approved it</em>. The anti-pattern it explicitly rejects is <em>&quot;this is too simple to need a design.&quot;</em></p>
 <p>It ends by freezing an <strong>intent ledger</strong>:</p>
@@ -284,7 +284,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="principle-2--two-kinds-of-work">Principle 2 — two kinds of work</h2>
 <p>Not everything needs a brainstorm. The pipeline forks on one question.</p>
 <p><img src="assets/fork.svg" alt="" style="width:800px;" /></p>
@@ -338,7 +338,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="the-coherent-change-engine">The coherent-change engine</h2>
 <p>Determined work runs through <code>coherent-change</code>. Its premise: <strong>a change can work and still be wrong.</strong></p>
 <ul>
@@ -398,7 +398,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="what-the-engine-produces">What the engine produces</h2>
 <p>Not a working diff — a <strong>defensible</strong> one.</p>
 <p><img src="assets/defended_choice.svg" alt="" style="width:620px;" /></p>
@@ -451,7 +451,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="principle-3--lean-artifacts">Principle 3 — lean artifacts</h2>
 <p>The design hands off two deliberately thin documents. The rule: <strong>&quot;contracts stay, choreography goes.&quot;</strong></p>
 <table>
@@ -526,7 +526,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="principle-4--dispatch-and-the-intent-channel">Principle 4 — dispatch, and the intent channel</h2>
 <p>Work is offloaded to subagents to keep the <strong>orchestrator</strong> (the main planning session) lean. The rule for when that's safe:</p>
 <blockquote>
@@ -582,7 +582,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="parallelism-without-collisions">Parallelism without collisions</h2>
 <p>Independent tasks run concurrently — after the orchestrator maps each task's file footprint to prove they don't collide.</p>
 <p><img src="assets/staged.svg" alt="" style="width:720px;" /></p>
@@ -636,7 +636,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="principle-5--prove-it-honestly">Principle 5 — prove it, honestly</h2>
 <p>chris-code runs many review gates, and is <strong>deliberately honest that green ≠ correct.</strong></p>
 <p><img src="assets/assurance.svg" alt="" style="width:800px;" /></p>
@@ -690,7 +690,7 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
 <h2 id="the-completion-gate">The completion gate</h2>
 <p><code>verification-before-completion</code> runs five steps in order; a failing step stops the line.</p>
 <ol>
@@ -750,15 +750,10 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
-<h2 id="when-to-use-it-and-when-not">When to use it (and when not)</h2>
-<p><strong>Reach for chris-code when:</strong></p>
-<ul>
-<li>The change is substantial enough to <strong>deserve a design and a review</strong>.</li>
-<li>You want intent settled before code, and drift caught before <code>main</code>.</li>
-<li>You work in <strong>Python or Rust</strong> (coder and review agents are language-scoped; the workflow skills are language-agnostic).</li>
-</ul>
-<p><strong>Skip it when:</strong> you just want a quick one-off answer. It earns its keep on real changes, not trivia.</p>
+;" data-marpit-pagination-total="18">
+<h2 id="zooming-out--the-surface-area">Zooming out — the surface area</h2>
+<p>Most of these fire automatically: you describe the work, the pipeline picks the skill.</p>
+<p><img src="assets/skill_groups.svg" alt="" style="width:840px;" /></p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="14" data-paginate="true" data-theme="default" data-style="section {
   font-size: 27px;
@@ -808,7 +803,224 @@ blockquote {
 section.lead h1 {
   font-size: 56px;
 }
-;" data-marpit-pagination-total="14">
+;" data-marpit-pagination-total="18">
+<h2 id="one-coder-ten-checkers">One coder, ten checkers</h2>
+<p>The 13 agents split sharply between writing code and checking it — and the split <em>is</em> the philosophy.</p>
+<p><img src="assets/agent_ratio.svg" alt="" style="width:840px;" /></p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="15" data-paginate="true" data-theme="default" data-style="section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+" lang="en-US" data-marpit-pagination="15" style="--paginate:true;--theme:default;--style:section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+;" data-marpit-pagination-total="18">
+<h2 id="lineage--a-superset-of-superpowers">Lineage — a superset of superpowers</h2>
+<p>chris-code forked from <code>obra/superpowers</code> and kept the whole pipeline. Every superpowers skill is still here; the additions are the divergence.</p>
+<p><img src="assets/lineage.svg" alt="" style="width:860px;" /></p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="16" data-paginate="true" data-theme="default" data-style="section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+" lang="en-US" data-marpit-pagination="16" style="--paginate:true;--theme:default;--style:section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+;" data-marpit-pagination-total="18">
+<h2 id="the-dispatch-difference--the-part-most-easily-missed">The dispatch difference — the part most easily missed</h2>
+<p>superpowers steers a <em>generic</em> subagent per call, so quality depends on the orchestrator remembering to ask. chris-code's agents carry that mandate in their own system prompt.</p>
+<p><img src="assets/dispatch_diff.svg" alt="" style="width:800px;" /></p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="17" data-paginate="true" data-theme="default" data-style="section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+" lang="en-US" data-marpit-pagination="17" style="--paginate:true;--theme:default;--style:section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+;" data-marpit-pagination-total="18">
+<h2 id="when-to-use-it-and-when-not">When to use it (and when not)</h2>
+<p><strong>Reach for chris-code when:</strong></p>
+<ul>
+<li>The change is substantial enough to <strong>deserve a design and a review</strong>.</li>
+<li>You want intent settled before code, and drift caught before <code>main</code>.</li>
+<li>You work in <strong>Python or Rust</strong> (coder and review agents are language-scoped; the workflow skills are language-agnostic).</li>
+</ul>
+<p><strong>Skip it when:</strong> you just want a quick one-off answer. It earns its keep on real changes, not trivia.</p>
+</section>
+</foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="18" data-paginate="true" data-theme="default" data-style="section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+" lang="en-US" data-marpit-pagination="18" style="--paginate:true;--theme:default;--style:section {
+  font-size: 27px;
+}
+table {
+  font-size: 21px;
+}
+code {
+  font-size: 0.9em;
+}
+h1, h2 {
+  color: #1a4a7a;
+}
+img {
+  display: block;
+  margin: 0 auto;
+}
+blockquote {
+  border-left: 4px solid #1a4a7a;
+  padding-left: 0.8em;
+  color: #444;
+}
+section.lead h1 {
+  font-size: 56px;
+}
+;" data-marpit-pagination-total="18">
 <h2 id="recap--five-ideas">Recap — five ideas</h2>
 <ol>
 <li><strong>Design before code.</strong> <code>brainstorming</code> is a hard gate; intent is frozen in your words.</li>

@@ -169,6 +169,38 @@ A **PASS is not "nothing to do":** it can carry findings, and PASS-with-findings
 
 ---
 
+## Zooming out — the surface area
+
+Most of these fire automatically: you describe the work, the pipeline picks the skill.
+
+![w:840](assets/skill_groups.svg)
+
+---
+
+## One coder, ten checkers
+
+The 13 agents split sharply between writing code and checking it — and the split *is* the philosophy.
+
+![w:840](assets/agent_ratio.svg)
+
+---
+
+## Lineage — a superset of superpowers
+
+chris-code forked from `obra/superpowers` and kept the whole pipeline. Every superpowers skill is still here; the additions are the divergence.
+
+![w:860](assets/lineage.svg)
+
+---
+
+## The dispatch difference — the part most easily missed
+
+superpowers steers a *generic* subagent per call, so quality depends on the orchestrator remembering to ask. chris-code's agents carry that mandate in their own system prompt.
+
+![w:800](assets/dispatch_diff.svg)
+
+---
+
 ## When to use it (and when not)
 
 **Reach for chris-code when:**

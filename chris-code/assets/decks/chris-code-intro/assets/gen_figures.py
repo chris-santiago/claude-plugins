@@ -402,6 +402,201 @@ def fig_assurance():
     s.save("assurance.svg")
 
 
+# --------------------------------------------------------------------------
+# FIG 7 — skills by functional group
+# --------------------------------------------------------------------------
+def fig_skill_groups():
+    s = SVG(1080, 500)
+    s.text(540, 34, "25 skills across 8 functional groups", 23, BLUE,
+           weight="bold")
+
+    groups = [
+        ("Design & planning", 3, "build"),
+        ("Execution", 4, "build"),
+        ("Change engine", 3, "build"),
+        ("Testing", 2, "assure"),
+        ("Completion", 2, "assure"),
+        ("Review", 5, "assure"),
+        ("Quality campaigns", 3, "assure"),
+        ("Meta & ops", 3, "meta"),
+    ]
+    palette = {"build": (FILL_BLUE, BLUE), "assure": (FILL_ORANGE, ORANGE),
+               "meta": (FILL_GRAY, GRAY)}
+    cols, cw, ch, gx, gy = 4, 236, 118, 20, 24
+    x0 = (1080 - (cols * cw + (cols - 1) * gx)) / 2
+    y0 = 78
+    for i, (name, cnt, kind) in enumerate(groups):
+        r, c = divmod(i, cols)
+        x, y = x0 + c * (cw + gx), y0 + r * (ch + gy)
+        fill, stroke = palette[kind]
+        s.rect(x, y, cw, ch, fill=fill, stroke=stroke, sw=2)
+        s.text(x + cw / 2, y + 56, str(cnt), 38, stroke, weight="bold")
+        s.text(x + cw / 2, y + 90, name, 16, "#1a1a2e", weight="bold")
+
+    ly = y0 + 2 * (ch + gy) + 6
+    items = [("build — produce & ship", BLUE, FILL_BLUE),
+             ("assure — test / review / debug", ORANGE, FILL_ORANGE),
+             ("meta & ops", GRAY, FILL_GRAY)]
+    lx = 250
+    for label, stroke, fill in items:
+        s.rect(lx, ly - 12, 16, 16, fill=fill, stroke=stroke, sw=1.5, rx=4)
+        s.text(lx + 24, ly + 2, label, 14, GRAY, anchor="start")
+        lx += 235
+    s.text(540, ly + 34,
+           "13 of the 25 are testing, review, or debugging — assurance "
+           "outnumbers authorship even among skills.",
+           16, "#1a1a2e", weight="bold")
+    s.save("skill_groups.svg")
+
+
+# --------------------------------------------------------------------------
+# FIG 8 — agents: the coder-to-checker ratio
+# --------------------------------------------------------------------------
+def fig_agent_ratio():
+    s = SVG(1080, 500)
+    s.text(540, 34, "13 agents — 3 write code, 10 check it", 23, BLUE,
+           weight="bold")
+
+    # ratio squares
+    n = 13
+    sw_, gap = 46, 12
+    total = n * sw_ + (n - 1) * gap
+    x0 = (1080 - total) / 2
+    y = 70
+    for i in range(n):
+        x = x0 + i * (sw_ + gap)
+        if i < 3:
+            s.rect(x, y, sw_, sw_, fill=BLUE, stroke=BLUE, sw=1, rx=7)
+        else:
+            s.rect(x, y, sw_, sw_, fill=ORANGE, stroke=ORANGE, sw=1, rx=7)
+    s.text(x0 + 1.5 * sw_ + gap, y + sw_ + 24, "build", 15, BLUE, weight="bold")
+    s.text(x0 + 8 * (sw_ + gap) + sw_ / 2, y + sw_ + 24, "assure", 15, ORANGE,
+           weight="bold")
+
+    roles = [
+        ("Coders", 3, "build", "write the change"),
+        ("Quality reviewers", 3, "assure", "principles + bugs"),
+        ("Commit-lite gates", 2, "assure", "idiom + lint"),
+        ("Design reviewers", 2, "assure", "cohesion / API"),
+        ("Conformance pair", 2, "assure", "spec + intent"),
+        ("Test-writer", 1, "assure", "bug-hunter"),
+    ]
+    palette = {"build": (FILL_BLUE, BLUE), "assure": (FILL_ORANGE, ORANGE)}
+    cols, cw, ch, gx, gy = 3, 320, 96, 24, 20
+    rx0 = (1080 - (cols * cw + (cols - 1) * gx)) / 2
+    ry0 = 232
+    for i, (name, cnt, kind, sub) in enumerate(roles):
+        r, c = divmod(i, cols)
+        x, yy = rx0 + c * (cw + gx), ry0 + r * (ch + gy)
+        fill, stroke = palette[kind]
+        s.rect(x, yy, cw, ch, fill=fill, stroke=stroke, sw=1.8)
+        s.text(x + 22, yy + 40, str(cnt), 30, stroke, weight="bold",
+               anchor="start")
+        s.text(x + 70, yy + 34, name, 17, "#1a1a2e", weight="bold",
+               anchor="start")
+        s.text(x + 70, yy + 58, sub, 13.5, GRAY, anchor="start")
+
+    s.text(540, ry0 + 2 * (ch + gy) + 8,
+           "Every agent is scope-matched by file type — you describe the work, "
+           "the routing is mechanical.",
+           15, GRAY, style="italic")
+    s.save("agent_ratio.svg")
+
+
+# --------------------------------------------------------------------------
+# FIG 9 — lineage from superpowers
+# --------------------------------------------------------------------------
+def fig_lineage():
+    s = SVG(1080, 470)
+    s.text(540, 34, "A true superset of superpowers", 23, BLUE, weight="bold")
+
+    # two boxes with an arrow
+    box(s, 70, 90, 300, 150, "superpowers",
+        ["skills-only", "generic subagents", "fork point: v5.1.0"],
+        fill=FILL_GRAY, stroke=GRAY, tsize=22, ssize=15)
+    box(s, 710, 90, 300, 150, "chris-code",
+        ["+ 11 new skills", "+ 13-agent layer", "coherence engine"],
+        fill=FILL_BLUE, stroke=BLUE, tsize=22, ssize=15)
+    s.arrow(378, 176, 702, 176, stroke=GREEN, w=3, head=12)
+    s.text(540, 143, "every superpowers", 14, GREEN, weight="bold")
+    s.text(540, 161, "skill carried over", 14, GREEN, weight="bold")
+
+    # delta chips
+    deltas = [("Skills", "14", "25"), ("Agents", "0", "13"), ("Hooks", "1", "0")]
+    dw, dgap = 150, 30
+    total = len(deltas) * dw + (len(deltas) - 1) * dgap
+    x0 = (1080 - total) / 2
+    yy = 300
+    for i, (label, a, b) in enumerate(deltas):
+        x = x0 + i * (dw + dgap)
+        s.rect(x, yy, dw, 96, fill="#fff", stroke=LGRAY, sw=1.5)
+        s.text(x + dw / 2, yy + 24, label, 15, GRAY)
+        grew = int(b) > int(a)
+        s.text(x + dw / 2, yy + 66, f"{a} → {b}", 26,
+               GREEN if grew else RED, weight="bold")
+    s.text(540, 448,
+           "Same brainstorm → plan → execute → review → "
+           "finish spine; the additions are where it diverges.",
+           15, GRAY, style="italic")
+    s.save("lineage.svg")
+
+
+# --------------------------------------------------------------------------
+# FIG 10 — the dispatch difference (generic vs scoped agents)
+# --------------------------------------------------------------------------
+def fig_dispatch_diff():
+    s = SVG(1120, 520)
+    s.text(560, 34,
+           "Quality is baked into who does the work — not a prompt to remember",
+           22, BLUE, weight="bold")
+
+    # left column — superpowers
+    lx = 70
+    s.rect(lx, 70, 480, 400, fill=FILL_GRAY, stroke=GRAY, sw=1.6)
+    s.text(lx + 240, 100, "superpowers", 20, "#1a1a2e", weight="bold")
+    s.text(lx + 240, 124, "generic subagent, steered per dispatch", 14, GRAY,
+           style="italic")
+    box(s, lx + 60, 150, 360, 74, "Orchestrator", None, fill="#fff",
+        stroke=GRAY, tsize=19)
+    s.text(lx + 240, 250, "must hand-write the quality prompt", 15, RED,
+           weight="bold")
+    s.text(lx + 240, 272, "each time", 15, RED, weight="bold")
+    s.arrow(lx + 240, 285, lx + 240, 322, stroke=GRAY, dash="4,4")
+    box(s, lx + 90, 328, 300, 84, "generic subagent",
+        ["cohesion / idiom / API-design", "— only if the prompt says so"],
+        fill="#fff", stroke=LGRAY, tsize=18, ssize=13)
+    s.text(lx + 240, 448, "quality depends on what the orchestrator remembers",
+           14, RED, style="italic")
+
+    # right column — chris-code
+    rx = 590
+    s.rect(rx, 70, 460, 400, fill=FILL_BLUE, stroke=BLUE, sw=1.8)
+    s.text(rx + 230, 100, "chris-code", 20, BLUE, weight="bold")
+    s.text(rx + 230, 124, "scoped agent, mandate built in", 14, GRAY,
+           style="italic")
+    s.text(rx + 230, 156, "file type → the right agent fires", 14,
+           "#1a1a2e", weight="bold")
+    # agent card with baked-in prompt
+    s.rect(rx + 70, 176, 320, 190, fill="#fff", stroke=BLUE, sw=1.8)
+    s.text(rx + 230, 204, "pytorch-coder", 18, BLUE, weight="bold", mono=True)
+    s.line(rx + 90, 218, rx + 350, 218, stroke=LGRAY)
+    for i, line in enumerate([
+        "system prompt already carries:",
+        "· review principles internalized",
+        "· cohesion + idiom + API design",
+        "· passes review on first attempt",
+    ]):
+        s.text(rx + 90, 244 + i * 30, line, 14,
+               "#1a1a2e" if i == 0 else "#37424f", anchor="start",
+               weight="bold" if i == 0 else "normal")
+    s.text(rx + 230, 402, "quality is a property of who runs the task", 15,
+           GREEN, weight="bold")
+    s.text(rx + 230, 424, "— it can't be forgotten", 15, GREEN, weight="bold")
+    s.text(rx + 230, 452, "all matching reviewers fire additively", 14, GRAY,
+           style="italic")
+    s.save("dispatch_diff.svg")
+
+
 if __name__ == "__main__":
     fig_pipeline()
     fig_fork()
@@ -409,3 +604,7 @@ if __name__ == "__main__":
     fig_dispatch()
     fig_staged()
     fig_assurance()
+    fig_skill_groups()
+    fig_agent_ratio()
+    fig_lineage()
+    fig_dispatch_diff()

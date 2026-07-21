@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 520" font-family="Helvetica,Arial,sans-serif">
+<text x="560.0" y="34.0" font-size="22" fill="#1a4a7a" text-anchor="middle" font-weight="bold">Quality is baked into who does the work — not a prompt to remember</text>
+<rect x="70.0" y="70.0" width="480.0" height="400.0" rx="8" fill="#eef0f2" stroke="#6b7280" stroke-width="1.6"/>
+<text x="310.0" y="100.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">superpowers</text>
+<text x="310.0" y="124.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">generic subagent, steered per dispatch</text>
+<rect x="130.0" y="150.0" width="360.0" height="74.0" rx="8" fill="#fff" stroke="#6b7280" stroke-width="2"/>
+<text x="310.0" y="193.0" font-size="19" fill="#1a1a2e" text-anchor="middle" font-weight="bold">Orchestrator</text>
+<text x="310.0" y="250.0" font-size="15" fill="#b91c1c" text-anchor="middle" font-weight="bold">must hand-write the quality prompt</text>
+<text x="310.0" y="272.0" font-size="15" fill="#b91c1c" text-anchor="middle" font-weight="bold">each time</text>
+<line x1="310.0" y1="285.0" x2="310.0" y2="322.0" stroke="#6b7280" stroke-width="2.2" stroke-dasharray="4,4"/>
+<polygon points="310.0,322.0 305.1,313.0 314.9,313.0" fill="#6b7280"/>
+<rect x="160.0" y="328.0" width="300.0" height="84.0" rx="8" fill="#fff" stroke="#d1d5db" stroke-width="2"/>
+<text x="310.0" y="368.0" font-size="18" fill="#1a1a2e" text-anchor="middle" font-weight="bold">generic subagent</text>
+<text x="310.0" y="386.0" font-size="13" fill="#6b7280" text-anchor="middle" font-weight="normal">cohesion / idiom / API-design</text>
+<text x="310.0" y="402.0" font-size="13" fill="#6b7280" text-anchor="middle" font-weight="normal">— only if the prompt says so</text>
+<text x="310.0" y="448.0" font-size="14" fill="#b91c1c" text-anchor="middle" font-weight="normal" font-style="italic">quality depends on what the orchestrator remembers</text>
+<rect x="590.0" y="70.0" width="460.0" height="400.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="1.8"/>
+<text x="820.0" y="100.0" font-size="20" fill="#1a4a7a" text-anchor="middle" font-weight="bold">chris-code</text>
+<text x="820.0" y="124.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">scoped agent, mandate built in</text>
+<text x="820.0" y="156.0" font-size="14" fill="#1a1a2e" text-anchor="middle" font-weight="bold">file type → the right agent fires</text>
+<rect x="660.0" y="176.0" width="320.0" height="190.0" rx="8" fill="#fff" stroke="#1a4a7a" stroke-width="1.8"/>
+<text x="820.0" y="204.0" font-size="18" fill="#1a4a7a" text-anchor="middle" font-weight="bold" font-family="SFMono-Regular,Menlo,monospace">pytorch-coder</text>
+<line x1="680.0" y1="218.0" x2="940.0" y2="218.0" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="680.0" y="244.0" font-size="14" fill="#1a1a2e" text-anchor="start" font-weight="bold">system prompt already carries:</text>
+<text x="680.0" y="274.0" font-size="14" fill="#37424f" text-anchor="start" font-weight="normal">· review principles internalized</text>
+<text x="680.0" y="304.0" font-size="14" fill="#37424f" text-anchor="start" font-weight="normal">· cohesion + idiom + API design</text>
+<text x="680.0" y="334.0" font-size="14" fill="#37424f" text-anchor="start" font-weight="normal">· passes review on first attempt</text>
+<text x="820.0" y="402.0" font-size="15" fill="#15803d" text-anchor="middle" font-weight="bold">quality is a property of who runs the task</text>
+<text x="820.0" y="424.0" font-size="15" fill="#15803d" text-anchor="middle" font-weight="bold">— it can't be forgotten</text>
+<text x="820.0" y="452.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">all matching reviewers fire additively</text>
+</svg>
