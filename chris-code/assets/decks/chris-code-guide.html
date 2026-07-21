@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chris-code · the complete guide</title>
+<style>
+  :root {
+    --paper: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #16202b;
+    --muted: #5b6672;
+    --faint: #8a94a0;
+    --hair: #e2e6ec;
+    --navy: #1a4a7a;
+    --navy-2: #2f6db0;
+    --build: #1a4a7a;
+    --build-bg: #eaf1f8;
+    --build-br: #b9d0e6;
+    --assure: #b45309;
+    --assure-bg: #fbeede;
+    --assure-br: #ecc79b;
+    --meta: #556070;
+    --meta-bg: #eef0f3;
+    --meta-br: #d3d9e0;
+    --kept: #15803d;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 28px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--navy); margin: 0 0 14px;
+  }
+  h1, h2, h3, h4 { text-wrap: balance; margin: 0; }
+  a { color: var(--navy-2); }
+  strong { color: var(--ink); }
+  .mono { font-family: var(--mono); }
+
+  /* ---------- sticky nav ---------- */
+  .topnav {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(246,247,249,0.86); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--hair);
+  }
+  .topnav .row {
+    max-width: 1120px; margin: 0 auto; padding: 11px 28px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .topnav .brand { font-family: var(--mono); font-weight: 700; color: var(--navy); font-size: 15px; letter-spacing: -0.01em; }
+  .topnav nav { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  .topnav a {
+    font-family: var(--mono); font-size: 12.5px; text-decoration: none;
+    color: var(--muted); padding: 4px 9px; border-radius: 7px;
+  }
+  .topnav a:hover { background: var(--build-bg); color: var(--navy); }
+
+  /* ---------- hero ---------- */
+  header.hero {
+    border-bottom: 1px solid var(--hair);
+    background: radial-gradient(120% 150% at 90% -30%, #e7eff8 0%, rgba(231,239,248,0) 55%), var(--panel);
+  }
+  .hero-inner { padding: 66px 0 52px; }
+  .hero h1 {
+    font-size: clamp(36px, 5.6vw, 62px); font-weight: 820;
+    letter-spacing: -0.024em; line-height: 1.0;
+  }
+  .hero h1 .cc { font-family: var(--mono); font-weight: 700; letter-spacing: -0.02em; }
+  .hero p.lede { font-size: clamp(17px, 2vw, 21px); color: var(--muted); max-width: 62ch; margin: 22px 0 0; }
+  .counts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 36px; }
+  .count {
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 14px;
+    padding: 16px 22px; display: flex; flex-direction: column; gap: 2px; min-width: 130px;
+  }
+  .count b {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-size: 34px; font-weight: 700; line-height: 1; letter-spacing: -0.02em;
+  }
+  .count span { font-size: 13px; color: var(--muted); }
+  .count.hl { border-color: var(--assure-br); background: var(--assure-bg); }
+  .count.hl b { color: var(--assure); }
+
+  /* ---------- section frame ---------- */
+  section { padding: 62px 0; border-bottom: 1px solid var(--hair); scroll-margin-top: 60px; }
+  .sec-head { max-width: 68ch; margin-bottom: 32px; }
+  .sec-head h2 { font-size: clamp(25px, 3.1vw, 34px); font-weight: 790; letter-spacing: -0.016em; }
+  .sec-head p { color: #2c3742; font-size: 16.5px; font-weight: 600; margin: 12px 0 0; line-height: 1.45; }
+  .prose { max-width: 68ch; }
+  .prose p { font-size: 16.5px; color: #33404d; margin: 0 0 16px; }
+  .prose p:last-child { margin-bottom: 0; }
+  /* readability: claim + bullet list replaces fat prose blocks */
+  .claim { font-size: 16.5px; font-weight: 700; color: var(--ink); margin: 0 0 12px; max-width: 68ch; }
+  .blist { margin: 0; padding-left: 20px; max-width: 68ch; }
+  .blist li { font-size: 15.5px; color: #37424f; margin: 9px 0; line-height: 1.5; }
+  .blist li b { color: var(--ink); font-weight: 680; }
+  /* intent-ledger callout — a load-bearing concept, given a real home */
+  .ledger { background: var(--build-bg); border: 1px solid var(--build-br); border-left: 5px solid var(--navy); border-radius: 14px; padding: 20px 24px; max-width: 82ch; }
+  .ledger .lbl { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--navy); margin: 0 0 8px; }
+  .ledger h4 { font-size: 17.5px; font-weight: 750; margin: 0 0 9px; color: var(--ink); letter-spacing: -0.01em; }
+  .ledger p { font-size: 14.5px; color: #37424f; margin: 0; line-height: 1.55; max-width: 74ch; }
+  .ledger p b { color: var(--ink); font-weight: 680; }
+
+  /* ---------- pill row / when-to-use ---------- */
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .usecard { background: var(--panel); border: 1px solid var(--hair); border-radius: 16px; padding: 22px 24px; }
+  .usecard.yes { border-top: 4px solid var(--kept); }
+  .usecard.no { border-top: 4px solid var(--meta-br); }
+  .usecard h4 { font-size: 16px; margin-bottom: 12px; }
+  .usecard ul { margin: 0; padding-left: 18px; }
+  .usecard li { font-size: 14.5px; color: #37424f; margin: 7px 0; }
+
+  /* ---------- flow (pipeline / artifact chain) ---------- */
+  .flow-scroll { overflow-x: auto; padding-bottom: 6px; }
+  .flow { display: flex; align-items: stretch; gap: 0; min-width: min-content; }
+  .step {
+    background: var(--build-bg); border: 1.5px solid var(--build-br); border-radius: 13px;
+    padding: 14px 16px; min-width: 138px; display: flex; flex-direction: column; gap: 3px;
+  }
+  .step.exec { background: #e4f0e6; border-color: #b7d8bd; }
+  .step.prove { background: var(--assure-bg); border-color: var(--assure-br); }
+  .step.finish { background: var(--meta-bg); border-color: var(--meta-br); }
+  .step .k { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--navy); }
+  .step.exec .k { color: var(--kept); }
+  .step.prove .k { color: var(--assure); }
+  .step.finish .k { color: var(--meta); }
+  .step .v { font-size: 12.5px; color: var(--muted); }
+  .arrowcell { display: flex; align-items: center; color: var(--faint); font-size: 22px; padding: 0 8px; flex: none; }
+  .phase-lane { display: flex; gap: 0; margin-bottom: 10px; }
+  .phase { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 700; }
+  .phase.d { color: var(--navy); }
+  .phase.b { color: var(--kept); }
+  .phase.p { color: var(--assure); }
+
+  /* ---------- numbered band list (defended choice / steps) ---------- */
+  .bands { display: flex; flex-direction: column; gap: 12px; }
+  .band {
+    display: flex; gap: 16px; align-items: flex-start;
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 14px; padding: 16px 18px;
+  }
+  .band.blue { background: var(--build-bg); border-color: var(--build-br); }
+  .band.amber { background: var(--assure-bg); border-color: var(--assure-br); }
+  .band .num {
+    font-family: var(--mono); font-weight: 700; font-size: 15px; color: #fff;
+    background: var(--navy); width: 30px; height: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .band.amber .num { background: var(--assure); }
+  .band h4 { font-size: 16px; font-weight: 720; }
+  .band p { margin: 3px 0 0; font-size: 14px; color: var(--muted); }
+
+  /* ---------- callout ---------- */
+  .pull {
+    font-family: var(--mono); font-size: 15px; color: var(--assure);
+    border-left: 3px solid var(--assure-br); padding-left: 14px; line-height: 1.5;
+  }
+  .quote {
+    border-left: 4px solid var(--navy); padding: 4px 0 4px 18px;
+    font-size: 19px; font-weight: 600; color: var(--ink); max-width: 40ch; line-height: 1.35;
+  }
+  .quote.amber { border-color: var(--assure); }
+
+  /* ---------- fork ---------- */
+  .fork { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .lane {
+    border-radius: 16px; padding: 22px 22px 24px; border: 1px solid var(--hair); background: var(--panel);
+  }
+  .lane.open { border-top: 4px solid var(--navy); }
+  .lane.det { border-top: 4px solid var(--assure); }
+  .lane .q { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
+  .lane h3 { font-size: 19px; font-weight: 760; margin: 6px 0 8px; }
+  .lane p { font-size: 14.5px; color: var(--muted); margin: 0 0 10px; }
+  .lane .route { font-family: var(--mono); font-size: 13px; color: var(--navy); }
+  .lane.det .route { color: var(--assure); }
+
+  /* ---------- ratio ---------- */
+  .ratio { display: grid; grid-template-columns: 1.15fr 1fr; gap: 40px; align-items: center; }
+  .ratio-viz { background: var(--panel); border: 1px solid var(--hair); border-radius: 18px; padding: 28px; }
+  .viz-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .viz-row .n { font-family: var(--mono); font-weight: 700; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .viz-row .lab { font-size: 13px; color: var(--muted); }
+  .squares { display: grid; grid-template-columns: repeat(13, 1fr); gap: 7px; margin: 8px 0 22px; }
+  .sq { aspect-ratio: 1; border-radius: 5px; }
+  .sq.build { background: var(--build); }
+  .sq.assure { background: var(--assure); }
+  .viz-legend { display: flex; gap: 20px; font-size: 13px; color: var(--muted); }
+  .viz-legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .ratio-copy h3 { font-size: 21px; font-weight: 760; margin-bottom: 12px; }
+  .ratio-copy p { color: var(--muted); margin: 0 0 14px; font-size: 15.5px; }
+
+  /* ---------- group grid ---------- */
+  .groups { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .group { background: var(--panel); border: 1px solid var(--hair); border-radius: 16px; padding: 20px 20px 22px; }
+  .group > .g-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .group h3 { font-size: 16.5px; font-weight: 720; }
+  .g-count { font-family: var(--mono); font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .g-sub { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-family: var(--mono); font-size: 12.5px; padding: 5px 10px; border-radius: 8px;
+    border: 1px solid var(--meta-br); background: var(--meta-bg); color: var(--meta); white-space: nowrap;
+  }
+  .chip.build  { background: var(--build-bg);  border-color: var(--build-br);  color: var(--build); }
+  .chip.assure { background: var(--assure-bg); border-color: var(--assure-br); color: var(--assure); }
+  .legend-bar { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 24px; font-size: 13.5px; color: var(--muted); }
+  .legend-bar span { display: inline-flex; align-items: center; gap: 8px; }
+  .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.08); display: inline-block; }
+
+  /* ---------- agents ---------- */
+  .agent-cols { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .arole { background: var(--panel); border: 1px solid var(--hair); border-radius: 16px; padding: 18px 20px; border-left: 4px solid var(--assure-br); }
+  .arole.build { border-left-color: var(--build); }
+  .arole .r-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .arole h3 { font-size: 15.5px; font-weight: 720; }
+  .arole .tag { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 999px; }
+  .tag.build  { background: var(--build-bg);  color: var(--build); }
+  .tag.assure { background: var(--assure-bg); color: var(--assure); }
+  .arole p { font-size: 13px; color: var(--muted); margin: 6px 0 12px; }
+
+  /* ---------- lineage / tables ---------- */
+  .lineage { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; align-items: start; }
+  table.delta { width: 100%; border-collapse: collapse; font-size: 15px; }
+  table.delta th, table.delta td { text-align: left; padding: 11px 6px; border-bottom: 1px solid var(--hair); }
+  table.delta th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); font-weight: 600; }
+  table.delta td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  table.delta td.grow { color: var(--kept); font-weight: 600; }
+  .fork-note { font-size: 14px; color: var(--muted); margin-top: 16px; background: var(--meta-bg); border-radius: 12px; padding: 14px 16px; }
+  .fork-note code { font-family: var(--mono); color: var(--navy); }
+  .shifts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .shifts li { display: flex; gap: 12px; font-size: 14.5px; }
+  .shifts .idx { font-family: var(--mono); color: var(--faint); font-size: 13px; flex: none; width: 22px; }
+  .shifts b { font-weight: 680; }
+  .shifts span.d { color: var(--muted); }
+
+  .map-scroll { overflow-x: auto; }
+  table.map { width: 100%; border-collapse: collapse; font-size: 14.5px; min-width: 640px; }
+  table.map th, table.map td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  table.map th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); font-weight: 600; }
+  table.map td.skill { font-family: var(--mono); font-size: 13px; color: var(--navy); white-space: nowrap; }
+  table.map td.sp { color: var(--muted); }
+  table.map td.cc { color: var(--ink); }
+  table.map tr:last-child td { border-bottom: none; }
+  .kept-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+  /* ---------- dispatch contrast ---------- */
+  .thesis { font-size: clamp(19px, 2.4vw, 24px); font-weight: 720; letter-spacing: -0.01em; max-width: 32ch; line-height: 1.25; margin-bottom: 28px; }
+  .thesis .em { color: var(--assure); }
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .side { border-radius: 16px; padding: 22px 22px 24px; border: 1px solid var(--hair); background: var(--panel); }
+  .side.cc { border-color: var(--build-br); background: var(--build-bg); }
+  .side .who { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+  .side.cc .who { color: var(--navy); }
+  .side h3 { font-size: 18px; font-weight: 760; margin: 6px 0 14px; }
+  .side ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .side li { position: relative; padding-left: 24px; font-size: 14.5px; color: #37424f; }
+  .side li::before { content: ""; position: absolute; left: 0; top: 8px; width: 11px; height: 11px; border-radius: 3px; }
+  .side.sp li::before { background: var(--meta-br); }
+  .side.cc li::before { background: var(--build); }
+  .side li b { color: var(--ink); font-weight: 680; }
+
+  /* ---------- getting started ---------- */
+  .start-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 30px; align-items: start; }
+  pre.code {
+    background: #0f1b28; color: #dfe8f2; border-radius: 14px; padding: 20px 22px;
+    overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.6; margin: 0;
+  }
+  pre.code .k { color: #7fb2e8; }
+  pre.code .s { color: #b6d9a6; }
+  .steps-list { counter-reset: s; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  .steps-list li { position: relative; padding-left: 40px; font-size: 15px; color: #37424f; }
+  .steps-list li::before {
+    counter-increment: s; content: counter(s);
+    position: absolute; left: 0; top: -2px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--build-bg); color: var(--navy); border: 1px solid var(--build-br);
+    font-family: var(--mono); font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps-list li b { color: var(--ink); }
+  .steps-list code { font-family: var(--mono); background: var(--meta-bg); padding: 1px 6px; border-radius: 5px; color: var(--navy); font-size: 13px; }
+
+  footer { padding: 44px 0 68px; color: var(--faint); font-size: 13.5px; }
+  footer a { color: var(--navy-2); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* Progressive enhancement: content is visible by default; JS opts into the
+     entrance animation by adding body.anim, so no-JS browsers show everything. */
+  .reveal { opacity: 1; transform: none; }
+  body.anim .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  body.anim .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { body.anim .reveal { opacity: 1; transform: none; transition: none; } }
+
+  @media (max-width: 900px) {
+    .ratio, .groups, .agent-cols, .lineage, .vs, .fork, .two, .start-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) { .squares { grid-template-columns: repeat(7, 1fr); } }
+</style>
+</head>
+<body>
+
+<div class="topnav">
+  <div class="row">
+    <span class="brand">chris-code</span>
+    <nav>
+      <a href="#what">what</a>
+      <a href="#sdd">spec-driven</a>
+      <a href="#determined">determined</a>
+      <a href="#assurance">assurance</a>
+      <a href="#skills">skills</a>
+      <a href="#agents">agents</a>
+      <a href="#dispatch">dispatch</a>
+      <a href="#superpowers">superpowers</a>
+      <a href="#start">start</a>
+    </nav>
+  </div>
+</div>
+
+<header class="hero" id="top">
+  <div class="wrap hero-inner">
+    <p class="eyebrow">The complete guide</p>
+    <h1>Claude Code, with an opinion about <span class="cc">how</span> to build.</h1>
+    <p class="lede"><span class="mono">chris-code</span> turns Claude Code from a free-form chat assistant into a spec-driven engineering workflow: settle intent, design before code, dispatch focused agents, and gate drift before it reaches <span class="mono">main</span>. It ships <strong>25 skills</strong> and a <strong>13-agent</strong> layer — and where that breadth is spent tells you what it values.</p>
+    <div class="counts">
+      <div class="count"><b>25</b><span>skills · 8 groups</span></div>
+      <div class="count"><b>13</b><span>scoped agents</span></div>
+      <div class="count hl"><b>3&nbsp;:&nbsp;10</b><span>coders vs. checkers</span></div>
+      <div class="count"><b>1</b><span>fixed pipeline</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ WHAT ============ -->
+<section id="what">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">What it is</p>
+      <h2>A workflow layer, not a bigger chat box.</h2>
+      <p>It routes every non-trivial change through a fixed pipeline, so the first thing that compiles never becomes the design by default.</p>
+    </div>
+    <div style="margin-bottom:34px">
+      <p class="claim">A free-form assistant fails three ways on work with a real design space:</p>
+      <ul class="blist">
+        <li>the first approach that compiles <b>quietly becomes the design</b>;</li>
+        <li>agent-written changes <b>land before anyone reviews them</b>;</li>
+        <li>a fresh agent that never heard your conversation <b>reconstructs your intent — confidently, and wrong</b>.</li>
+      </ul>
+      <p style="font-size:15.5px; color:#37424f; max-width:68ch; margin:16px 0 0">chris-code closes all three with a pipeline built from <strong>skills</strong> (auto-firing instruction modules) and <strong>agents</strong> (role-scoped subagents, each in its own context). You describe the work; the machinery decides what runs.</p>
+    </div>
+    <div class="two">
+      <div class="usecard yes">
+        <h4>Reach for it when</h4>
+        <ul>
+          <li>The change is substantial enough to deserve a design and a review.</li>
+          <li>You want intent settled before code, and drift caught before <span class="mono">main</span>.</li>
+          <li>You work primarily in <strong>Python or Rust</strong> — the coder and review agents are language-scoped (the workflow skills are language-agnostic).</li>
+        </ul>
+      </div>
+      <div class="usecard no">
+        <h4>Skip it when</h4>
+        <ul>
+          <li>You just want a quick one-off answer or a throwaway snippet.</li>
+          <li>The task is trivial enough that a design and a review would be pure overhead.</li>
+          <li>It earns its keep on real changes — not on trivia.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SPEC-DRIVEN ============ -->
+<section id="sdd">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The core idea</p>
+      <h2>Spec-driven development, for an agent.</h2>
+      <p>Settle <em>what</em> and <em>why</em> before <em>how</em> — and write it into durable artifacts a fresh agent can execute without re-deriving your intent.</p>
+    </div>
+
+    <div style="margin-bottom:30px; max-width:68ch">
+      <p class="claim">Why the artifacts, and not just a prompt?</p>
+      <p style="font-size:15.5px; color:#37424f; margin:0">Hand an agent only <em>what</em> and <em>where</em> and it will optimize the diff and <strong>ship the wrong thing correctly</strong>. So intent is written first, elaborated into contracts, then a thin plan, then code — and the final gate checks the running system back against the original ask. Each artifact is what makes the next handoff lossless.</p>
+    </div>
+
+    <div class="flow-scroll" style="margin-bottom:12px">
+      <div class="phase-lane">
+        <span class="phase d" style="min-width:432px">design — settle what &amp; why</span>
+        <span class="phase b" style="min-width:150px">build</span>
+        <span class="phase p" style="min-width:150px">prove</span>
+      </div>
+      <div class="flow reveal">
+        <div class="step"><span class="k">brainstorm</span><span class="v">intent ledger, frozen in your words</span></div>
+        <div class="arrowcell">→</div>
+        <div class="step"><span class="k">lean-spec</span><span class="v">contracts &amp; invariants</span></div>
+        <div class="arrowcell">→</div>
+        <div class="step"><span class="k">lean-plan</span><span class="v">what &amp; where, no code</span></div>
+        <div class="arrowcell">→</div>
+        <div class="step exec"><span class="k">execute</span><span class="v">a coder agent per task</span></div>
+        <div class="arrowcell">→</div>
+        <div class="step prove"><span class="k">verify</span><span class="v">gates + intent re-check</span></div>
+        <div class="arrowcell">→</div>
+        <div class="step finish"><span class="k">finish</span><span class="v">merge / PR</span></div>
+      </div>
+    </div>
+    <div class="ledger" style="margin-bottom:34px">
+      <p class="lbl">The intent ledger</p>
+      <h4>The one artifact a spec check can't quietly redefine.</h4>
+      <p>Up to <b>seven acceptance statements, in your words</b>, frozen at <span class="mono">brainstorm</span> — you approve them, you don't write them. It lives <b>outside the spec on purpose</b>: at <span class="mono">verify</span>, a spec-blind reviewer checks the running system against this ledger, making it the only gate that can catch a spec that drifted from what you actually asked for.</p>
+    </div>
+
+    <div class="two">
+      <div class="usecard" style="border-top:4px solid var(--navy)">
+        <h4>Lean artifacts: contracts stay, choreography goes</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">The spec keeps behavior, interfaces, and invariants. The plan keeps <em>what</em> and <em>where</em>. Neither pastes code the agent would just rewrite.</p>
+        <p class="pull">If a line would change when you reimplement in another language, it's choreography — it belongs in the plan, not the spec. Code belongs in neither.</p>
+      </div>
+      <div class="usecard" style="border-top:4px solid var(--assure)">
+        <h4>Why lean makes dispatch safe</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0">A fresh subagent rebuilds its understanding only from what it can read — the brief, the spec, the repo. So the rule: <strong>dispatch when the context is recoverable from artifacts; stay in-session when the <em>why</em> lives only in the conversation.</strong> The brief always carries the why; everything else it references.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DETERMINED ============ -->
+<section id="determined">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Two kinds of work</p>
+      <h2>Not every change needs a brainstorm.</h2>
+      <p>The pipeline forks on one question — is <em>what to build</em> already settled? — and sends determined work through a dedicated engine instead of a full design cycle.</p>
+    </div>
+
+    <div class="fork" style="margin-bottom:36px">
+      <div class="lane open">
+        <p class="q">answer: no</p>
+        <h3>Design-open</h3>
+        <p>“What should this be?” is still live — a new feature, a component, a behavior change.</p>
+        <p class="route">→ brainstorming settles the design, then rejoins the pipeline</p>
+      </div>
+      <div class="lane det">
+        <p class="q">answer: yes</p>
+        <h3>Determined</h3>
+        <p>Behavior is settled — a refactor, a migration, an API alignment, an already-specced feature. Only <em>which implementation fits</em> is open. <strong>Determined ≠ trivial.</strong></p>
+        <p class="route">→ the coherent-change engine</p>
+      </div>
+    </div>
+
+    <div style="margin-bottom:28px">
+      <p class="claim">The engine's premise, and the thing newcomers get wrong: a change can work and still be wrong.</p>
+      <ul class="blist">
+        <li>Every candidate that compiles has the <b>same behavior</b> — tests can't tell them apart.</li>
+        <li>The real difference (a reused helper vs. a reinvented one; a mirrored error convention vs. a third new one) is <b>invisible on the day you ship, expensive the day the next reader hits the seam</b>.</li>
+        <li>So the coherent implementation is <b>discovered from the codebase</b>, not invented — and the tell that research isn't done is that you can name only one approach.</li>
+      </ul>
+    </div>
+
+    <p class="eyebrow" style="margin-bottom:14px">The defended choice — produced every time</p>
+    <div class="bands reveal" style="margin-bottom:22px">
+      <div class="band blue"><span class="num">1</span><div><h4>Reframe</h4><p>the two or three facts from research that change the problem — what's in scope, where the real boundary sits.</p></div></div>
+      <div class="band blue"><span class="num">2</span><div><h4>Proposed change</h4><p>concrete and minimal: what changes, what's deleted, what's deliberately left untouched.</p></div></div>
+      <div class="band blue"><span class="num">3</span><div><h4>Correct across every case</h4><p>a table over <em>all</em> affected cases, plus a required “cases I might be missing, and how I'd find them” line — proving coverage, not asserting it.</p></div></div>
+      <div class="band blue"><span class="num">4</span><div><h4>Why it's most coherent</h4><p>reuse, idiom-fit, whether it mirrors an existing strategy, smallest correct blast radius.</p></div></div>
+      <div class="band blue"><span class="num">5</span><div><h4>Defense of alternatives</h4><p>a real rebuttal of every rejected candidate — not a one-liner.</p></div></div>
+    </div>
+    <div class="quote">The point is not a working diff. It is a defensible one.</div>
+  </div>
+</section>
+
+<!-- ============ ASSURANCE ============ -->
+<section id="assurance">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The assurance model</p>
+      <h2>Many gates — and honest about what green proves.</h2>
+      <p>A green pipeline means “nothing these lenses caught,” not “nothing is wrong” — the confidence comes from <em>independent</em> checks, not the number of passes.</p>
+    </div>
+
+    <div class="two" style="margin-bottom:34px">
+      <div class="usecard">
+        <h4>The completion gate — five steps, in order</h4>
+        <div class="bands" style="gap:8px">
+          <div class="band amber" style="padding:11px 14px"><span class="num">1</span><div><h4>Tests</h4><p>full suite, zero failures.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">2</span><div><h4>Lints</h4><p>project linter, zero warnings.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">3</span><div><h4>Design review</h4><p>senior <span class="mono">*-design-reviewer</span> agents → PASS / CONCERNS.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">4</span><div><h4>Requirements</h4><p>every spec item traced to code <em>and</em> a test.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
+        </div>
+      </div>
+      <div class="usecard">
+        <h4>Why more passes ≠ more proof</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 14px">Most gates are LLM judgments sharing a model, distribution, and framing — so they miss the same things together. Stacking them raises <em>recall</em>, never certainty. Only a few axes are genuinely independent, and those are the ones that count:</p>
+        <div class="chips">
+          <span class="chip assure">deterministic linter</span>
+          <span class="chip assure">spec-blind intent re-check</span>
+          <span class="chip assure">a real failing test</span>
+          <span class="chip assure">your own read</span>
+        </div>
+        <p style="font-size:14.5px; color:#37424f; margin:16px 0 0"><strong>Conformance</strong> asks “does the code match the spec?” — which is not correctness. A build can conform perfectly to a spec that drifted from your ask. Step 5 is the only gate that never reads the spec, which is exactly why it catches that drift.</p>
+      </div>
+    </div>
+    <div class="quote amber">A PASS that carries findings is not clean. Green raises recall; it doesn't prove absence.</div>
+  </div>
+</section>
+
+<!-- ============ SKILLS ============ -->
+<section id="skills">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The 25 skills</p>
+      <h2>Eight functional groups, one idea-to-integration pipeline.</h2>
+      <p>The first three groups are the pipeline's spine; the rest cover the change engine, testing, completion, review, campaigns, and meta. Colour marks each skill's nature.</p>
+    </div>
+    <div class="legend-bar">
+      <span><i class="swatch" style="background:var(--build-bg);border-color:var(--build-br)"></i> build — produce &amp; ship</span>
+      <span><i class="swatch" style="background:var(--assure-bg);border-color:var(--assure-br)"></i> assure — test, review, debug, verify</span>
+      <span><i class="swatch" style="background:var(--meta-bg);border-color:var(--meta-br)"></i> meta &amp; ops</span>
+    </div>
+    <div class="groups reveal">
+      <div class="group">
+        <div class="g-head"><h3>Design &amp; planning</h3><span class="g-count">3</span></div>
+        <p class="g-sub">Settle <em>what</em> and <em>why</em> before any <em>how</em>.</p>
+        <div class="chips"><span class="chip build">brainstorming</span><span class="chip build">lean-spec</span><span class="chip build">lean-plan</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Execution</h3><span class="g-count">4</span></div>
+        <p class="g-sub">Turn a plan into code — dispatched or inline, always isolated.</p>
+        <div class="chips"><span class="chip build">subagent-driven-development</span><span class="chip build">executing-plans</span><span class="chip build">dispatching-parallel-agents</span><span class="chip build">using-git-worktrees</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>The change engine</h3><span class="g-count">3</span></div>
+        <p class="g-sub">The universal application point for any determined change.</p>
+        <div class="chips"><span class="chip build">coherent-change</span><span class="chip assure">remediating-issues</span><span class="chip assure">systematic-debugging</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Testing</h3><span class="g-count">2</span></div>
+        <p class="g-sub">Test-first, and lock every fix against regression.</p>
+        <div class="chips"><span class="chip assure">test-driven-development</span><span class="chip assure">regression-test</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Completion</h3><span class="g-count">2</span></div>
+        <p class="g-sub">The hard gate before "done," then integration.</p>
+        <div class="chips"><span class="chip assure">verification-before-completion</span><span class="chip build">finishing-a-development-branch</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Review</h3><span class="g-count">5</span></div>
+        <p class="g-sub">On-demand senior review, plus how to give and take it.</p>
+        <div class="chips"><span class="chip assure">requesting-code-review</span><span class="chip assure">receiving-code-review</span><span class="chip assure">python-review</span><span class="chip assure">rust-review</span><span class="chip assure">technical-review</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Quality campaigns</h3><span class="g-count">3</span></div>
+        <p class="g-sub">Repeatable, parallel bug-finding sweeps across a codebase.</p>
+        <div class="chips"><span class="chip assure">bug-hunt</span><span class="chip assure">test-sweep</span><span class="chip assure">code-archaeology</span></div>
+      </div>
+      <div class="group">
+        <div class="g-head"><h3>Meta &amp; ops</h3><span class="g-count">3</span></div>
+        <p class="g-sub">How the plugin finds its own skills, and ships itself.</p>
+        <div class="chips"><span class="chip">using-chris-code</span><span class="chip">writing-skills</span><span class="chip build">release</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ AGENTS ============ -->
+<section id="agents">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The 13 agents · where the weight goes</p>
+      <h2>For every agent that writes code, three more exist only to check it.</h2>
+      <p>Thirteen dedicated agents auto-dispatch by file type. Three are coders; the other ten test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
+    </div>
+    <div class="ratio reveal" style="margin-bottom:34px">
+      <div class="ratio-viz">
+        <div class="viz-row"><span class="n" style="color:var(--build)">3</span><span class="lab">coders — write the change</span></div>
+        <div class="viz-row"><span class="n" style="color:var(--assure)">10</span><span class="lab">reviewers, verifiers &amp; test-writers — check it</span></div>
+        <div class="squares" aria-hidden="true">
+          <div class="sq build"></div><div class="sq build"></div><div class="sq build"></div>
+          <div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div>
+        </div>
+        <div class="viz-legend"><span><i class="dot" style="background:var(--build)"></i> build</span><span><i class="dot" style="background:var(--assure)"></i> assure</span></div>
+      </div>
+      <div class="ratio-copy">
+        <h3>The ratio is the philosophy.</h3>
+        <p>A free-form assistant is all author and no auditor. chris-code inverts that: writing the code is the small part; proving it correct is the large one.</p>
+        <p>It shows up in skills too — of 25, <strong style="color:var(--ink)">13 are testing, review, or debugging</strong> and 9 are building.</p>
+        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer</p>
+      </div>
+    </div>
+    <div class="agent-cols reveal">
+      <div class="arole build"><div class="r-top"><h3>Coders</h3><span class="tag build">build · 3</span></div><p>One writes the change per task; the rest verify it.</p><div class="chips"><span class="chip build">python-coder</span><span class="chip build">pytorch-coder</span><span class="chip build">rust-coder</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Quality reviewers</h3><span class="tag assure">assure · 3</span></div><p>Post-spec review of principle adherence and bugs.</p><div class="chips"><span class="chip assure">python-quality-reviewer</span><span class="chip assure">pytorch-quality-reviewer</span><span class="chip assure">rust-quality-reviewer</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Commit-lite gates</h3><span class="tag assure">assure · 2</span></div><p>Fast pre-commit idiom + lint: clean / block / escalate.</p><div class="chips"><span class="chip assure">python-review-lite</span><span class="chip assure">rust-review-lite</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Design reviewers</h3><span class="tag assure">assure · 2</span></div><p>Senior read-only cohesion / API review at the final gate.</p><div class="chips"><span class="chip assure">python-design-reviewer</span><span class="chip assure">rust-design-reviewer</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DISPATCH ============ -->
+<section id="dispatch">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">The dispatch difference · most easily missed</p>
+      <h2>Quality isn't a prompt the orchestrator remembers. It's baked into who does the work.</h2>
+    </div>
+    <p class="thesis">superpowers hands work to a <span class="em">generic</span> subagent. chris-code hands it to an agent whose <span class="em">system prompt already knows what good looks like.</span></p>
+    <div class="vs reveal">
+      <div class="side sp">
+        <p class="who">superpowers</p>
+        <h3>Generic subagents, steered per dispatch</h3>
+        <ul>
+          <li>Coding and review run through <b>generic subagents</b> driven by prompt-template files the orchestrator supplies each time.</li>
+          <li>Code quality depends on the <b>orchestrator remembering to ask</b> — cohesion, idiom, and API-design cues live in a hand-rolled prompt, or don't.</li>
+          <li>Every dispatch is <b>hand-steered</b>; the reviewer is only as good as that turn's instructions.</li>
+        </ul>
+      </div>
+      <div class="side cc">
+        <p class="who">chris-code</p>
+        <h3>Scoped agents that carry their own mandate</h3>
+        <ul>
+          <li>Thirteen <b>named agents</b> auto-dispatch by file extension and project dependencies — <span class="mono">pytorch-coder</span> beats <span class="mono">python-coder</span> in a torch repo; all matching reviewers fire.</li>
+          <li>Each agent's <b>system prompt already carries the quality bar</b> — coders internalize the review principles so code passes first time; reviewers enforce cohesion, idiom, and API design by role.</li>
+          <li>Quality is a <b>property of who runs the task</b>, not of whether the orchestrator thought to request it. It can't be forgotten.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SUPERPOWERS ============ -->
+<section id="superpowers">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Coming from superpowers?</p>
+      <h2>You already know 80% of it.</h2>
+      <p>It forked from <span class="mono">obra/superpowers</span> at <span class="mono">v5.1.0</span> and kept the entire pipeline — this is the 20% that changed, and why.</p>
+    </div>
+
+    <div class="lineage reveal" style="margin-bottom:44px">
+      <div>
+        <table class="delta">
+          <thead><tr><th>Inventory</th><th class="num">superpowers</th><th class="num">chris-code</th></tr></thead>
+          <tbody>
+            <tr><td>Skills</td><td class="num">14</td><td class="num grow">25</td></tr>
+            <tr><td>Agents</td><td class="num">0</td><td class="num grow">13</td></tr>
+            <tr><td>Commands</td><td class="num">0</td><td class="num">0</td></tr>
+            <tr><td>Hooks</td><td class="num">1</td><td class="num">0</td></tr>
+          </tbody>
+        </table>
+        <p class="fork-note">Every superpowers skill carries over — one renamed (<code>using-superpowers</code> → <code>using-chris-code</code>), one split (<code>writing-plans</code> → <code>lean-plan</code> + <code>lean-spec</code>). chris-code is a <strong>true superset</strong>: 11 new skills and the entire agent layer on top.</p>
+      </div>
+      <div>
+        <p class="eyebrow" style="margin-bottom:16px">Six thematic shifts</p>
+        <ul class="shifts">
+          <li><span class="idx">01</span><span><b>Lean artifacts.</b> <span class="d">Contracts stay, choreography goes — no 10k-word plans full of code the agent rewrites.</span></span></li>
+          <li><span class="idx">02</span><span><b>A real agent layer, dispatched by scope.</b> <span class="d">Named coders and reviewers auto-fire by file type — not generic subagents.</span></span></li>
+          <li><span class="idx">03</span><span><b>A uniform, multi-stage review gate.</b> <span class="d">Spec → quality → commit-lite per task, plus a spec-blind intent re-check.</span></span></li>
+          <li><span class="idx">04</span><span><b>Parallelism is a feature.</b> <span class="d">Footprint-mapped staging, not the red flag superpowers calls it.</span></span></li>
+          <li><span class="idx">05</span><span><b>Native tools, hard gate.</b> <span class="d">No silent fallback when worktree tooling is missing — stop and warn.</span></span></li>
+          <li><span class="idx">06</span><span><b>Coherence enforcement.</b> <span class="d">One application engine (<span class="mono">coherent-change</span>) every determined change routes through. The largest divergence.</span></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="eyebrow" style="margin-bottom:14px">Where muscle memory will mislead you — before → after</p>
+    <div class="map-scroll" style="margin-bottom:34px">
+      <table class="map">
+        <thead><tr><th>Skill you know</th><th>in superpowers</th><th>in chris-code</th></tr></thead>
+        <tbody>
+          <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
+          <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec → quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
+          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Five-step pipeline: Tests → Lints → Design review → Requirements → spec-blind intent re-check.</td></tr>
+          <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="usecard" style="border-top:4px solid var(--kept)">
+      <h4>What stayed the same</h4>
+      <p style="font-size:14.5px; color:#37424f; margin:0 0 12px">If you relied on these, they carry over essentially unchanged (renames aside):</p>
+      <div class="kept-row">
+        <span class="chip">brainstorming</span>
+        <span class="chip">test-driven-development</span>
+        <span class="chip">systematic-debugging</span>
+        <span class="chip">finishing-a-development-branch</span>
+        <span class="chip">dispatching-parallel-agents</span>
+        <span class="chip">receiving-code-review</span>
+        <span class="chip">using-chris-code</span>
+      </div>
+      <p style="font-size:13.5px; color:var(--muted); font-style:italic; margin:14px 0 0">There's also a quieter shift in voice: chris-code strips superpowers' persuasion scaffolding — “Red Flags — STOP” lists, rationalization tables, real-world-impact blocks — for terse, mechanical instructions. Same rules, less rhetoric.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ START ============ -->
+<section id="start" style="border-bottom:none">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Getting started</p>
+      <h2>Enable it, then describe the work.</h2>
+    </div>
+    <div class="start-grid">
+      <div>
+        <p style="font-size:14.5px; color:var(--muted); margin:0 0 12px">chris-code is distributed through a personal Claude Code marketplace. Add it to <span class="mono">~/.claude/settings.json</span>:</p>
+<pre class="code"><span class="k">"extraKnownMarketplaces"</span>: {
+  <span class="k">"chris-code"</span>: {
+    <span class="k">"source"</span>: { <span class="k">"source"</span>: <span class="s">"github"</span>,
+      <span class="k">"repo"</span>: <span class="s">"chris-santiago/claude-plugins"</span> }
+  }
+},
+<span class="k">"enabledPlugins"</span>: {
+  <span class="k">"chris-code@chris-code"</span>: <span class="s">true</span>
+}</pre>
+        <p style="font-size:13px; color:var(--faint); margin:14px 0 0">Claude Code fetches and caches the plugin automatically. The repo also ships <span class="mono">ml-lab</span> and <span class="mono">ml-journal</span> — enable those separately if you want them.</p>
+      </div>
+      <div>
+        <p style="font-size:14.5px; color:var(--muted); margin:0 0 16px">Then take one change through the whole pipeline:</p>
+        <ol class="steps-list">
+          <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
+          <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
+          <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec → quality → commit-lite review.</li>
+          <li><b>Verify before “done.”</b> The five-step gate ends with a spec-blind intent re-check against your ledger.</li>
+          <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    chris-code · the complete guide. Skill and agent names are real identifiers — invoke by describing the work, not naming the tool. Fuller detail lives in the plugin's docs under Tutorials, How-to, Reference, and Explanation.
+  </div>
+</footer>
+
+<script>
+  (function () {
+    if (!('IntersectionObserver' in window)) { return; }
+    document.body.classList.add('anim');
+    var els = document.querySelectorAll('.reveal');
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { threshold: 0.1 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>
