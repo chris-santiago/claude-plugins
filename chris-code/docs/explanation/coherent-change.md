@@ -23,6 +23,8 @@ The engine's signature output is a **defended choice**, and its structure is not
 
 The point of the whole ritual is not a working diff. It is a *defensible* one.
 
+And a defensible choice is worth keeping. On approval the engine persists it to `.claude/output/decisions/`, the same way `lean-spec` and `lean-plan` persist their artifacts — so the reasoning that rejected the alternatives outlives the moment it was approved. A later maintainer, a PR reviewer, or the `intent-reviewer` can read *why this implementation and not the others*, and a downstream `lean-spec`/`lean-plan` references that file instead of re-deriving the choice from a transcript.
+
 ## Coherence has to survive decomposition
 
 A single coherent edit is easy to keep coherent: one actor holds the whole change in view. The hard case is the **major** determined change, which is settled design and therefore routes like any design does — to `lean-spec`, then `lean-plan`, then `subagent-driven-development`, fanned out across parallel coder agents. The moment a change is decomposed, the whole-change view that made it coherent is gone: each coder sees only its own task, in its own fresh context, and none of them can see that four sibling tasks are all about to write the same block.

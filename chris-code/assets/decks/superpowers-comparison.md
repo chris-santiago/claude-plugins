@@ -119,7 +119,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 - **Renames:** `using-superpowers` → `using-chris-code` (otherwise verbatim); `superpowers:` skill references → `chris-code:` throughout.
 - **Diagrams:** Graphviz/DOT examples swapped for Mermaid across skills.
-- **Paths:** output dirs moved to `.claude/output/{specs,plans}`; worktrees to `.claude/worktrees/`.
+- **Paths:** output dirs moved to `.claude/output/{specs,plans,decisions}`; worktrees to `.claude/worktrees/`.
 - **Small hooks added to familiar skills:** `test-driven-development` gained a bug-hunter-derived edge-case checklist; `systematic-debugging` gained a "System Boundaries" check (FFI, serialization, type coercion) and a `regression-test` follow-up; `dispatching-parallel-agents` gained a file-footprint check.
 - **Dropped everywhere:** Real-World-Impact stats, "Red Flags - STOP" lists, "Common Rationalizations" tables, dated session anecdotes, and "your human partner" phrasing.
 - **Known nit:** `writing-skills` switched its example to Mermaid but still references `@graphviz-conventions.dot` just below and still ships the graphviz files. Cleanup pending.

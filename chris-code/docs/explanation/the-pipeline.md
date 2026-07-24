@@ -28,7 +28,7 @@ Its signature output, produced every time, is a **defended choice**, and the str
 4. **Why it's the most coherent choice** — reuse, idiom-fit, whether it mirrors an existing strategy, contract-preservation, smallest correct blast radius.
 5. **Defense against the alternatives** — a real rebuttal of each rejected candidate, not a one-liner.
 
-The point is not a working diff — it's a *defensible* one. The defended choice is what makes the change trustworthy and reviewable.
+The point is not a working diff — it's a *defensible* one. The defended choice is what makes the change trustworthy and reviewable. On approval it is persisted to `.claude/output/decisions/`, alongside where `lean-spec` and `lean-plan` save theirs, so the record survives the change and a downstream spec or plan references it instead of re-deriving it.
 
 It is rarely invoked alone. Front-ends own the *framing* and the *close* and delegate the *build* to it:
 

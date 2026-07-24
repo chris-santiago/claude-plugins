@@ -25,8 +25,9 @@ Write a technical design spec as a minimal durable document. The spec makes syst
 ## Before Writing
 
 1. Read relevant existing specs, CLAUDE.md constraints, and source code
-2. Identify what decisions are already locked vs. what needs to be decided
-3. Understand the user-visible behavior the spec must define
+2. **If `chris-code:coherent-change` produced a defended choice for this work, read its decision doc in `.claude/output/decisions/` first** — its reframe is your context, its proposed change the work, its correctness table the footprint map. Build the spec from it (sections 4/5/8 especially) rather than re-deriving the decision from the conversation.
+3. Identify what decisions are already locked vs. what needs to be decided
+4. Understand the user-visible behavior the spec must define
 
 ## Output Structure
 
@@ -80,7 +81,7 @@ Only unresolved items that block correctness. Omit section if none.
 
 ## Grounding a Key Decision
 
-When a section-8 decision is a *determined change against existing code* — the behavior is settled and the only open question is which implementation best fits — use `chris-code:coherent-change` in **decision-only mode** to research the codebase, generate grounded candidates, and defend the most coherent one. Capture its defended choice as the decision's rationale and rejected alternatives. The engine stops at the choice and hands back; the spec → plan → execution workflow still owns the build.
+When a section-8 decision is a *determined change against existing code* — the behavior is settled and the only open question is which implementation best fits — use `chris-code:coherent-change` in **decision-only mode** to research the codebase, generate grounded candidates, and defend the most coherent one. It saves its defended choice to `.claude/output/decisions/<...>-decision.md` and hands that back; reference (or distill) that file as the decision's rationale and rejected alternatives rather than re-deriving it. The engine stops at the choice; the spec → plan → execution workflow still owns the build.
 
 ## Allowed Code
 
