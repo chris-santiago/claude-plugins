@@ -83,8 +83,8 @@ style: |
   /* verification funnel */
   .vstack{ display:flex; flex-direction:column; align-items:center; gap:2px; margin-top:16px; }
   .vbar{ border-radius:9px; padding:9px 0; font-weight:600; font-size:18px; text-align:center; color:#16213e; background:#e8eaf6; border:1.5px solid #9fa8da; }
-  .v1{ width:90%; } .v2{ width:78%; } .v3{ width:66%; } .v4{ width:54%; } .v5{ width:42%; }
-  .vdone{ width:34%; background:#d7f5e3; border:1.5px solid #7fd6a6; border-radius:9px; padding:9px 0; text-align:center; font-weight:700; color:#0a7a4a; }
+  .v1{ width:90%; } .v2{ width:78%; } .v3{ width:66%; } .v4{ width:54%; } .v5{ width:42%; } .v6{ width:30%; }
+  .vdone{ width:26%; background:#d7f5e3; border:1.5px solid #7fd6a6; border-radius:9px; padding:9px 0; text-align:center; font-weight:700; color:#0a7a4a; }
   .vchev{ color:#aab; font-size:18px; }
 ---
 
@@ -96,7 +96,7 @@ style: |
 
 Design before it codes. Review before it lands.
 
-`25 skills · 13 agents · uniform review gates`
+`25 skills · 14 agents · uniform review gates`
 
 ---
 
@@ -221,10 +221,12 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v5">5 · Intent re-check — spec-blind, behavior vs the original ask</div>
 <div class="vchev">↓</div>
+<div class="vbar v6">6 · Mutation re-check — trivial-test gate, isolated worktree</div>
+<div class="vchev">↓</div>
 <div class="vdone">✓ may claim done</div>
 </div>
 
-<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands. <b>Green means these lenses caught nothing, not that nothing's wrong</b> — the independent axes (deterministic lint, spec-blind intent) carry more than another same-model re-read.</p>
+<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands. <b>Green means these lenses caught nothing, not that nothing's wrong</b> — the independent axes (deterministic lint, spec-blind intent, mutation probe) carry more than another same-model re-read.</p>
 
 ---
 

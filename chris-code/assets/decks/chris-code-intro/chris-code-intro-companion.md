@@ -36,7 +36,7 @@ This is the map for the whole talk. Every non-trivial change runs the same path:
 
 Point at the orange arc under the figure: the intent ledger. It's frozen in your words at the very first step and re-checked against the actually-shipped behavior at the verify step. Intent bookends the whole pipeline. That arc is the single most important idea on the slide, so don't rush past it — it's what makes the difference between "the code matches the spec" and "the system does what you asked."
 
-Close on scale: 25 skills, 13 agents, mostly auto-dispatched. The user rarely names a tool; they describe the work and the routing is mechanical.
+Close on scale: 25 skills, 14 agents, mostly auto-dispatched. The user rarely names a tool; they describe the work and the routing is mechanical.
 
 **Details not on the slide**
 
@@ -154,7 +154,7 @@ The contrast with the parent project is the punchline: superpowers lists paralle
 
 chris-code runs a lot of review gates, and the honest slide is the one that says: green does not mean correct. This is where the framework earns trust by *not* overclaiming.
 
-Use the two columns. On the left, most of the gates are LLM judgments that share a model, a training distribution, and a framing — so they tend to miss the same things together. Stacking more of them raises *recall* (you catch more), but it never multiplies into a proof, because the passes are correlated. On the right are the genuinely independent axes: a deterministic linter that isn't an LLM at all, a spec-blind intent re-check, an actual failing test, and your own read. Those fail *differently*, so each one adds real assurance. The design principle: diversity over quantity.
+Use the two columns. On the left, most of the gates are LLM judgments that share a model, a training distribution, and a framing — so they tend to miss the same things together. Stacking more of them raises *recall* (you catch more), but it never multiplies into a proof, because the passes are correlated. On the right are the genuinely independent axes: a deterministic linter that isn't an LLM at all, a spec-blind intent re-check, an actual failing test, a mutation probe of test strength, and your own read. Those fail *differently*, so each one adds real assurance. The design principle: diversity over quantity.
 
 Define conformance because it's the crux: conformance asks "does the code match the spec." It is not correctness — a build can conform perfectly to a spec that drifted from what you asked for. That gap is exactly why the intent re-check on the next slide is spec-blind.
 
@@ -167,13 +167,13 @@ Define conformance because it's the crux: conformance asks "does the code match 
 
 ## Slide 12 — The completion gate
 
-Make the previous slide concrete: here is the actual gate that runs before anything is called done. Five steps, in order, and a failing step stops the line. Tests: full suite, zero failures. Lints: zero warnings. Design review: the senior read-only reviewers return PASS or CONCERNS. Requirements: every spec item traced to both the code that implements it and a test that verifies it. And step five, the one that matters most: a spec-blind intent-reviewer compares the shipped behavior to the frozen ledger from slide 4.
+Make the previous slide concrete: here is the actual gate that runs before anything is called done. Six steps, in order, and a failing step stops the line. Tests: full suite, zero failures. Lints: zero warnings. Design review: the senior read-only reviewers return PASS or CONCERNS. Requirements: every spec item traced to both the code that implements it and a test that verifies it. Step five, the one that matters most: a spec-blind intent-reviewer compares the shipped behavior to the frozen ledger from slide 4. And step six, when the change includes testable source: a mutation-tester deliberately breaks the changed code in an isolated worktree — no external tool, just an edit plus the project's own tests — and gates on any test that runs the code but doesn't fail when it's broken.
 
 Stress two things. First, a PASS is not "nothing to do" — a gate can pass while carrying findings, and PASS-with-findings is not clean; the findings get triaged and the in-scope ones fixed now. Second, step 5 is the only gate that never reads the spec, which is precisely what lets it catch a spec that drifted from the ask — the failure every spec-anchored gate structurally cannot see.
 
 **Details not on the slide**
 
-- Steps 1–4 are conformance-flavored; step 5 is the decorrelated intent axis from the previous slide, made operational.
+- Steps 1–4 are conformance-flavored; steps 5 and 6 are the decorrelated axes — the spec-blind intent re-check from the previous slide, and the mutation probe (which breaks the code and runs the real tests) — made operational.
 - "Traced to code *and* a test" (step 4) is stricter than it sounds: an untested requirement fails the gate even if the code is present.
 
 ---
@@ -191,11 +191,11 @@ Then land the quiet thesis on the figure's footer: even at the skill layer, thir
 
 ---
 
-## Slide 14 — One coder, ten checkers
+## Slide 14 — One coder, eleven checkers
 
-This is the slide that makes the breadth *mean* something. Thirteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, ten check it. The row of squares makes it visceral; three blue, ten amber.
+This is the slide that makes the breadth *mean* something. Fourteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, eleven check it. The row of squares makes it visceral; three blue, eleven amber.
 
-Walk the roles so the ten isn't abstract: three coders (Python, PyTorch, Rust); three quality reviewers that check principle-adherence and bugs after spec compliance passes; two commit-lite gates for fast idiom-and-lint checks; two senior design reviewers at the final gate; the two-agent conformance pair (spec and intent); and one adversarial test-writer. For every agent that authors a change, more than three exist purely to verify it. That ratio *is* the philosophy — a free-form assistant is all author and no auditor, and chris-code deliberately inverts that.
+Walk the roles so the eleven isn't abstract: three coders (Python, PyTorch, Rust); three quality reviewers that check principle-adherence and bugs after spec compliance passes; two commit-lite gates for fast idiom-and-lint checks; two senior design reviewers at the final gate; the two-agent conformance pair (spec and intent); one adversarial test-writer; and one mutation-tester that mutates changed lines in an isolated worktree to expose tests too weak to detect a change. For every agent that authors a change, more than three exist purely to verify it. That ratio *is* the philosophy — a free-form assistant is all author and no auditor, and chris-code deliberately inverts that.
 
 Note the dispatch mechanic in passing, because the next-but-one slide develops it: every one of these is scope-matched by file type, so you never pick an agent by hand.
 
@@ -208,7 +208,7 @@ Note the dispatch mechanic in passing, because the next-but-one slide develops i
 
 ## Slide 15 — Lineage: a superset of superpowers
 
-Give credit and context. chris-code didn't appear from nowhere; it forked from the open-source *superpowers* project at v5.1.0 and kept the entire brainstorm → plan → execute → review → finish spine. If someone in the room knows superpowers, tell them they already know most of this. The inventory deltas tell the story: skills grew 14 → 25, agents 0 → 13, and a legacy hook went 1 → 0. Every superpowers skill still exists in chris-code — one renamed, one split — so it's a true superset, not a rewrite.
+Give credit and context. chris-code didn't appear from nowhere; it forked from the open-source *superpowers* project at v5.1.0 and kept the entire brainstorm → plan → execute → review → finish spine. If someone in the room knows superpowers, tell them they already know most of this. The inventory deltas tell the story: skills grew 14 → 25, agents 0 → 14, and a legacy hook went 1 → 0. Every superpowers skill still exists in chris-code — one renamed, one split — so it's a true superset, not a rewrite.
 
 Don't dwell here unless the audience is superpowers users. The single sentence that matters: chris-code is superpowers plus an agent layer, plus lean artifacts, plus a coherence engine. The next slide picks the most important of those additions and makes the case.
 
@@ -228,7 +228,7 @@ chris-code inverts the burden. Each agent is a **named, scoped role whose system
 **Details not on the slide**
 
 - Concrete dispatch example: in a PyTorch repo, `pytorch-coder` beats `python-coder` automatically, and both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on the diff.
-- This is why the ratio on slide 14 actually buys something: ten checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
+- This is why the ratio on slide 14 actually buys something: eleven checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
 
 ---
 

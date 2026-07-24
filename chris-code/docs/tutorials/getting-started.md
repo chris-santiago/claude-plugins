@@ -42,13 +42,14 @@ You'll see each dispatch announced with its model and agent. Independent tasks r
 
 ## Step 4: Verify before "done"
 
-When all tasks are in, `verification-before-completion` runs a five-step gate:
+When all tasks are in, `verification-before-completion` runs a six-step gate:
 
 1. Tests — full suite, zero failures
 2. Lints — zero errors/warnings
 3. Full review — the senior `*-design-reviewer` agents
 4. Requirements — every spec item traced
 5. **Intent re-check** — a spec-blind `intent-reviewer` compares the shipped behavior to your frozen intent ledger
+6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change
 
 A green run is not "nothing to do" — read any findings it surfaces.
 

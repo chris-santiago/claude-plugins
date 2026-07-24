@@ -107,20 +107,41 @@ If no intent ledger exists and no original-ask statement is recoverable (a chang
 
 **Must see:** Verdict PASS (no `not-met` statements). A `not-met` is a real gap between behavior and the ask — fix it (or, if the ledger itself is wrong, that is a user decision). Resolve every `can't-tell` before claiming completion.
 
+### Step 6: Mutation Re-check
+
+Steps 1–5 trust the tests: if the suite is green, they treat the tested behavior as verified. But a test can execute a line and assert nothing about it — a green suite that proves nothing. This step checks that the tests written for this change *actually detect failures*: in a throwaway worktree the agent deliberately breaks the changed code and confirms a test fails. It uses no external mutation-testing tool — it edits the code and runs the project's own tests — so it works in any language with a runnable suite.
+
+Run when the change includes testable source; skip a docs-only diff. It runs last because it is the most expensive gate and only meaningful on the green suite Steps 1–2 established.
+
+Dispatch the **`mutation-tester`** agent **with worktree isolation** — it deliberately breaks code, so it must never touch the working tree:
+
+```
+Agent(subagent_type: "chris-code:mutation-tester", isolation: "worktree", prompt: ...)
+
+Inputs:
+  - Mode: closing-review
+  - Base branch: <the branch this split from, e.g. main>
+  - Project constraints: <CLAUDE.md, verbatim>
+```
+
+The agent scopes mutation to the changed lines (`<merge-base>..HEAD`), so the branch work must be committed — the same assumption Steps 3 and 5 make.
+
+**Must see:** Verdict PASS. **CONCERNS** means a test executes changed code but no test fails when the agent breaks it — a trivial/non-discriminating test. Strengthen the test so it fails on the break, then re-run. Uncovered breaks (missing tests) and breaks the agent discards as behavior-preserving (equivalent) are advisory notes — they do not block. A non-green baseline or a scope with nothing to mutate yields a non-blocking `skipped`/`inconclusive` (note it, do not stall the review).
+
 ### Discriminating checks, and re-running after remediation
 
 Two failure modes quietly turn a green gate into a false pass:
 
 - **A behavioral check that doesn't discriminate proves nothing, even when it passes.** Whether the intent-reviewer exercises the system or you confirm a fix by observation, the check must hold under correct behavior and fail under the bug (see the discriminating-assertion rule in `chris-code:regression-test`). "Output is present", "renders without error", "is not None" are satisfied by the broken state too. A reviewer can be fooled by the same weak heuristic you would be, so treat a PASS built on a non-discriminating observation as unproven.
-- **A CONCERNS→fix leaves a stale verdict until you re-run.** When Step 3 (design) or Step 5 (intent) returns findings and you remediate, re-run that gate on the fixed code; the prior PASS describes the pre-fix system. If the fix changed behavior at all, re-run *both* the design and intent gates, not only the one that flagged. Don't substitute "it's byte-identical so the verdict holds" for the re-run: prove byte-identity first (stash the fix, diff output or hashes), and if it isn't identical, regenerate and re-inspect every golden it touched before the verdict counts.
+- **A CONCERNS→fix leaves a stale verdict until you re-run.** When Step 3 (design), Step 5 (intent), or Step 6 (mutation) returns findings and you remediate, re-run that gate on the fixed code; the prior PASS describes the pre-fix system. A strengthened test must be re-mutated — the old mutation verdict was measured against the trivial test. If the fix changed behavior at all, re-run *both* the design and intent gates, not only the one that flagged. Don't substitute "it's byte-identical so the verdict holds" for the re-run: prove byte-identity first (stash the fix, diff output or hashes), and if it isn't identical, regenerate and re-inspect every golden it touched before the verdict counts.
 
 ## After Verification Passes
 
-All five steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+All six steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
 ## What These Gates Do and Don't Prove
 
-Be honest about what a green pipeline buys. These steps are not independent guarantees stacked into a proof. Only about two axes are genuinely independent: the **linter** (a deterministic, non-LLM check) and **conformance** (does the behavior match the spec/intent). The design and quality re-judgments are correlated LLM passes — they share a model, a training distribution, and often a framing, so they tend to miss the same things together.
+Be honest about what a green pipeline buys. These steps are not independent guarantees stacked into a proof. Only a few axes are genuinely independent: the **linter** (a deterministic, non-LLM check), **conformance** (does the behavior match the spec/intent), and the **mutation gate** (which breaks the code and runs the real tests to see whether they catch it — the verdict is test execution, not another LLM re-read). The design and quality re-judgments are correlated LLM passes — they share a model, a training distribution, and often a framing, so they tend to miss the same things together.
 
 - More passes raise **recall** (more issues surfaced), not **residual assurance** — a clean run means "nothing these lenses caught," not "nothing is wrong."
 - **Diversity beats quantity.** A check that fails *differently* — a deterministic linter, a spec-blind behavior check, an actual failing test, a human read — adds more than another same-model re-review of the same diff. The intent re-check (Step 5) earns its place by being spec-*blind*: it decorrelates from every spec-anchored step above it.
@@ -146,6 +167,7 @@ Run the gates — they catch real drift. Just don't read green as proof of its a
 **This skill dispatches:**
 - **`*-design-reviewer` agents** — read-only senior-level review, auto-dispatched by scope (Step 3)
 - **`intent-reviewer`** — read-only, spec-blind behavior-vs-intent re-check (Step 5)
+- **`mutation-tester`** — mutation gate in an isolated worktree (breaks changed code, runs the tests, reverts), dispatched when the change includes testable source (Step 6)
 
 **Related skills:**
 - **chris-code:test-driven-development** — TDD ensures tests exist; this skill ensures they pass

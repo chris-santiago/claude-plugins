@@ -17,9 +17,9 @@ Guide completion of development work by presenting clear options and handling ch
 
 ### Step 1: Verify Completion
 
-**PREREQUISITE:** `chris-code:verification-before-completion` must have passed (tests, lints, full review, requirements check, spec-blind intent re-check). If it hasn't been run yet, invoke it now and wait for all five steps to pass before proceeding.
+**PREREQUISITE:** `chris-code:verification-before-completion` must have passed (tests, lints, full review, requirements check, spec-blind intent re-check, mutation re-check). If it hasn't been run yet, invoke it now and wait for all six steps to pass before proceeding.
 
-A green test suite, a `*-review-lite` commit gate, or the subagent-driven-development whole-change gate do not satisfy this prerequisite. Those are diff-level checks; the verification close adds two gates they never run: the `*-design-reviewer` cohesion review and the `intent-reviewer` spec-blind behavior check. If all you have run is tests, lint, and a lite gate, you have not run verification-before-completion. Don't present integration options until its design and intent reviews have passed, including a re-run over any remediation.
+A green test suite, a `*-review-lite` commit gate, or the subagent-driven-development whole-change gate do not satisfy this prerequisite. Those are diff-level checks; the verification close adds three gates they never run: the `*-design-reviewer` cohesion review, the `intent-reviewer` spec-blind behavior check, and the `mutation-tester` gate that proves the tests can actually detect a change. If all you have run is tests, lint, and a lite gate, you have not run verification-before-completion. Don't present integration options until its design, intent, and mutation reviews have passed, including a re-run over any remediation.
 
 ### Step 2: Detect Environment
 

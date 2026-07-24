@@ -53,7 +53,7 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 **The why.** superpowers is skills-only. Its coding and review happen inline or through generic subagents steered by prompt-template files (`implementer-prompt.md`, `code-reviewer.md`). That works, but every dispatch is hand-rolled.
 
-chris-code adds **thirteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
+chris-code adds **fourteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
 
 ### 3. Review is a uniform, multi-stage gate
 
@@ -63,7 +63,7 @@ A more recent pass hardens *assurance* — what the gates actually prove:
 
 - **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
 - **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it re-reads the actual code slice rather than the summary — and reviewers flag their own lossiness to point it where to look.
-- **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only ~2 axes are truly independent (a deterministic linter, a spec-blind check), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
+- **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only a few axes are truly independent (a deterministic linter, a spec-blind check, a mutation gate that breaks the code and runs the real tests), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun
 
@@ -97,7 +97,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Five-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`). |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`) → Mutation re-check (`mutation-tester` in an isolated worktree). |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -120,7 +120,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `code-archaeology` | Surface dead code, stubs, and spec-vs-impl gaps before a milestone. |
 | `release` | Version bump + changelog + GitHub release in one flow. |
 
-### New agents (13) — the layer superpowers doesn't have
+### New agents (14) — the layer superpowers doesn't have
 
 | Agents | Role |
 |---|---|
@@ -130,6 +130,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
+| `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes, and runs advisory on-demand. |
 
 ---
 
@@ -169,7 +170,7 @@ flowchart TB
     end
 
     subgraph Completion Phase
-        verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-design-reviewer agents<br/>4. Requirements check<br/>5. Intent re-check (intent-reviewer)"]
+        verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-design-reviewer agents<br/>4. Requirements check<br/>5. Intent re-check (intent-reviewer)<br/>6. Mutation re-check (mutation-tester)"]
         finish["finishing-a-development-branch<br/>(merge / PR / keep / discard)"]
     end
 
@@ -339,6 +340,14 @@ Dispatched by the `bug-hunt` skill.
 |-------|-------|-------|------|
 | `bug-hunter` | inherit | per dispatch | Adversarial edge-case test writer, never fixes |
 
+### Mutation Gate Agent
+
+Language-agnostic. Uses **no external mutation-testing tool** — **inside an isolated worktree** it deliberately breaks the changed code, runs the project's own tests, and reverts each break, so it works in any language with a runnable suite and never touches the working tree. Dispatched as Step 6 of `verification-before-completion` when the change includes testable source, and directly for an on-demand run against a user-designated area.
+
+| Agent | Model | Scope | Role |
+|-------|-------|-------|------|
+| `mutation-tester` | opus | any (source with tests) | Closing-review mode gates on covered-but-survived breaks (a test executes changed code but doesn't fail when it's broken); on-demand mode is advisory only |
+
 ## Scope Dispatch
 
 All agents and review skills match by `scope.extensions` and `scope.require_dependencies` in frontmatter. The dispatch mode depends on the role:
@@ -351,6 +360,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-design-reviewer` | **Additive** — all matching fire | `python-design-reviewer` + `rust-design-reviewer` |
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
 | `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
+| `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 6), in an isolated worktree |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 

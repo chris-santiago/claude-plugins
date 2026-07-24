@@ -62,7 +62,7 @@ It routes every non-trivial change through **one pipeline** instead of ad-hoc ch
 
 ![w:880](assets/pipeline.svg)
 
-**25 skills** and **13 agents**, most auto-dispatched — you describe the work, not the tool.
+**25 skills** and **14 agents**, most auto-dispatched — you describe the work, not the tool.
 
 ---
 
@@ -157,13 +157,14 @@ chris-code runs many review gates, and is **deliberately honest that green ≠ c
 
 ## The completion gate
 
-`verification-before-completion` runs five steps in order; a failing step stops the line.
+`verification-before-completion` runs six steps in order; a failing step stops the line.
 
 1. **Tests** — full suite, zero failures
 2. **Lints** — zero errors or warnings
 3. **Design review** — senior `*-design-reviewer` agents → PASS / CONCERNS
 4. **Requirements** — every spec item traced to code *and* a test
 5. **Intent re-check** — a **spec-blind** `intent-reviewer` compares shipped behavior to your frozen ledger
+6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change
 
 A **PASS is not "nothing to do":** it can carry findings, and PASS-with-findings is not clean. The one gate that never reads the spec — step 5 — is the one that catches a spec that drifted from the ask.
 
@@ -177,9 +178,9 @@ Most of these fire automatically: you describe the work, the pipeline picks the 
 
 ---
 
-## One coder, ten checkers
+## One coder, eleven checkers
 
-The 13 agents split sharply between writing code and checking it — and the split *is* the philosophy.
+The 14 agents split sharply between writing code and checking it — and the split *is* the philosophy.
 
 ![w:840](assets/agent_ratio.svg)
 
@@ -219,7 +220,7 @@ superpowers steers a *generic* subagent per call, so quality depends on the orch
 2. **Determined ≠ design-open.** Settled behavior routes to the `coherent-change` engine, which *defends* its choice.
 3. **Lean artifacts.** Contracts stay, choreography goes — which is what makes dispatch lossless.
 4. **Dispatch by scope, carry intent.** A fresh agent recovers *what* and *where* by reading; the brief must carry the *why*.
-5. **Green ≠ correct.** Assurance comes from the *independent* checks — the linter, a spec-blind intent re-check, real tests, your own read.
+5. **Green ≠ correct.** Assurance comes from the *independent* checks — the linter, a spec-blind intent re-check, real tests, a mutation probe, your own read.
 
 > Design it, defend it, dispatch it, prove it.
 

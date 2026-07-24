@@ -18,12 +18,14 @@
 <text x="795.0" y="124.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">each fails differently</text>
 <rect x="620.0" y="148.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
 <text x="795.0" y="170.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">deterministic linter (not an LLM)</text>
-<rect x="620.0" y="192.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
-<text x="795.0" y="214.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">spec-blind intent re-check</text>
-<rect x="620.0" y="236.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
-<text x="795.0" y="258.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">a real failing test</text>
-<rect x="620.0" y="280.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
-<text x="795.0" y="302.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">your own read</text>
+<rect x="620.0" y="186.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="208.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">spec-blind intent re-check</text>
+<rect x="620.0" y="224.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="246.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">a real failing test</text>
+<rect x="620.0" y="262.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="284.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">mutation probe of test strength</text>
+<rect x="620.0" y="300.0" width="350.0" height="34.0" rx="8" fill="#fff" stroke="#15803d" stroke-width="1.4"/>
+<text x="795.0" y="322.0" font-size="15" fill="#1a1a2e" text-anchor="middle" font-weight="normal">your own read</text>
 <text x="795.0" y="340.0" font-size="15" fill="#15803d" text-anchor="middle" font-weight="bold">diversity over quantity</text>
 <text x="795.0" y="362.0" font-size="13" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">decorrelated checks are what actually add assurance</text>
 <text x="540.0" y="430.0" font-size="16" fill="#1a1a2e" text-anchor="middle" font-weight="bold">“Conformance” = does the code match the spec. None of it asks: is the spec right?</text>

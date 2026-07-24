@@ -1,6 +1,6 @@
 # chris-code
 
-chris-code turns Claude Code into an **opinionated software-engineering workflow** rather than a free-form chat assistant. It routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run staged review, and gate drift before it reaches `main`. It ships 25 skills, 13 dedicated agents, and review gates that re-read the actual code instead of trusting an agent's summary.
+chris-code turns Claude Code into an **opinionated software-engineering workflow** rather than a free-form chat assistant. It routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run staged review, and gate drift before it reaches `main`. It ships 25 skills, 14 dedicated agents, and review gates that re-read the actual code instead of trusting an agent's summary.
 
 ## When to use it
 

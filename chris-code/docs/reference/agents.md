@@ -1,6 +1,6 @@
 # Agents
 
-chris-code ships 13 dedicated agents — the layer superpowers doesn't have. They auto-dispatch by file type and role, so you rarely pick one by hand. This page covers each agent and the disciplines they share.
+chris-code ships 14 dedicated agents — the layer superpowers doesn't have. They auto-dispatch by file type and role, so you rarely pick one by hand. This page covers each agent and the disciplines they share.
 
 ## Shared review disciplines
 
@@ -106,5 +106,22 @@ Not scope-matched — these review conformance and behavior, not language idioms
 | `bug-hunter` | inherit | per dispatch | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes |
 
 Dispatched one-per-subsystem by the `bug-hunt` skill. Each instance writes edge-case tests (Python and/or Rust) for its subsystem, runs them, and reports failures as bugs — it writes tests, never fixes.
+
+---
+
+## Mutation gate agent
+
+The mutation step of `verification-before-completion`, and a direct on-demand tool. One language-agnostic agent that uses **no external mutation-testing tool**.
+
+| Agent | Model | Scope | Role |
+|-------|-------|-------|------|
+| `mutation-tester` | opus | any (source with tests) | Breaks changed code in an isolated worktree and runs the tests; gates on tests that don't detect the change |
+
+**Inside an isolated worktree** (dispatched with the Agent tool's `isolation: "worktree"`) it deliberately breaks a piece of the changed code — flips a comparison, changes a boundary, drops a guard — runs the project's own tests, records whether any failed, and reverts the break before the next one. Nothing is installed and no framework is required, so it works in any language with a runnable suite, and it never touches the checkout you develop in. Two modes:
+
+- **Closing-review mode** (Step 6 of the completion gate): scoped to the branch diff. It returns **CONCERNS** only when changed code is executed by a test yet no test fails when the code is broken — the precise signature of a trivial, non-discriminating test. Uncovered breaks (a *missing* test) and breaks it judges behavior-preserving (equivalent) are advisory or discarded, never blocking.
+- **On-demand mode**: dispatched directly against a user-designated area, always advisory — a report of breaks the tests missed, no gating verdict.
+
+Because it breaks committed state, the gate assumes the branch work is committed (the same assumption the diff-based design and intent gates make). A non-green baseline or a scope with nothing to mutate is a non-blocking skip.
 
 See [Scope dispatch & models](scope-dispatch.md) for how exclusive vs. additive vs. explicit dispatch resolves.

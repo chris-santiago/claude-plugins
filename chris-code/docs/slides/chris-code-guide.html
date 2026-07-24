@@ -483,13 +483,14 @@
 
     <div class="two" style="margin-bottom:34px">
       <div class="usecard">
-        <h4>The completion gate — five steps, in order</h4>
+        <h4>The completion gate — six steps, in order</h4>
         <div class="bands" style="gap:8px">
           <div class="band amber" style="padding:11px 14px"><span class="num">1</span><div><h4>Tests</h4><p>full suite, zero failures.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">2</span><div><h4>Lints</h4><p>project linter, zero warnings.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">3</span><div><h4>Design review</h4><p>senior <span class="mono">*-design-reviewer</span> agents → PASS / CONCERNS.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">4</span><div><h4>Requirements</h4><p>every spec item traced to code <em>and</em> a test.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">6</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change.</p></div></div>
         </div>
       </div>
       <div class="usecard">
@@ -498,6 +499,7 @@
         <div class="chips">
           <span class="chip assure">deterministic linter</span>
           <span class="chip assure">spec-blind intent re-check</span>
+          <span class="chip assure">mutation probe</span>
           <span class="chip assure">a real failing test</span>
           <span class="chip assure">your own read</span>
         </div>
@@ -570,17 +572,17 @@
 <section id="agents">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">The 13 agents · where the weight goes</p>
-      <h2>For every agent that writes code, three more exist only to check it.</h2>
-      <p>Thirteen dedicated agents auto-dispatch by file type. Three are coders; the other ten test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
+      <p class="eyebrow">The 14 agents · where the weight goes</p>
+      <h2>For every agent that writes code, nearly four exist only to check it.</h2>
+      <p>Fourteen dedicated agents auto-dispatch by file type. Three are coders; the other eleven test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
     </div>
     <div class="ratio reveal" style="margin-bottom:34px">
       <div class="ratio-viz">
         <div class="viz-row"><span class="n" style="color:var(--build)">3</span><span class="lab">coders — write the change</span></div>
-        <div class="viz-row"><span class="n" style="color:var(--assure)">10</span><span class="lab">reviewers, verifiers &amp; test-writers — check it</span></div>
+        <div class="viz-row"><span class="n" style="color:var(--assure)">11</span><span class="lab">reviewers, verifiers &amp; test-writers — check it</span></div>
         <div class="squares" aria-hidden="true">
           <div class="sq build"></div><div class="sq build"></div><div class="sq build"></div>
-          <div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div>
+          <div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div>
         </div>
         <div class="viz-legend"><span><i class="dot" style="background:var(--build)"></i> build</span><span><i class="dot" style="background:var(--assure)"></i> assure</span></div>
       </div>
@@ -588,7 +590,7 @@
         <h3>The ratio is the philosophy.</h3>
         <p>A free-form assistant is all author and no auditor. chris-code inverts that: writing the code is the small part; proving it correct is the large one.</p>
         <p>It shows up in skills too — of 25, <strong style="color:var(--ink)">13 are testing, review, or debugging</strong> and 9 are building.</p>
-        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer</p>
+        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer · 1 mutation gate</p>
       </div>
     </div>
     <div class="agent-cols reveal">
@@ -598,6 +600,7 @@
       <div class="arole"><div class="r-top"><h3>Design reviewers</h3><span class="tag assure">assure · 2</span></div><p>Senior read-only cohesion / API review at the final gate.</p><div class="chips"><span class="chip assure">python-design-reviewer</span><span class="chip assure">rust-design-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
     </div>
   </div>
 </section>
@@ -675,7 +678,7 @@
         <tbody>
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
           <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec → quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
-          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Five-step pipeline: Tests → Lints → Design review → Requirements → spec-blind intent re-check.</td></tr>
+          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Six-step pipeline: Tests → Lints → Design review → Requirements → spec-blind intent re-check → mutation re-check.</td></tr>
           <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
         </tbody>
       </table>
@@ -725,7 +728,7 @@
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
           <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec → quality → commit-lite review.</li>
-          <li><b>Verify before “done.”</b> The five-step gate ends with a spec-blind intent re-check against your ledger.</li>
+          <li><b>Verify before “done.”</b> The six-step gate runs a spec-blind intent re-check against your ledger, then a mutation re-check that proves your tests can detect a change.</li>
           <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
         </ol>
       </div>

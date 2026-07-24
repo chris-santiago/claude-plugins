@@ -177,7 +177,7 @@ This deck is the other **20%**, and the *why*.
 <div class="gaterow"><span class="glbl">chris-code</span><span class="gmini base">spec compliance</span><span class="gsep">→</span><span class="gmini base">code quality</span><span class="gsep">→</span><span class="gmini add">+ commit lint gate</span><span class="gsep">→</span><span class="gmini add">+ full-diff pass</span></div>
 </div>
 
-<p class="cap">Same two-stage spine. chris-code makes the reviewers <b>dedicated, scope-dispatched agents</b>, adds a <b>mandatory lint gate</b> and a <b>spec-blind intent re-check</b>, and re-reads the actual code at every gate. More gates raise <i>recall</i>, not proof — the decorrelated axes (deterministic lint, spec-blind intent) carry the weight, not repetition.</p>
+<p class="cap">Same two-stage spine. chris-code makes the reviewers <b>dedicated, scope-dispatched agents</b>, adds a <b>mandatory lint gate</b> and a <b>spec-blind intent re-check</b>, and re-reads the actual code at every gate. More gates raise <i>recall</i>, not proof — the decorrelated axes (deterministic lint, spec-blind intent, mutation probe) carry the weight, not repetition.</p>
 
 ---
 
@@ -237,7 +237,7 @@ Where muscle memory will mislead you. Framed before → after:
 |---|---|---|
 | **writing-plans** | the plan skill: exhaustive, full code per step | slimmed to `lean-plan`; spec → `lean-spec` |
 | **subagent-driven-development** | 2-stage review; parallel discouraged | 3 gates/task, scope dispatch, staged parallelism |
-| **verification-before-completion** | "what command proves this? run it" | 5 steps: tests → lints → review → requirements → spec-blind intent re-check |
+| **verification-before-completion** | "what command proves this? run it" | 6 steps: tests → lints → review → requirements → spec-blind intent re-check → mutation re-check |
 | **requesting-code-review** | primary, mandatory path | demoted to ad-hoc; base `HEAD~1` → `merge-base HEAD main` |
 
 ---
@@ -247,13 +247,14 @@ Where muscle memory will mislead you. Framed before → after:
 <div class="newhdr">New skills (11)</div>
 <div class="chiprow"><span class="chip">lean-spec</span><span class="chip">coherent-change</span><span class="chip">remediating-issues</span><span class="chip">regression-test</span><span class="chip">python-review</span><span class="chip">rust-review</span><span class="chip">technical-review</span><span class="chip">bug-hunt</span><span class="chip">test-sweep</span><span class="chip">code-archaeology</span><span class="chip">release</span></div>
 
-<div class="newhdr">New agents (13) — the layer superpowers doesn't have</div>
+<div class="newhdr">New agents (14) — the layer superpowers doesn't have</div>
 <div class="arow">3 coders (<code>python</code> / <code>pytorch</code> / <code>rust</code>) — exclusive, most-specific wins</div>
 <div class="arow">3 quality-reviewers — additive post-spec review</div>
 <div class="arow">2 review-lite gates — pre-commit idiom + lint</div>
 <div class="arow">2 design-reviewers (<code>python</code> / <code>rust</code>) — senior cohesion at the verification gate</div>
 <div class="arow">2 conformance reviewers — <code>spec-reviewer</code> (promoted from a prompt template) + <code>intent-reviewer</code> (spec-blind, new)</div>
 <div class="arow"><code>bug-hunter</code> — adversarial edge-case test writer</div>
+<div class="arow"><code>mutation-tester</code> — polyglot mutation gate in an isolated worktree (Step 6 / on-demand)</div>
 
 ---
 
@@ -261,7 +262,7 @@ Where muscle memory will mislead you. Framed before → after:
 
 ## The net
 
-chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 11 new skills and a 13-agent layer.
+chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 11 new skills and a 14-agent layer.
 
 **Same spine.** Leaner artifacts, mechanical dispatch, harder gates.
 

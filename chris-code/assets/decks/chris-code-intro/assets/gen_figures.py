@@ -382,9 +382,10 @@ def fig_assurance():
     axes = ["deterministic linter (not an LLM)",
             "spec-blind intent re-check",
             "a real failing test",
+            "mutation probe of test strength",
             "your own read"]
     for i, a in enumerate(axes):
-        yy = 148 + i * 44
+        yy = 148 + i * 38
         s.rect(rx + 40, yy, 350, 34, fill="#fff", stroke=GREEN, sw=1.4)
         s.text(rx + 215, yy + 22, a, 15, "#1a1a2e")
     s.text(rx + 215, 340, "diversity over quantity", 15, GREEN, weight="bold")
@@ -453,12 +454,12 @@ def fig_skill_groups():
 # FIG 8 — agents: the coder-to-checker ratio
 # --------------------------------------------------------------------------
 def fig_agent_ratio():
-    s = SVG(1080, 500)
-    s.text(540, 34, "13 agents — 3 write code, 10 check it", 23, BLUE,
+    s = SVG(1080, 600)
+    s.text(540, 34, "14 agents — 3 write code, 11 check it", 23, BLUE,
            weight="bold")
 
     # ratio squares
-    n = 13
+    n = 14
     sw_, gap = 46, 12
     total = n * sw_ + (n - 1) * gap
     x0 = (1080 - total) / 2
@@ -480,6 +481,7 @@ def fig_agent_ratio():
         ("Design reviewers", 2, "assure", "cohesion / API"),
         ("Conformance pair", 2, "assure", "spec + intent"),
         ("Test-writer", 1, "assure", "bug-hunter"),
+        ("Mutation gate", 1, "assure", "breaks code, runs tests"),
     ]
     palette = {"build": (FILL_BLUE, BLUE), "assure": (FILL_ORANGE, ORANGE)}
     cols, cw, ch, gx, gy = 3, 320, 96, 24, 20
@@ -496,7 +498,7 @@ def fig_agent_ratio():
                anchor="start")
         s.text(x + 70, yy + 58, sub, 13.5, GRAY, anchor="start")
 
-    s.text(540, ry0 + 2 * (ch + gy) + 8,
+    s.text(540, ry0 + 3 * (ch + gy) + 8,
            "Every agent is scope-matched by file type — you describe the work, "
            "the routing is mechanical.",
            15, GRAY, style="italic")
@@ -515,14 +517,14 @@ def fig_lineage():
         ["skills-only", "generic subagents", "fork point: v5.1.0"],
         fill=FILL_GRAY, stroke=GRAY, tsize=22, ssize=15)
     box(s, 710, 90, 300, 150, "chris-code",
-        ["+ 11 new skills", "+ 13-agent layer", "coherence engine"],
+        ["+ 11 new skills", "+ 14-agent layer", "coherence engine"],
         fill=FILL_BLUE, stroke=BLUE, tsize=22, ssize=15)
     s.arrow(378, 176, 702, 176, stroke=GREEN, w=3, head=12)
     s.text(540, 143, "every superpowers", 14, GREEN, weight="bold")
     s.text(540, 161, "skill carried over", 14, GREEN, weight="bold")
 
     # delta chips
-    deltas = [("Skills", "14", "25"), ("Agents", "0", "13"), ("Hooks", "1", "0")]
+    deltas = [("Skills", "14", "25"), ("Agents", "0", "14"), ("Hooks", "1", "0")]
     dw, dgap = 150, 30
     total = len(deltas) * dw + (len(deltas) - 1) * dgap
     x0 = (1080 - total) / 2

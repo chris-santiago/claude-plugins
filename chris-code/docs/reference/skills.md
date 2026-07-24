@@ -61,7 +61,7 @@ The RED-GREEN-REFACTOR cycle: write the test first, watch it fail, write the min
 ## Completion
 
 ### `verification-before-completion`
-The five-step hard gate before any "done" claim: **Tests → Lints → Full review (`*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`)**. Evidence before assertions, always; a PASS that carries findings is not clean. See [The assurance model](../explanation/the-assurance-model.md).
+The six-step hard gate before any "done" claim: **Tests → Lints → Full review (`*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`) → Mutation re-check (`mutation-tester` in an isolated worktree)**. Evidence before assertions, always; a PASS that carries findings is not clean. See [The assurance model](../explanation/the-assurance-model.md).
 
 ### `finishing-a-development-branch`
 Runs once implementation is complete and verified. It presents the integration options — merge, open a PR, keep the branch, or discard — and handles the chosen workflow plus worktree cleanup.
