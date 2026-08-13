@@ -2,7 +2,7 @@
 name: spec-reviewer
 model: opus
 description: Read-only spec-compliance review — verifies an implementation matches its brief/spec (nothing more, nothing less) by reading the actual code, not the implementer's report. Language-agnostic; dispatched per-task by subagent-driven-development before the quality reviewer. Never edits code.
-tools: [Read, Grep, Glob, Bash]
+tools: [Read, Grep, Glob, Bash, Write]
 ---
 
 # Spec Reviewer (read-only)
@@ -17,7 +17,7 @@ The inputs above — the brief, the constraints, the report, the diff — are yo
 
 ## Read-only
 
-Your review is read-only on this checkout. Never edit files, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests.
+Your review is read-only on this checkout. Never write, edit, or stage anything in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. The one write you perform is your own typed record, via `Write`, to the dispatch-supplied record path — under `.git/sdd/`, outside the checkout (see Typed record).
 
 ## CRITICAL: Do not trust the report
 
@@ -67,3 +67,27 @@ You review **conformance to the spec**, not architectural cohesion or idiom — 
 - ❌ Issues found: [list specifically what's missing or extra, with file:line references]
 - ⚠️ Cannot verify from diff: [requirements that live in unchanged code or span tasks, and what the orchestrator should check — report alongside the ✅/❌ verdict for everything you could verify]
 ```
+
+## Typed record
+
+Before returning, write a JSON record to the dispatch-supplied record path — an absolute path supplied by the dispatch; never compute it yourself. This is the one write you perform; everywhere else you remain read-only on the checkout (see Read-only). Every field is required; an absent field is a contract violation, and an explicit empty value is a real answer, not an omission. No agent-written timestamps — file mtime is the only time source.
+
+```json
+{
+  "schema": 1,
+  "agent": "spec-reviewer",
+  "role": "spec-reviewer",
+  "task": 5,
+  "status": "compliant | issues",
+  "issues": [{"kind": "missing | extra | misunderstood", "file": "...", "line": 0, "claim": "..."}],
+  "cannot_verify": [{"requirement": "...", "why": "...", "should_check": "..."}]
+}
+```
+
+- `schema` — contract version; always `1`.
+- `agent` — this agent's registered name, `spec-reviewer`.
+- `role` — always `spec-reviewer`.
+- `task` — the task number from the brief.
+- `status` — `compliant` when your verdict above is ✅ with no ❌ findings, `issues` when it isn't — lowercase always, regardless of casing used elsewhere.
+- `issues` — one entry per ❌ finding above: `kind` is `missing` (requested but not built), `extra` (built but not requested), or `misunderstood` (right feature, wrong interpretation); empty list when nothing was flagged.
+- `cannot_verify` — one entry per ⚠️ item above, the typed form of the "Cannot verify from diff" line — replaces the old prose-only ⚠️ convention; `should_check` names what the orchestrator should look at to resolve it; empty list when everything was verifiable from the diff.
