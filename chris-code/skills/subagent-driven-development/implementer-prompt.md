@@ -39,10 +39,12 @@ Agent tool:
     2. Write tests (following TDD if the brief says to)
     3. Verify implementation works
     4. Self-review against your embedded checklist
-    5. If you copied ≥5 lines near-verbatim from a sibling site, flag
-       `DUPLICATION-PENDING: <sites>` in your report (hoist instead when the
-       owning file is already in your task's footprint)
-    6. Write your full report to [REPORT_FILE], then return only the summary below
+    5. If you copied ≥5 lines near-verbatim from a sibling site, record the sites
+       under `duplication_pending` in your typed record (hoist instead when the
+       owning file is already in your task's footprint, and record the hoisted
+       symbol under `new_shared_symbols`)
+    6. Write your full report to [REPORT_FILE], write your typed record (see
+       Typed record below) to [RECORD_FILE], then return only the summary below
 
     Work from: [directory]
 
@@ -66,6 +68,52 @@ Agent tool:
     - Files changed
     - Self-review findings (if any)
     - Concerns or issues
+
+    ## Typed record
+
+    Write a JSON record to [RECORD_FILE] before returning — a separate absolute
+    path from the report file, supplied by the dispatch; never compute it
+    yourself. Every field is required; an absent field is a contract violation,
+    and an explicit empty value is a real answer, not an omission. No
+    agent-written timestamps — file mtime is the only time source.
+
+    {
+      "schema": 1,
+      "agent": "general-purpose",
+      "role": "coder",
+      "task": N,
+      "status": "done | done_with_concerns | needs_context | blocked",
+      "changed_files": ["..."],
+      "tests": {"command": "...", "passed": true, "summary": "..."},
+      "new_shared_symbols": [{"symbol": "...", "path": "...", "why": "..."}],
+      "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
+      "concerns": ["..."],
+      "report": "[REPORT_FILE]"
+    }
+
+    - `schema` — contract version; always `1`.
+    - `agent` — the subagent_type this dispatch used (typically `general-purpose`
+      for this fallback template).
+    - `role` — always `coder`.
+    - `task` — task N from the brief.
+    - `status` — the same four statuses as your return summary, but lowercase
+      (`done | done_with_concerns | needs_context | blocked`, matching the
+      block above) — the return summary stays uppercase (`DONE` etc.), the
+      record never is; `open` matches on the lowercase form only.
+    - `changed_files` — every file you touched; required, empty only if you
+      truly touched none.
+    - `tests` — the command you ran, whether it passed, and a one-line
+      summary; if you ran none, write `{"command": "", "passed": false,
+      "summary": "no tests run"}` — `summary` must say so explicitly, since
+      `passed: false` alone reads as a failure, not as "not run."
+    - `new_shared_symbols` — helpers or shapes you hoisted per Job step 5;
+      empty list when you hoisted nothing.
+    - `duplication_pending` — sites you left un-hoisted per Job step 5,
+      replacing the old prose `DUPLICATION-PENDING:` sentinel; empty list
+      when there is none.
+    - `concerns` — anything you'd flag in the prose report; empty list when
+      clean.
+    - `report` — [REPORT_FILE], so the orchestrator can find your reasoning.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
     NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.
