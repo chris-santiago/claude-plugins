@@ -243,8 +243,11 @@ def _split_path_symbol(token: str) -> tuple[str, str] | None:
     return path, symbol
 
 
-def _pointer_from_token(token: str) -> ConsumesPointer:
-    split = _split_path_symbol(token)
+def _pointer_from_token(token: str, split: tuple[str, str] | None) -> ConsumesPointer:
+    """Precondition: split IS _split_path_symbol(token), computed once by
+    the caller's classify step and passed through to avoid a redundant
+    second call. Nothing checks it — pass anything else and raw and
+    path/symbol disagree."""
     if split is not None:
         path, symbol = split
         return ConsumesPointer(raw=token, path=path, symbol=symbol)
@@ -269,8 +272,9 @@ def _extract_backticked_pointers(text: str) -> list[ConsumesPointer]:
         for word in span.split():
             if _is_url(word):
                 continue
-            if "/" in word or _split_path_symbol(word) is not None:
-                pointers.append(_pointer_from_token(word))
+            split = _split_path_symbol(word)
+            if "/" in word or split is not None:
+                pointers.append(_pointer_from_token(word, split))
     return pointers
 
 
@@ -312,8 +316,9 @@ def _extract_bare_pointers(text: str) -> list[ConsumesPointer]:
         token = _unwrap_emphasis(token)
         if not token or _is_url(token):
             continue
-        if _split_path_symbol(token) is not None or _is_file_shaped(token):
-            pointers.append(_pointer_from_token(token))
+        split = _split_path_symbol(token)
+        if split is not None or _is_file_shaped(token):
+            pointers.append(_pointer_from_token(token, split))
     return pointers
 
 
@@ -369,15 +374,10 @@ def _require_spec_for_section_refs(section_refs: list[str], spec_path: str | Non
 def _dedupe_pointers(pointers: list[ConsumesPointer]) -> list[ConsumesPointer]:
     """Collapse pointers naming identical raw text, keeping first-seen
     order — a path mentioned twice in one entry (once bare, once repeated
-    in a second Consumes: bullet, say) produces one failure, not two."""
-    seen: set[str] = set()
-    deduped: list[ConsumesPointer] = []
-    for pointer in pointers:
-        if pointer.raw in seen:
-            continue
-        seen.add(pointer.raw)
-        deduped.append(pointer)
-    return deduped
+    in a second Consumes: bullet, say) produces one failure, not two.
+    path/symbol derive deterministically from raw, so keying by raw loses
+    nothing."""
+    return list({pointer.raw: pointer for pointer in pointers}.values())
 
 
 def _validate_pointers(pointers: list[ConsumesPointer]) -> list[str]:
@@ -444,13 +444,20 @@ def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, 
     return "\n".join(parts).rstrip("\n") + "\n"
 
 
+def _require_existing_file(path_str: str, label: str) -> Path:
+    """The one existence check every file-taking input shares; raises the
+    same UsageError message shape for each of them."""
+    path = Path(path_str)
+    if not path.is_file():
+        raise UsageError(f"no such {label}: {path_str}")
+    return path
+
+
 def run(request: BriefRequest) -> Path:
     """Build and write the brief; return its path. Raises UsageError
     (exit 2) or BriefValidationError (exit 3) on any failure — nothing is
     written until every check passes."""
-    plan_path = Path(request.plan_file)
-    if not plan_path.is_file():
-        raise UsageError(f"no such plan file: {request.plan_file}")
+    plan_path = _require_existing_file(request.plan_file, "plan file")
     plan_text = _read_text(plan_path, error_cls=UsageError, label=f"plan file {request.plan_file}")
     task_entry = extract_task_entry(plan_text, request.task_n)
 
@@ -459,16 +466,14 @@ def run(request: BriefRequest) -> Path:
         raise BriefValidationError(
             "missing/empty --intent: a task brief cannot be produced without a stated intent")
 
-    if request.spec is not None and not Path(request.spec).is_file():
-        raise UsageError(f"no such spec file: {request.spec}")
+    if request.spec is not None:
+        _require_existing_file(request.spec, "spec file")
     validate_consumes(task_entry, request.spec)
 
     constraints = None
     if request.constraints_from is not None:
-        constraints_path = Path(request.constraints_from)
-        if not constraints_path.is_file():
-            raise UsageError(
-                f"no such plan file for --constraints-from: {request.constraints_from}")
+        constraints_path = _require_existing_file(
+            request.constraints_from, "plan file for --constraints-from")
         constraints_text = _read_text(
             constraints_path, error_cls=UsageError,
             label=f"--constraints-from file {request.constraints_from}")

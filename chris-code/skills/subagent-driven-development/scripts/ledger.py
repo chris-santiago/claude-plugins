@@ -58,7 +58,6 @@ __all__ = [
 
 SCHEMA_VERSION = 1
 ENVELOPE_FIELDS = ("schema", "agent", "role", "task")
-VALID_ROLES = frozenset({"coder", "spec-reviewer", "quality-reviewer", "review-lite"})
 
 STATUS_ENUMS = {
     "coder": {"done", "done_with_concerns", "needs_context", "blocked"},
@@ -66,6 +65,10 @@ STATUS_ENUMS = {
     "quality-reviewer": {"approved", "issues"},
     "review-lite": {"clean", "block", "escalate"},
 }
+# Derived, never restated: a role added to STATUS_ENUMS alone (or vice
+# versa) would turn `check`'s corrective RecordError into a raw KeyError
+# at the STATUS_ENUMS[role] lookup below.
+VALID_ROLES = frozenset(STATUS_ENUMS)
 CODER_OPEN_STATUSES = {"blocked", "needs_context"}
 REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
 
@@ -77,12 +80,6 @@ DECISION_LIST_FIELDS = {
     "coder": ("duplication_pending", "new_shared_symbols"),
     "spec-reviewer": ("cannot_verify",),
 }
-
-# Whole-record items (status, malformed) are state, not work items: they
-# clear only when the record is rewritten, never via `resolve` — otherwise
-# a stale resolution could suppress a later, different problem at the same
-# id (spec Sec 6 amended `open` semantics).
-RESOLVABLE_KINDS = {"duplication_pending", "cannot_verify"}
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -195,21 +192,41 @@ def load_records(store_dir: Path) -> list[Record]:
     return [_load_record(path) for path in sorted(store_dir.glob("*.json"))]
 
 
+def _parse_record_file(path: Path) -> dict:
+    """Read, strict-parse, and validate one record file, raising RecordError
+    with the path named. The single pipeline behind both query-time loading
+    and the write-time `check` gate — shared so "passes `check`" and "parses
+    at query time" are structurally the same test, not two copies that
+    happen to agree."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise RecordError(f"cannot read {path}: {e}") from e
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RecordError(f"invalid JSON in {path}: {e}") from e
+    validate_record(data)
+    return data
+
+
 def _load_record(path: Path) -> Record:
     # Every failure mode is caught right here, so one bad file becomes one
     # malformed Record instead of crashing the caller's whole query
     # (per-record isolation — one bad file must never hide its siblings).
     stem = path.stem
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        validate_record(data)
+        data = _parse_record_file(path)
     except Exception as e:
         return Record(stem, ok=False, error=str(e))
     return Record(stem, ok=True, data=data)
 
 
 def load_progress_log(store_dir: Path) -> list[dict]:
-    """Parse progress.jsonl; a malformed line is skipped with a warning.
+    """Parse progress.jsonl; a malformed or unreadable line raises
+    RecordError. Loud failure, not skip-with-warning (user ruling
+    2026-08-27): this log feeds resolve's already-resolved gate, so a
+    silently dropped resolution line would silently re-open an item.
     store_dir is required (not defaulted), same as load_records/list_shapes/
     compute_open_items, so it's always sourced from an explicit store."""
     path = store_dir / PROGRESS_FILENAME
@@ -218,8 +235,7 @@ def load_progress_log(store_dir: Path) -> list[dict]:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        print(f"WARNING: skipping unreadable {PROGRESS_FILENAME}: {e}", file=sys.stderr)
-        return []
+        raise RecordError(f"cannot read {path}: {e}") from e
     entries = []
     for lineno, line in enumerate(text.splitlines(), 1):
         line = line.strip()
@@ -228,13 +244,9 @@ def load_progress_log(store_dir: Path) -> list[dict]:
         try:
             parsed = json.loads(line)
         except json.JSONDecodeError as e:
-            print(f"WARNING: skipping malformed {PROGRESS_FILENAME} line {lineno}: {e}",
-                  file=sys.stderr)
-            continue
+            raise RecordError(f"malformed {path} line {lineno}: {e}") from e
         if not isinstance(parsed, dict):
-            print(f"WARNING: skipping malformed {PROGRESS_FILENAME} line {lineno}: "
-                  "not a JSON object", file=sys.stderr)
-            continue
+            raise RecordError(f"malformed {path} line {lineno}: not a JSON object")
         entries.append(parsed)
     return entries
 
@@ -320,6 +332,14 @@ _FIELD_DESCRIBERS = {
     "cannot_verify": _describe_cannot_verify,
 }
 
+# The resolvable kinds are exactly the fields with a describer — derived,
+# never restated, so a kind cannot exist in one table and not the other.
+# Whole-record items (status, malformed) are state, not work items: they
+# clear only when the record is rewritten, never via `resolve` — otherwise
+# a stale resolution could suppress a later, different problem at the same
+# id (spec Sec 6 amended `open` semantics).
+RESOLVABLE_KINDS = frozenset(_FIELD_DESCRIBERS)
+
 
 def _build_open_items(rec: Record) -> list[OpenItem]:
     role, status = rec.data["role"], rec.data["status"]
@@ -341,9 +361,9 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
     # was never validated, so it must never drive an open item either.
     seen_ids: set[str] = set()
     for field_name in DECISION_LIST_FIELDS.get(role, ()):
-        if field_name not in RESOLVABLE_KINDS:
+        describe = _FIELD_DESCRIBERS.get(field_name)
+        if describe is None:  # shape-producing field (new_shared_symbols), not an open item
             continue
-        describe = _FIELD_DESCRIBERS[field_name]
         for entry in rec.data.get(field_name, []):
             digest = _entry_digest(entry)
             item_id = f"{rec.stem}#{field_name}[{digest}]"
@@ -431,16 +451,8 @@ def completed_task_ids(log: list[dict]) -> list[str]:
     "what's done" — post-compaction recovery queries this instead of
     pattern-matching a prose note in rendered markdown (spec Sec 6,
     amended 2026-08-27)."""
-    seen: list[str] = []
-    seen_set: set[str] = set()
-    for entry in log:
-        if entry.get("type") != "complete":
-            continue
-        task_id = str(entry.get("task"))
-        if task_id not in seen_set:
-            seen_set.add(task_id)
-            seen.append(task_id)
-    return seen
+    return list(dict.fromkeys(
+        str(entry.get("task")) for entry in log if entry.get("type") == "complete"))
 
 
 def cmd_read(store_dir: Path) -> None:
@@ -548,15 +560,7 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
     so a record that passes `check` cannot later render as malformed at
     query time. Silent on success."""
     path = _resolve_check_path(record_path, store)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        raise RecordError(f"cannot read {path}: {e}") from e
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise RecordError(f"invalid JSON in {path}: {e}") from e
-    validate_record(data)
+    data = _parse_record_file(path)
 
     rec = Record(stem=path.stem, ok=True, data=data)
     try:
@@ -644,6 +648,10 @@ def main() -> None:
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":
             cmd_clear(store_dir)
+        else:
+            # A subcommand registered in build_parser but not wired here
+            # must not exit 0 having done nothing.
+            raise RuntimeError(f"unhandled command: {args.command}")
     except (RuntimeError, RecordError) as e:
         sys.exit(f"ERROR: {e}")
 

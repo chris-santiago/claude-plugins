@@ -496,16 +496,29 @@ class TestProgressLog(LedgerTestCase):
         self.assertEqual(json.loads(lines[0])["note"], "first")
         self.assertEqual(json.loads(lines[1])["note"], "second")
 
-    def test_non_object_progress_line_skipped_with_warning(self):
+    def test_non_object_progress_line_raises_naming_the_line(self):
+        # Loud failure, not skip-with-warning (user ruling 2026-08-27): this
+        # log feeds resolve's already-resolved gate, so a silently dropped
+        # resolution line would silently re-open an item.
         self.store.mkdir(exist_ok=True)
         progress = self.store / ledger.PROGRESS_FILENAME
         progress.write_text(
             '{"type": "progress", "task": 1, "note": "ok"}\n["not", "an", "object"]\n',
             encoding="utf-8")
-        with mock.patch("sys.stderr"):
-            log = ledger.load_progress_log(self.store)  # must not raise
-        self.assertEqual(len(log), 1)
-        self.assertEqual(log[0]["note"], "ok")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.load_progress_log(self.store)
+        self.assertIn("line 2", str(ctx.exception))
+        self.assertIn("not a JSON object", str(ctx.exception))
+
+    def test_unparseable_progress_line_raises_naming_the_line(self):
+        self.store.mkdir(exist_ok=True)
+        progress = self.store / ledger.PROGRESS_FILENAME
+        progress.write_text(
+            '{"type": "progress", "task": 1, "note": "ok"}\nnot json at all\n',
+            encoding="utf-8")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.load_progress_log(self.store)
+        self.assertIn("line 2", str(ctx.exception))
 
     def test_resolutions_from_log_ignores_non_string_resolves(self):
         log = [{"type": "resolution", "resolves": ["not", "a", "string"]}]
@@ -823,6 +836,39 @@ class TestEnsureStore(LedgerTestCase):
         (store / ".gitignore").write_text("!keep-me\n", encoding="utf-8")
         ledger.ensure_store(store)
         self.assertEqual((store / ".gitignore").read_text(encoding="utf-8"), "!keep-me\n")
+
+
+# --- constant-table consistency ---
+
+class TestTableConsistency(unittest.TestCase):
+    """The role/field/kind tables encode one contract across several
+    module-level constants; these pin the cross-table relationships so a
+    future enum edit that breaks one silently is caught here, not as a
+    KeyError inside `check`."""
+
+    def test_decision_list_fields_name_only_valid_roles(self):
+        self.assertLessEqual(set(ledger.DECISION_LIST_FIELDS), ledger.VALID_ROLES)
+
+    def test_every_resolvable_kind_is_reachable_from_some_role(self):
+        # A resolvable kind no DECISION_LIST_FIELDS entry names could never
+        # produce an open item, so `resolve` could never match it.
+        reachable = {f for fields in ledger.DECISION_LIST_FIELDS.values() for f in fields}
+        self.assertLessEqual(ledger.RESOLVABLE_KINDS, reachable)
+
+    def test_open_status_sets_are_subsets_of_their_role_enums(self):
+        self.assertLessEqual(ledger.CODER_OPEN_STATUSES, ledger.STATUS_ENUMS["coder"])
+        reviewer_statuses = set()
+        for role, statuses in ledger.STATUS_ENUMS.items():
+            if role != "coder":
+                reviewer_statuses |= statuses
+        self.assertLessEqual(ledger.REVIEWER_OPEN_STATUSES, reviewer_statuses)
+
+    def test_derived_tables_track_their_sources(self):
+        # Tautological today (both are derived), but pins the derivation
+        # itself: reverting either to a hand-written literal that then
+        # drifts fails here first.
+        self.assertEqual(ledger.VALID_ROLES, frozenset(ledger.STATUS_ENUMS))
+        self.assertEqual(ledger.RESOLVABLE_KINDS, frozenset(ledger._FIELD_DESCRIBERS))
 
 
 # --- CLI end-to-end (subprocess) ---
