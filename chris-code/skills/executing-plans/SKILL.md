@@ -19,7 +19,7 @@ Load plan, review critically, execute all tasks, report when complete.
 1. Read plan file
 2. Review critically - identify any questions or concerns about the plan
 3. If concerns: Raise them with your human partner before starting
-4. If no concerns: check the progress ledger (`subagent-driven-development/scripts/progress read`) — tasks listed complete are DONE, so rebuild TodoWrite from the ledger and resume at the first unlisted task; otherwise create TodoWrite and proceed
+4. If no concerns: check the progress ledger (`subagent-driven-development/scripts/ledger.py read`) — tasks listed complete are DONE, so rebuild TodoWrite from the ledger and resume at the first unlisted task; otherwise create TodoWrite and proceed
 
 ### Step 2: Execute Tasks
 
@@ -28,7 +28,7 @@ For each task:
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
 4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
-5. Mark as completed in TodoWrite, and append to the ledger: `subagent-driven-development/scripts/progress append "Task N: complete (commits <base7>..<head7>, review clean)"`
+5. Mark as completed in TodoWrite, and append to the ledger: `subagent-driven-development/scripts/ledger.py append --type progress --task N --note "complete (commits <base7>..<head7>, review clean)"`
 
 ### Step 3: Commit Gate
 

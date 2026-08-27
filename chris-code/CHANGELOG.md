@@ -47,7 +47,7 @@ Backported v6.0.0's execution mechanics, added the read-only senior review gate,
 ### Added
 - **The determined-change engine** `coherent-change` (research → defend the most coherent implementation → implement → lite-review, producing a defended choice) and its bug specialization `remediating-issues`.
 - **Senior read-only design-reviewer agents** (`python-design-reviewer`, `rust-design-reviewer`) for the verification gate, registered in the manifest.
-- **Execution mechanics (v6.0.0 backports)** in `subagent-driven-development`: file handoffs, pre-flight plan review, a durable progress ledger, and reviewer-integrity rules, with `task-brief` / `review-package` / `progress` scripts.
+- **Execution mechanics (v6.0.0 backports)** in `subagent-driven-development`: file handoffs, pre-flight plan review, a durable progress ledger, and reviewer-integrity rules, with `task-brief` / `review-package` / `progress` scripts (`task-brief` and `progress` since renamed to `task_brief.py` and `ledger.py`).
 - The visual decks (overview, from-superpowers).
 
 ### Changed

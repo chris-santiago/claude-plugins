@@ -156,7 +156,7 @@ git branch -D <feature-branch>
 
 **Only runs for Options 1 and 4.** Options 2 and 3 always preserve the worktree.
 
-First, remove the SDD run artifacts (task briefs, reports, review diffs, progress ledger):
+First, remove the SDD run artifacts (task briefs, reports, review diffs, ledger records and progress log):
 
 ```bash
 rm -rf "$(git rev-parse --git-path sdd)"   # .git/sdd, or .git/worktrees/<name>/sdd in a worktree
