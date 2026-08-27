@@ -551,6 +551,10 @@ class TestRunEndToEnd(TaskBriefTestCase):
         # ledger.get_store_dir resolves the store path (e.g. through macOS's
         # /var -> /private/var symlink), so compare against a resolved path.
         self.assertEqual(out_path, self.store.resolve() / "task-2-brief.md")
+        # the default path routes creation through ledger.ensure_store, so a
+        # store born from a brief write is still self-ignoring.
+        self.assertEqual(
+            (self.store.resolve() / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
     def test_explicit_output_path_honored(self):
         consumed = self.tmp / "consumed.py"

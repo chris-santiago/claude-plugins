@@ -541,6 +541,9 @@ class TestCompletion(LedgerTestCase):
         ledger.cmd_append(self.store, "complete", 5, "shipped")
         log = ledger.load_progress_log(self.store)
         self.assertEqual(log, [{"type": "complete", "task": 5, "note": "shipped"}])
+        # append routes creation through ensure_store, so a store born from
+        # an append (not store-dir) is still self-ignoring.
+        self.assertEqual((self.store / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
     def test_cmd_completed_prints_one_task_id_per_line(self):
         ledger.cmd_append(self.store, "complete", 2, "shipped")
@@ -586,6 +589,9 @@ class TestCmdResolve(LedgerTestCase):
         ledger.cmd_resolve(self.store, _dup_id("task-1-python-coder", entry), "note")
         log = ledger.load_progress_log(self.store)
         self.assertEqual(len(log), 1)
+        # resolve routes creation through ensure_store too, so it seeds the
+        # self-ignoring .gitignore on a store that lacks one.
+        self.assertEqual((self.store / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
     def test_unknown_id_raises_naming_currently_open_resolvable_ids(self):
         # A resolve matching nothing is not a silent no-op.

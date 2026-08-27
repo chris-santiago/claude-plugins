@@ -29,7 +29,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR
 Importable API: see __all__ below — the module's public query/validate/
 render surface (data classes, `get_store_dir`, the `load_*`/`compute_*`/
 `list_*`/`render_*` functions). `task_brief.py` imports a subset of it
-(`get_store_dir`, `load_records`, `list_shapes`, `render_shapes`); the CLI
+(`get_store_dir`, `ensure_store`, `load_records`, `list_shapes`,
+`render_shapes`); the CLI
 subcommand handlers (`cmd_*`), `build_parser`, and `main` are plumbing
 invoked only through this script's own `main()` and are not part of the
 importable surface. Functions raise instead of calling sys.exit, so
@@ -594,7 +595,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("completed", parents=[store_parent],
                     help="list completed task ids, one per line")
     sub.add_parser("store-dir", parents=[store_parent],
-                    help="print the resolved absolute store directory")
+                    help="create the store if needed (seeding a self-ignoring "
+                         ".gitignore) and print its resolved absolute path")
 
     p_append = sub.add_parser("append", parents=[store_parent], help="append a progress note")
     p_append.add_argument("--type", required=True, choices=["progress", "complete"])
