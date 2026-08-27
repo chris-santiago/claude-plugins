@@ -196,7 +196,7 @@ flowchart TB
 
 Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, these keep `subagent-driven-development`'s orchestrator context lean and the run recoverable:
 
-- **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.git/sdd/` (per-worktree, uncommitted) via `scripts/task_brief.py`, `scripts/review-package`, and `scripts/ledger.py`, with implementer and reviewer reports written as typed records validated against a shared contract; dispatches pass file paths, never pasted text or diffs.
+- **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.sdd/` at the repo toplevel (per-worktree, self-gitignored) via `scripts/task_brief.py`, `scripts/review-package`, and `scripts/ledger.py`, with implementer and reviewer reports written as typed records validated against a shared contract; dispatches pass file paths, never pasted text or diffs.
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
 - **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `scripts/ledger.py append`; a controller that loses context after compaction resumes from `scripts/ledger.py read` instead of re-running finished work. TodoWrite stays the live view.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.

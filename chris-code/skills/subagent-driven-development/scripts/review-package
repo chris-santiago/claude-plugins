@@ -5,7 +5,8 @@
 # BASE (never HEAD~1) keeps multi-commit tasks intact.
 #
 # Usage: review-package BASE HEAD [OUTFILE]
-# Default OUTFILE: <git-sdd>/review-<base7>..<head7>.diff
+# Default OUTFILE: <store>/review-<base7>..<head7>.diff, where <store> is
+# resolved by ledger.py store-dir — the single authority for the store path.
 set -euo pipefail
 
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
@@ -21,9 +22,7 @@ git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&
 if [ $# -eq 3 ]; then
   out=$3
 else
-  dir=$(git rev-parse --git-path sdd)
-  mkdir -p "$dir"
-  dir=$(cd "$dir" && pwd)
+  dir=$(python3 "$(dirname "$0")/ledger.py" store-dir)
   out="$dir/review-$(git rev-parse --short "$base")..$(git rev-parse --short "$head").diff"
 fi
 

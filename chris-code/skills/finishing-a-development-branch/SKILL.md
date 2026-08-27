@@ -159,10 +159,10 @@ git branch -D <feature-branch>
 First, remove the SDD run artifacts (task briefs, reports, review diffs, ledger records and progress log):
 
 ```bash
-rm -rf "$(git rev-parse --git-path sdd)"   # .git/sdd, or .git/worktrees/<name>/sdd in a worktree
+rm -rf "$(git rev-parse --show-toplevel)/.sdd"   # per-worktree: toplevel resolves to this worktree's root
 ```
 
-If the session resolved its store with a `--store` override directory (e.g. a worktree-isolated session barred from writing under the shared checkout's `.git`), remove that directory too — it holds the same records, progress log, briefs, and reports, and the disposable-store invariant applies to it exactly as it does to the default location.
+If the session resolved its store with a `--store` override directory, remove that directory too — it holds the same records, progress log, briefs, and reports, and the disposable-store invariant applies to it exactly as it does to the default location.
 
 In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case.
 

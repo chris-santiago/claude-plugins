@@ -488,7 +488,7 @@ def run(request: BriefRequest) -> Path:
             out_path = Path(request.output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            store_dir.mkdir(parents=True, exist_ok=True)
+            ledger.ensure_store(store_dir)
             out_path = store_dir / f"task-{request.task_n}-brief.md"
         out_path.write_text(brief, encoding="utf-8")
     except OSError as e:
@@ -516,7 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="plan file to pull the verbatim Constraints section from")
     parser.add_argument(
         "--store", default=None,
-        help="override the ledger store directory (default: git rev-parse --git-path sdd)")
+        help="override the ledger store directory (default: .sdd/ at the repo toplevel)")
     parser.add_argument(
         "-o", "--output", default=None,
         help="output path (default: <store>/task-<N>-brief.md)")

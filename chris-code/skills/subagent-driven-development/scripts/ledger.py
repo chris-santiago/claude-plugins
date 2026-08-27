@@ -7,8 +7,11 @@ dispatch-supplied path (task-<N>-<agent-name>.json, or
 final-<agent-name>.json for the whole-change gate); this script derives
 queryable views over those files on the fly — no fold/sync step, no drift.
 
-Store: $(git rev-parse --git-path sdd)/ by default, or --store DIR.
-progress.jsonl in that same dir is append-only, orchestrator-only.
+Store: <repo toplevel>/.sdd/ by default, or --store DIR. The store is
+uncommitted working-tree scratch: creation seeds a `.gitignore` containing
+`*` inside it, so git never sees the contents no matter what the repo's
+own ignore rules say. progress.jsonl in that same dir is append-only,
+orchestrator-only.
 
 Philosophy (spec Sec 4/7, amended 2026-08-27): failures are loud, not
 defensively rendered away. `check` is the write-time gate — an agent runs
@@ -46,7 +49,7 @@ from pathlib import Path
 
 __all__ = [
     "RecordError", "Record", "OpenItem", "Shape",
-    "get_store_dir", "validate_record",
+    "get_store_dir", "ensure_store", "validate_record",
     "load_records", "load_progress_log", "resolutions_from_log",
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
     "completed_task_ids",
@@ -112,17 +115,32 @@ class Shape:
 
 
 def get_store_dir(override: str | None = None) -> Path:
-    """--store override, else `git rev-parse --git-path sdd`. Does not create it."""
+    """--store override, else `.sdd/` at the repo toplevel. Does not create it.
+
+    `git rev-parse --show-toplevel` resolves per-worktree, so each linked
+    worktree gets its own store, and the path is in the working tree —
+    never under `.git/`, whose contents tooling treats as off-limits."""
     if override is not None:
         return Path(override).resolve()
     try:
         out = subprocess.check_output(
-            ["git", "rev-parse", "--git-path", "sdd"],
+            ["git", "rev-parse", "--show-toplevel"],
             stderr=subprocess.DEVNULL,
         ).decode().strip()
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         raise RuntimeError("not inside a git repository; pass --store DIR") from e
-    return Path(out).resolve()
+    return (Path(out) / ".sdd").resolve()
+
+
+def ensure_store(store_dir: Path) -> Path:
+    """Create the store directory and seed a self-ignoring `.gitignore`
+    (`*`) so its contents stay untracked without touching the repo's own
+    ignore rules. Idempotent; never overwrites an existing `.gitignore`."""
+    store_dir.mkdir(parents=True, exist_ok=True)
+    gitignore = store_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*\n", encoding="utf-8")
+    return store_dir
 
 
 def validate_record(data: object) -> None:
@@ -449,11 +467,15 @@ def cmd_completed(store_dir: Path) -> None:
 
 
 def cmd_store_dir(store_dir: Path) -> None:
-    print(store_dir)
+    """Print the resolved store, creating and gitignore-seeding it first:
+    store-dir is the session's first ledger call (per SKILL.md), and the
+    agents that write records afterward use the Write tool directly — so
+    this is the one guaranteed spot to seed the ignore file."""
+    print(ensure_store(store_dir))
 
 
 def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> None:
-    store_dir.mkdir(parents=True, exist_ok=True)
+    ensure_store(store_dir)
     _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": entry_type, "task": task, "note": note})
 
 
@@ -485,7 +507,7 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
                          "they clear when the record is rewritten")
         raise RecordError(message)
 
-    store_dir.mkdir(parents=True, exist_ok=True)
+    ensure_store(store_dir)
     _append_jsonl(store_dir / PROGRESS_FILENAME,
                   {"type": "resolution", "resolves": resolve_id, "note": note})
 
@@ -560,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
     store_parent = argparse.ArgumentParser(add_help=False)
     store_parent.add_argument(
         "--store", default=None,
-        help="override the store directory (default: git rev-parse --git-path sdd)")
+        help="override the store directory (default: .sdd/ at the repo toplevel)")
 
     parser = argparse.ArgumentParser(
         description="Typed record store for subagent-driven-development.")

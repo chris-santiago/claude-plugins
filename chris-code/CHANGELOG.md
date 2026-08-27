@@ -9,10 +9,12 @@ This history was reconstructed retroactively from git (development began 2026-05
 ## [Unreleased]
 
 ### Added
+- **Typed handoff layer** in `subagent-driven-development`: the nine per-task-loop agents write JSON records validated against a shared contract (`scripts/ledger.py` — `check` as the agent's own write-time gate, `open`/`resolve` with content-derived ids, `shapes`, typed completion), and `scripts/task_brief.py` gates briefs on an intent statement and validates `Consumes:` pointers. Backed by a stdlib-only test suite under `chris-code/tests/`.
 - `coherent-change` **batch mode** — a set of end-state-framed changes (audit / review findings) runs as one consolidated research pass → a defended choice per change → **one** `lean-spec` → **one** `lean-plan` → SDD. `coherent-change` is now the universal *application* engine.
 - A **workflow catalog** in the docs (the How-to landing) — a graph, *when to use it*, and *how to invoke* for every canonical route — plus new recipes: build a feature, debug an unknown cause, remediate in batch.
 
 ### Changed
+- **The SDD store moved out of `.git/`**: `ledger.py store-dir` now resolves to `.sdd/` at the repo toplevel (per-worktree via `--show-toplevel`) and seeds a `.gitignore` containing `*` inside it, so the store ignores itself with no edit to the repo's ignore rules. `review-package`'s default outfile now routes through `store-dir` instead of deriving its own path.
 - `coherent-change` now **sizes the change at the approval checkpoint** and recommends an execution route: a single coherent edit builds inline (as before); a major / multi-task change routes the defended choice to planned execution (`lean-spec` → `lean-plan` → `subagent-driven-development`) instead of being built in one shot. Closes the gap where a directly-invoked major change had no path into the planned-execution workflow.
 - **Discovery skills now route to remediation.** `code-archaeology`, `bug-hunt`, and `technical-review` terminate at their artifact and **offer** batch remediation (bug-type → `remediating-issues`, structural → `coherent-change` batch) or defer — closing the previously-manual discovery→remediation seam.
 - **`python-review` / `rust-review` no longer apply patches.** They stay interactive discovery and route their proposed end-states through `coherent-change`, which finds the method and runs the close.

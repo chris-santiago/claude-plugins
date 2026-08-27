@@ -566,6 +566,16 @@ class TestCmdStoreDir(LedgerTestCase):
             ledger.cmd_store_dir(self.store)
         self.assertEqual(buf.getvalue().strip(), str(self.store))
 
+    def test_creates_the_store_and_seeds_its_gitignore(self):
+        # store-dir is the session's first ledger call, and record-writing
+        # agents use the Write tool afterward — so this is the one
+        # guaranteed spot to seed the self-ignoring .gitignore.
+        store = self.store / "fresh"
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_store_dir(store)
+        self.assertTrue(store.is_dir())
+        self.assertEqual((store / ".gitignore").read_text(encoding="utf-8"), "*\n")
+
 
 # --- resolve (write path) ---
 
@@ -773,12 +783,40 @@ class TestGetStoreDir(unittest.TestCase):
         check_output.assert_not_called()
         self.assertEqual(result, Path("/some/explicit/dir").resolve())
 
+    def test_default_is_dot_sdd_at_repo_toplevel(self):
+        # --show-toplevel resolves per-worktree, so each linked worktree
+        # gets its own in-tree store; the derivation must never touch
+        # --git-path (paths under .git/ are off-limits to tooling).
+        with mock.patch("subprocess.check_output",
+                        return_value=b"/repo/top\n") as check_output:
+            result = ledger.get_store_dir()
+        self.assertIn("--show-toplevel", check_output.call_args[0][0])
+        self.assertEqual(result, (Path("/repo/top") / ".sdd").resolve())
+
     def test_no_override_outside_git_raises_runtime_error(self):
         # Library entry points raise instead of calling sys.exit, so
         # task_brief.py (or a test) can catch this itself.
         with mock.patch("subprocess.check_output", side_effect=FileNotFoundError):
             with self.assertRaises(RuntimeError):
                 ledger.get_store_dir()
+
+
+# --- ensure_store ---
+
+class TestEnsureStore(LedgerTestCase):
+    def test_creates_directory_and_self_ignoring_gitignore(self):
+        store = self.store / "nested" / "sdd"
+        result = ledger.ensure_store(store)
+        self.assertEqual(result, store)
+        self.assertTrue(store.is_dir())
+        self.assertEqual((store / ".gitignore").read_text(encoding="utf-8"), "*\n")
+
+    def test_never_overwrites_an_existing_gitignore(self):
+        store = self.store / "sdd"
+        store.mkdir()
+        (store / ".gitignore").write_text("!keep-me\n", encoding="utf-8")
+        ledger.ensure_store(store)
+        self.assertEqual((store / ".gitignore").read_text(encoding="utf-8"), "!keep-me\n")
 
 
 # --- CLI end-to-end (subprocess) ---
