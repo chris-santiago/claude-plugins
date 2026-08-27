@@ -35,8 +35,8 @@ For each task:
 Before each commit (end of plan or mid-plan commit points):
 
 1. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
-2. **Dispatch** all matching agents against the staged diff. Pass `cycle: N` — `1` on the first dispatch for this commit, incremented each time you re-dispatch after a fix. At `cycle >= 3` the agent escalates to break a stuck loop; omit the counter and that backstop never fires.
-3. If any agent returns **block**: fix the issue and re-dispatch (incrementing `cycle`) before committing
+2. **Dispatch** all matching agents against the staged diff, supplying each a record path (`$STORE/task-<N>-<agent-name>.json`, per subagent-driven-development's File Handoffs). Never pass a `cycle` value: the agent reads its own prior record at that path and self-derives `cycle` as prior + 1 (else 1), escalating at `cycle >= 3` with findings remaining — the backstop fires on its own as long as the record path stays stable across re-dispatches.
+3. If any agent returns **block**: fix the issue and re-dispatch at the same record path before committing
 4. If any agent returns **escalate**: stop and surface to the user
 
 Only dispatch when there are staged changes to review.
