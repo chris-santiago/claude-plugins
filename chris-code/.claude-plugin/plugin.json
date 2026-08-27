@@ -17,6 +17,7 @@
     "./agents/rust-design-reviewer.md",
     "./agents/spec-reviewer.md",
     "./agents/intent-reviewer.md",
-    "./agents/mutation-tester.md"
+    "./agents/mutation-tester.md",
+    "./agents/claim-checker.md"
   ]
 }

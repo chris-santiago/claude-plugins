@@ -62,7 +62,7 @@ It routes every non-trivial change through **one pipeline** instead of ad-hoc ch
 
 ![w:880](assets/pipeline.svg)
 
-**25 skills** and **14 agents**, most auto-dispatched — you describe the work, not the tool.
+**25 skills** and **15 agents**, most auto-dispatched — you describe the work, not the tool.
 
 ---
 
@@ -178,9 +178,9 @@ Most of these fire automatically: you describe the work, the pipeline picks the 
 
 ---
 
-## One coder, eleven checkers
+## One coder, twelve checkers
 
-The 14 agents split sharply between writing code and checking it — and the split *is* the philosophy.
+The 15 agents split sharply between writing code and checking it — and the split *is* the philosophy.
 
 ![w:840](assets/agent_ratio.svg)
 

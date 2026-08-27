@@ -262,7 +262,7 @@ Where muscle memory will mislead you. Framed before → after:
 
 ## The net
 
-chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 11 new skills and a 14-agent layer.
+chris-code is a **true superset**: every superpowers skill is present (one renamed, one split), plus 11 new skills and a 15-agent layer.
 
 **Same spine.** Leaner artifacts, mechanical dispatch, harder gates.
 

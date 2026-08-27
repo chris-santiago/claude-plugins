@@ -572,17 +572,17 @@
 <section id="agents">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">The 14 agents · where the weight goes</p>
-      <h2>For every agent that writes code, nearly four exist only to check it.</h2>
-      <p>Fourteen dedicated agents auto-dispatch by file type. Three are coders; the other eleven test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
+      <p class="eyebrow">The 15 agents · where the weight goes</p>
+      <h2>For every agent that writes code, four exist only to check it.</h2>
+      <p>Fifteen dedicated agents auto-dispatch by file type. Three are coders; the other twelve test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
     </div>
     <div class="ratio reveal" style="margin-bottom:34px">
       <div class="ratio-viz">
         <div class="viz-row"><span class="n" style="color:var(--build)">3</span><span class="lab">coders — write the change</span></div>
-        <div class="viz-row"><span class="n" style="color:var(--assure)">11</span><span class="lab">reviewers, verifiers &amp; test-writers — check it</span></div>
+        <div class="viz-row"><span class="n" style="color:var(--assure)">12</span><span class="lab">reviewers, verifiers &amp; test-writers — check it</span></div>
         <div class="squares" aria-hidden="true">
           <div class="sq build"></div><div class="sq build"></div><div class="sq build"></div>
-          <div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div>
+          <div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div><div class="sq assure"></div>
         </div>
         <div class="viz-legend"><span><i class="dot" style="background:var(--build)"></i> build</span><span><i class="dot" style="background:var(--assure)"></i> assure</span></div>
       </div>
@@ -590,7 +590,7 @@
         <h3>The ratio is the philosophy.</h3>
         <p>A free-form assistant is all author and no auditor. chris-code inverts that: writing the code is the small part; proving it correct is the large one.</p>
         <p>It shows up in skills too — of 25, <strong style="color:var(--ink)">13 are testing, review, or debugging</strong> and 9 are building.</p>
-        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer · 1 mutation gate</p>
+        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer · 1 mutation gate · 1 claim-checker</p>
       </div>
     </div>
     <div class="agent-cols reveal">
@@ -601,6 +601,7 @@
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
       <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles one decidable claim by quoting the code; never judges, never writes.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
     </div>
   </div>
 </section>
@@ -627,7 +628,7 @@
         <p class="who">chris-code</p>
         <h3>Scoped agents that carry their own mandate</h3>
         <ul>
-          <li>Thirteen <b>named agents</b> auto-dispatch by file extension and project dependencies — <span class="mono">pytorch-coder</span> beats <span class="mono">python-coder</span> in a torch repo; all matching reviewers fire.</li>
+          <li>Fifteen <b>named agents</b> auto-dispatch by file extension and project dependencies — <span class="mono">pytorch-coder</span> beats <span class="mono">python-coder</span> in a torch repo; all matching reviewers fire.</li>
           <li>Each agent's <b>system prompt already carries the quality bar</b> — coders internalize the review principles so code passes first time; reviewers enforce cohesion, idiom, and API design by role.</li>
           <li>Quality is a <b>property of who runs the task</b>, not of whether the orchestrator thought to request it. It can't be forgotten.</li>
         </ul>

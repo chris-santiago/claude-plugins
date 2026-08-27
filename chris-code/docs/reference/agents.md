@@ -1,6 +1,6 @@
 # Agents
 
-chris-code ships 14 dedicated agents — the layer superpowers doesn't have. They auto-dispatch by file type and role, so you rarely pick one by hand. This page covers each agent and the disciplines they share.
+chris-code ships 15 dedicated agents — the layer superpowers doesn't have. They auto-dispatch by file type and role, so you rarely pick one by hand. This page covers each agent and the disciplines they share.
 
 ## Typed records
 
@@ -135,5 +135,17 @@ The mutation step of `verification-before-completion`, and a direct on-demand to
 - **On-demand mode**: dispatched directly against a user-designated area, always advisory — a report of breaks the tests missed, no gating verdict.
 
 Because it breaks committed state, the gate assumes the branch work is committed (the same assumption the diff-based design and intent gates make). A non-green baseline or a scope with nothing to mutate is a non-blocking skip.
+
+## Grounding agent
+
+Dispatched by `subagent-driven-development` to ground a judgment-shaped review finding, or to resolve a spec-reviewer `cannot_verify` item at repo scope, without the orchestrator reading the changed code itself. It writes no record — its inline answer is quotation, not a verdict, so it sits outside the typed-record roster deliberately.
+
+| Agent | Model | Scope | Role |
+|-------|-------|-------|------|
+| `claim-checker` | haiku | any (read-only) | Answers one decidable claim and quotes the lines that settle it |
+
+It returns `holds`, `does-not-hold`, or `not-decidable-by-reading`, always with 3 to 10 verbatim lines. Evidence is mandatory: a bare verdict word would be another laundering channel, which is the failure the agent exists to close. It forms no opinion about quality, correctness, or design, never suggests a fix, and never rates severity, so grounding informs how a finding is acted on without ever overturning it.
+
+Its answer terminates the chain because it is quotation rather than conclusion, and raw evidence needs no grounding of its own. It is also the only agent whose read-only status is enforced rather than promised: its grant is `Read`, `Grep`, `Glob`, with no `Bash`, so unlike every other review agent it genuinely cannot write.
 
 See [Scope dispatch & models](scope-dispatch.md) for how exclusive vs. additive vs. explicit dispatch resolves.

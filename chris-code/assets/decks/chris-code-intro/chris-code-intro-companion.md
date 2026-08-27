@@ -36,7 +36,7 @@ This is the map for the whole talk. Every non-trivial change runs the same path:
 
 Point at the orange arc under the figure: the intent ledger. It's frozen in your words at the very first step and re-checked against the actually-shipped behavior at the verify step. Intent bookends the whole pipeline. That arc is the single most important idea on the slide, so don't rush past it — it's what makes the difference between "the code matches the spec" and "the system does what you asked."
 
-Close on scale: 25 skills, 14 agents, mostly auto-dispatched. The user rarely names a tool; they describe the work and the routing is mechanical.
+Close on scale: 25 skills, 15 agents, mostly auto-dispatched. The user rarely names a tool; they describe the work and the routing is mechanical.
 
 **Details not on the slide**
 
@@ -191,11 +191,11 @@ Then land the quiet thesis on the figure's footer: even at the skill layer, thir
 
 ---
 
-## Slide 14 — One coder, eleven checkers
+## Slide 14 — One coder, twelve checkers
 
-This is the slide that makes the breadth *mean* something. Fourteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, eleven check it. The row of squares makes it visceral; three blue, eleven amber.
+This is the slide that makes the breadth *mean* something. Fifteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, twelve check it. The row of squares makes it visceral; three blue, twelve amber.
 
-Walk the roles so the eleven isn't abstract: three coders (Python, PyTorch, Rust); three quality reviewers that check principle-adherence and bugs after spec compliance passes; two commit-lite gates for fast idiom-and-lint checks; two senior design reviewers at the final gate; the two-agent conformance pair (spec and intent); one adversarial test-writer; and one mutation-tester that mutates changed lines in an isolated worktree to expose tests too weak to detect a change. For every agent that authors a change, more than three exist purely to verify it. That ratio *is* the philosophy — a free-form assistant is all author and no auditor, and chris-code deliberately inverts that.
+Walk the roles so the twelve isn't abstract: three coders (Python, PyTorch, Rust); three quality reviewers that check principle-adherence and bugs after spec compliance passes; two commit-lite gates for fast idiom-and-lint checks; two senior design reviewers at the final gate; the two-agent conformance pair (spec and intent); one adversarial test-writer; one mutation-tester that mutates changed lines in an isolated worktree to expose tests too weak to detect a change; and one claim-checker that grounds a review finding by quoting the code, so verdicts stop being taken on faith. For every agent that authors a change, four exist purely to verify it. That ratio *is* the philosophy — a free-form assistant is all author and no auditor, and chris-code deliberately inverts that.
 
 Note the dispatch mechanic in passing, because the next-but-one slide develops it: every one of these is scope-matched by file type, so you never pick an agent by hand.
 
@@ -228,7 +228,7 @@ chris-code inverts the burden. Each agent is a **named, scoped role whose system
 **Details not on the slide**
 
 - Concrete dispatch example: in a PyTorch repo, `pytorch-coder` beats `python-coder` automatically, and both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on the diff.
-- This is why the ratio on slide 14 actually buys something: eleven checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
+- This is why the ratio on slide 14 actually buys something: twelve checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
 
 ---
 

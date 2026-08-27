@@ -9,6 +9,7 @@ This history was reconstructed retroactively from git (development began 2026-05
 ## [Unreleased]
 
 ### Added
+- **`claim-checker` agent** (haiku, read-only, non-judging): settles one decidable factual claim about code by quoting the lines that answer it (`holds` / `does-not-hold` / `not-decidable-by-reading`, evidence mandatory). `subagent-driven-development` now grounds judgment-shaped verdicts and spec-reviewer `cannot_verify` items **by dispatch, not by reading** — the orchestrator formulates a decidable claim and the checker does the looking, so grounding stops costing the context the file handoffs protect. Agent count: 15.
 - **Typed handoff layer** in `subagent-driven-development`: the nine per-task-loop agents write JSON records validated against a shared contract (`scripts/ledger.py` — `check` as the agent's own write-time gate, `open`/`resolve` with content-derived ids, `shapes`, typed completion), and `scripts/task_brief.py` gates briefs on an intent statement and validates `Consumes:` pointers. Backed by a stdlib-only test suite under `chris-code/tests/`.
 - `coherent-change` **batch mode** — a set of end-state-framed changes (audit / review findings) runs as one consolidated research pass → a defended choice per change → **one** `lean-spec` → **one** `lean-plan` → SDD. `coherent-change` is now the universal *application* engine.
 - A **workflow catalog** in the docs (the How-to landing) — a graph, *when to use it*, and *how to invoke* for every canonical route — plus new recipes: build a feature, debug an unknown cause, remediate in batch.
