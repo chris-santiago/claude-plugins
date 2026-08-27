@@ -320,11 +320,20 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
     # A field an unvalidated role happens to carry (e.g. a stray
     # duplication_pending on a spec-reviewer record) is never read: it
     # was never validated, so it must never drive an open item either.
+    seen_ids: set[str] = set()
     for field_name in DECISION_LIST_FIELDS.get(role, ()):
         if field_name not in RESOLVABLE_KINDS:
             continue
         describe = _FIELD_DESCRIBERS[field_name]
         for entry in rec.data.get(field_name, []):
+            digest = _entry_digest(entry)
+            item_id = f"{rec.stem}#{field_name}[{digest}]"
+            if item_id in seen_ids:
+                # Two entries with identical content hash to the same id
+                # (spec Sec 6: ids are content-derived) — they're one
+                # claim, not two, so they print as one line and resolve
+                # with one `resolve` call, not a silently-doubled report.
+                continue
             try:
                 summary = describe(entry)
             except Exception as e:
@@ -332,10 +341,8 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
                 # this record failed to render" — the error is `check`'s
                 # correction (spec Sec 7).
                 raise RuntimeError(f"{field_name} entry {entry!r} failed to render: {e}") from e
-            digest = _entry_digest(entry)
-            items.append(OpenItem(
-                id=f"{rec.stem}#{field_name}[{digest}]", kind=field_name,
-                summary=summary, source=rec.stem))
+            seen_ids.add(item_id)
+            items.append(OpenItem(id=item_id, kind=field_name, summary=summary, source=rec.stem))
 
     return items
 

@@ -260,6 +260,18 @@ class TestComputeOpenItems(LedgerTestCase):
         self.assertNotIn("duplication_pending", kinds)
         self.assertEqual(kinds, {"status"})
 
+    def test_identical_entries_within_a_record_dedupe_to_one_item(self):
+        # Two duplication_pending entries with identical content hash to
+        # the same content-derived id — they're one claim, not two, so
+        # they must produce one printed line and resolve with one
+        # `resolve` call, not a silently-doubled report.
+        entry = {"sites": ["a.py:1"], "wants_owner": "b.py", "why": "x"}
+        _write(self.store, "task-1-python-coder.json", _coder(
+            duplication_pending=[entry, dict(entry)]))
+        records = ledger.load_records(self.store)
+        items = ledger.compute_open_items(records, resolved_ids=set())
+        self.assertEqual([i.id for i in items], [_dup_id("task-1-python-coder", entry)])
+
     def test_malformed_record_appears_open_query_never_crashes(self):
         _write(self.store, "task-1-python-coder.json", _coder())
         (self.store / "task-2-bad.json").write_text("not json", encoding="utf-8")

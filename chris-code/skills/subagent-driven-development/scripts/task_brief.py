@@ -112,11 +112,14 @@ class BriefRequest:
     intent in named fields instead of building an argparse.Namespace just
     to hand run() something with the right attribute names. main()
     translates the parsed CLI args into one of these; nothing about run()
-    depends on argparse."""
+    depends on argparse. `note` is a tuple, not a list: frozen is only a
+    real guarantee if every field is itself immutable — a list field
+    would let a caller mutate it after construction despite the frozen
+    dataclass."""
     plan_file: str
     task_n: str
     intent: str | None
-    note: list[str] = field(default_factory=list)
+    note: tuple[str, ...] = ()
     spec: str | None = None
     constraints_from: str | None = None
     store: str | None = None
@@ -424,7 +427,7 @@ def validate_consumes(task_entry: str, spec_path: str | None) -> None:
         raise BriefValidationError("; ".join(failures))
 
 
-def build_brief(*, task_n: str, task_entry: str, intent: str, notes: list[str],
+def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],
                  constraints: str | None, shapes_text: str) -> str:
     """Assemble the brief markdown (spec Sec 4): the task's plan entry,
     the intent, orchestrator cross-task notes, the verbatim Constraints
@@ -524,7 +527,7 @@ def main() -> None:
     args = build_parser().parse_args()
     request = BriefRequest(
         plan_file=args.plan_file, task_n=args.task_n, intent=args.intent,
-        note=args.note, spec=args.spec, constraints_from=args.constraints_from,
+        note=tuple(args.note), spec=args.spec, constraints_from=args.constraints_from,
         store=args.store, output=args.output,
     )
     try:

@@ -102,7 +102,7 @@ class TaskBriefTestCase(unittest.TestCase):
             plan_file=str(self.plan_path),
             task_n="2",
             intent="make the thing work",
-            note=[],
+            note=(),
             spec=None,
             constraints_from=None,
             store=str(self.store),
@@ -421,7 +421,7 @@ class TestRunEndToEnd(TaskBriefTestCase):
         _write_shape_record(self.store)
 
         args = self._args(
-            note=["watch out for X", "Y was already handled"],
+            note=("watch out for X", "Y was already handled"),
             spec=str(self.spec_path),
             constraints_from=str(self.plan_path),
         )
@@ -735,8 +735,8 @@ class TestColonPairRequiresNonEmptyHalves(TaskBriefTestCase):
         task_brief.validate_consumes(entry, None)  # no raise
 
     def test_dangling_double_colon_after_existing_path_fails_loudly(self):
-        # Mutation-probe pin: the file-likeness check alone doesn't cover
-        # this case. Without the non-empty-halves guard, "existing.py::"
+        # The file-likeness check alone doesn't cover this case. Without
+        # the non-empty-halves guard, "existing.py::"
         # would split to (path="existing.py", symbol="") — an empty
         # symbol is falsy, so validation would silently check only the
         # real underlying path and pass, discarding the dangling "::"

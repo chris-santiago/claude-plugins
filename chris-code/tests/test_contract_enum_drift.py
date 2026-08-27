@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Enum-drift guard: parses the JSON record example embedded in each of the
-10 dispatch contracts (the 9 registered agents plus the implementer-prompt.md
-fallback template) and asserts their `role`/`status` alternatives against
-ledger.py's own VALID_ROLES/STATUS_ENUMS — so a contract file's advertised
-enum can never silently drift out of sync with what ledger.py actually
-validates at write time.
+Enum-drift guard: parses the JSON record example embedded in every
+dispatch contract that carries one (agents/*.md plus implementer-prompt.md,
+discovered by glob and filtered to files containing a '"schema": 1'
+record block — not a hardcoded list, so a future record-writing agent is
+picked up automatically) and asserts their `role`/`status` alternatives
+against ledger.py's own VALID_ROLES/STATUS_ENUMS — so a contract file's
+advertised enum can never silently drift out of sync with what ledger.py
+actually validates at write time.
 
 Run: python3 -m unittest discover chris-code/tests -v
 """
@@ -27,18 +29,38 @@ AGENTS_DIR = CHRIS_CODE_DIR / "agents"
 IMPLEMENTER_PROMPT = (CHRIS_CODE_DIR / "skills" / "subagent-driven-development"
                        / "implementer-prompt.md")
 
-# The 9 registered agents that emit typed records (spec Sec 5), plus the
-# fallback implementer prompt, which carries the coder contract.
-CONTRACT_FILES = [
-    AGENTS_DIR / f"{name}.md" for name in (
-        "python-coder", "pytorch-coder", "rust-coder", "spec-reviewer",
-        "python-quality-reviewer", "pytorch-quality-reviewer", "rust-quality-reviewer",
-        "python-review-lite", "rust-review-lite",
-    )
-] + [IMPLEMENTER_PROMPT]
-
 _SCHEMA_START_RE = re.compile(r'\{\s*"schema":\s*1,')
 _TASK_PLACEHOLDER_RE = re.compile(r'"task":\s*N,')
+
+# The 9 registered agents that emit typed records (spec Sec 5) plus the
+# fallback implementer prompt as of this writing — kept only as the floor
+# _discover_contract_files enforces, not as the source of truth.
+MIN_CONTRACT_FILES = 10
+
+
+def _discover_contract_files() -> list[Path]:
+    """Every agents/*.md file, plus implementer-prompt.md, that embeds a
+    typed-record example (contains a '"schema": 1' block) — glob-derived,
+    not hardcoded, so a future record-writing agent is guarded
+    automatically. Raises RuntimeError (not a bare `assert`, so `python
+    -O` can't silence it) if fewer than MIN_CONTRACT_FILES are found: an
+    empty or shrunken glob (e.g. AGENTS_DIR relocated or renamed) proves
+    nothing and must fail loudly, not silently pass with a smaller guard."""
+    candidates = sorted(AGENTS_DIR.glob("*.md")) + [IMPLEMENTER_PROMPT]
+    contract_files = [
+        path for path in candidates
+        if _SCHEMA_START_RE.search(path.read_text(encoding="utf-8"))
+    ]
+    if len(contract_files) < MIN_CONTRACT_FILES:
+        raise RuntimeError(
+            f"found only {len(contract_files)} contract file(s) carrying a "
+            f'\'"schema": 1\' record block under {AGENTS_DIR} (expected at '
+            f"least {MIN_CONTRACT_FILES}) — has the agents directory moved "
+            f"or been renamed?")
+    return contract_files
+
+
+CONTRACT_FILES = _discover_contract_files()
 
 
 def _extract_record_block(text: str) -> str:
