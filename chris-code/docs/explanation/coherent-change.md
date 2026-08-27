@@ -35,8 +35,8 @@ That is a real failure mode, not a hypothetical — it is how the same logic lan
 flowchart TB
     cc["coherent-change / lean-plan<br/>holds the whole-change view"]
     plan["lean-plan<br/>grounds against existing code;<br/>a shape 3+ tasks share becomes<br/>a contract with an owner task"]
-    ledger["subagent-driven-development<br/>Cross-Task Pattern Ledger:<br/>carries the shared-shape pointer<br/>into each later brief"]
-    coder["coder agents<br/>mirror by reference, never copy:<br/>hoist when the file is in footprint,<br/>else flag DUPLICATION-PENDING"]
+    ledger["subagent-driven-development<br/>Cross-Task Pattern Ledger:<br/>ledger.py derives shared-shapes<br/>from records, into each later brief"]
+    coder["coder agents<br/>mirror by reference, never copy:<br/>hoist when the file is in footprint,<br/>else declare duplication_pending"]
 
     cc --> plan --> ledger --> coder
     coder -->|flag surfaces| ledger
@@ -45,7 +45,7 @@ flowchart TB
     class cc,plan,ledger,coder k
 ```
 
-Each link answers the question the next actor can't answer alone. `lean-plan` grounds against existing code *before* decomposing, so a shape several tasks will share is named as a contract with one owner rather than left inline to be copied N times. The **pattern ledger** in `subagent-driven-development` is the orchestrator's memory of those shapes across tasks — it is the only actor that sees the sequence, so it carries the "call this, don't re-inline it" pointer into each later brief. And the coder agents are told to **mirror by reference**: if a task needs a block a sibling already wrote, hoist it when the owning file is already in the task's footprint, and otherwise flag `DUPLICATION-PENDING` so the orchestrator assigns the hoist rather than letting the copy ride to the commit.
+Each link answers the question the next actor can't answer alone. `lean-plan` grounds against existing code *before* decomposing, so a shape several tasks will share is named as a contract with one owner rather than left inline to be copied N times. The **pattern ledger** in `subagent-driven-development` is the orchestrator's memory of those shapes across tasks — it is the only actor that sees the sequence, so it carries the "call this, don't re-inline it" pointer into each later brief. The record-keeping is now automatic rather than something the orchestrator transcribes by hand: coders declare the shapes they add in their own typed record, and `ledger.py shapes` derives the shared-shapes list from those records, appended unconditionally to every brief `task_brief.py` produces. And the coder agents are told to **mirror by reference**: if a task needs a block a sibling already wrote, hoist it when the owning file is already in the task's footprint, and otherwise declare a `duplication_pending` entry in its record so the orchestrator sees it in `ledger.py open` and assigns the hoist rather than letting the copy ride to the commit.
 
 The through-line: coherence is not a one-time check at the end. It is a property established when the change is a whole, and then *preserved* down through every altitude that pulls the change apart.
 
@@ -56,7 +56,7 @@ The through-line: coherence is not a one-time check at the end. It is a property
 | Single edit | The defended choice: research, candidates, correctness table, defense of alternatives |
 | Plan | `lean-plan` grounds against existing code; repeated shapes become contracts with owners |
 | Execution | The Cross-Task Pattern Ledger carries shared-shape pointers between tasks |
-| Coder | Mirror-by-reference; `DUPLICATION-PENDING` when a hoist is out of the task's footprint |
+| Coder | Mirror-by-reference; declares `duplication_pending` in its record when a hoist is out of the task's footprint |
 
 ## Change fully, defer only the separable
 

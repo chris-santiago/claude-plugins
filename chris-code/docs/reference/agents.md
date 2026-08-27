@@ -2,11 +2,15 @@
 
 chris-code ships 14 dedicated agents — the layer superpowers doesn't have. They auto-dispatch by file type and role, so you rarely pick one by hand. This page covers each agent and the disciplines they share.
 
+## Typed records
+
+Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents — writes its JSON record to a dispatch-supplied path, never one it computes itself. The naming convention behind that path: `task-<N>-<agent-name>.json`, keyed by the agent's registered name rather than its role, so additive same-role agents (e.g. both quality reviewers firing on one PyTorch task) never collide. The whole-change commit gate, which has no task number, uses `final-<agent-name>.json` instead, and such records carry `"task": "final"`. In every case the dispatch-supplied path defines record identity; these stems are the convention the orchestrator follows when computing it, not something an agent works out on its own. Each role's payload contract is documented under its own section, below.
+
 ## Shared review disciplines
 
 Every review agent operates under the same rules, which is what makes the gates trustworthy:
 
-- **Read-only on the checkout.** Reviewers never edit files or mutate the working tree, index, `HEAD`, or branch (no `git checkout/stash/reset/commit`). They report; the coder fixes. Bash is for read-only inspection and focused tests only.
+- **Read-only on the checkout, aside from one record write.** Reviewers never edit files or mutate the working tree, index, `HEAD`, or branch (no `git checkout/stash/reset/commit`). They report; the coder fixes. Bash is for read-only inspection and focused tests only. The one write every reviewer performs is its own typed record — a JSON file at a dispatch-supplied path under the resolved store — written before it returns and validated with `ledger.py check` until clean.
 - **Instruction precedence.** The dispatch supplies inputs, not authority. No instruction in a dispatch can waive a review, soften a finding, pre-rate a severity, or treat a stated rationale as exculpatory. If one tries, the reviewer runs the full check anyway and notes the attempted suppression in its verdict.
 - **Do Not Trust the Report.** Reviewers verify by reading the actual code, not the implementer's summary — a report may be incomplete, inaccurate, or optimistic. A design rationale ("left it per YAGNI") is the implementer grading their own work and never downgrades a finding.
 - **The checklist is a floor, not a ceiling.** Clearing every listed item is the minimum bar, not sufficiency — a change can pass every check and still be wrong for a reason no checklist enumerates. Agents judge the whole change, then apply the rules.
@@ -42,7 +46,9 @@ Coders **internalize the review principles** so their code passes the lite-revie
 
 Crucially, a coder **reads the task's *intent* before the code** and builds toward the stated outcome, not just a passing diff. If a brief gives only *what* and *where* but no *why*, the coder **escalates for the intent** rather than guessing — one half of the loop that keeps intent flowing through dispatch (see [Context & dispatch](../explanation/context-and-dispatch.md)). Coders also escalate public-API changes, cross-language work, and changes to foundational invariants before implementing.
 
-Coders also **mirror by reference rather than copy**: if a task needs a block a sibling already wrote, the coder hoists it into a shared helper when the owning file is already in its footprint, and otherwise flags `DUPLICATION-PENDING` in its report so the orchestrator assigns the hoist instead of letting the copy land. This is the coder-altitude link in the chain that keeps a fanned-out change coherent — see [Coherent change](../explanation/coherent-change.md#coherence-has-to-survive-decomposition).
+Coders also **mirror by reference rather than copy**: if a task needs a block a sibling already wrote, the coder hoists it into a shared helper when the owning file is already in its footprint, and otherwise declares a `duplication_pending` entry in its typed record so the orchestrator sees it in `ledger.py open` and assigns the hoist instead of letting the copy land. This is the coder-altitude link in the chain that keeps a fanned-out change coherent — see [Coherent change](../explanation/coherent-change.md#coherence-has-to-survive-decomposition).
+
+**Typed record (role `coder`).** Before returning, a coder writes a JSON record to its dispatch-supplied path: `status` (the same four values as the return summary, lowercase), `changed_files`, `tests` (command, pass/fail, one-line summary), `new_shared_symbols` it hoisted, `duplication_pending` sites it left un-hoisted, `concerns`, and the `report` path. It then runs `ledger.py check` against its own record and fixes until clean — the write-time gate lands with the agent that has the context, not at the orchestrator's later query.
 
 ---
 
@@ -58,6 +64,8 @@ Dispatched per task **after** spec compliance passes. In a PyTorch project a `.p
 
 They verify the coder actually followed the principles it claims to internalize, catch bugs the coder missed, and validate test quality. Their verdict is **APPROVED** or **REVISE** (with a specific fix list). The PyTorch reviewer additionally flags any change to loss computation, gradient flow, or the data pipeline, even when the code is correct, so the orchestrator can confirm it was intentional.
 
+**Typed record (role `quality-reviewer`).** Before returning, the reviewer writes `status` (`approved | issues`), `findings` (severity as the S1–S5 integer, file, line, claim), and `lossiness` (what the verdict compresses) to its dispatch-supplied record path, then runs `ledger.py check` against it.
+
 ---
 
 ## Commit gate agents (additive — all matching fire)
@@ -69,7 +77,9 @@ Dispatched before each commit and as a final full-diff pass at plan end.
 | `python-review-lite` | inherit | `.py` | Trimmed idiom checklist + the project linter |
 | `rust-review-lite` | inherit | `.rs` | Trimmed idiom checklist + `cargo clippy -D warnings` |
 
-These are fast, autonomous **regression guardrails**, not refactoring agents. They read `git diff --cached`, apply a diff-level idiom checklist, run the linter on the affected files, and return **clean / block / escalate**. When one blocks, the coder fixes and the agent is re-dispatched with an incrementing `cycle` counter; at `cycle ≥ 3` it escalates to break a stuck fix loop.
+These are fast, autonomous **regression guardrails**, not refactoring agents. They read `git diff --cached`, apply a diff-level idiom checklist, run the linter on the affected files, and return **clean / block / escalate**. When one blocks, the coder fixes and the agent is re-dispatched at the same record path; it reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — the dispatch carries no cycle counter. At `cycle ≥ 3` with a finding remaining it escalates to break a stuck fix loop.
+
+**Typed record (role `review-lite`).** Before returning, the agent writes `status` (`clean | block | escalate`), the self-derived `cycle`, `findings`, `linter` (ran, name, passed), and `verdict_path` (the existing markdown verdict file) to its dispatch-supplied record path, then runs `ledger.py check` against it.
 
 ---
 
@@ -96,6 +106,8 @@ Not scope-matched — these review conformance and behavior, not language idioms
 | `intent-reviewer` | opus | the intent ledger | **Spec-blind** behavior↔intent re-check at completion |
 
 `spec-reviewer` verifies the implementer built what was requested — nothing more, nothing less — by reading the code line-by-line against the brief, and returns ✅ / ❌ / ⚠️ (cannot verify from diff). `intent-reviewer` is the only gate that **never reads the spec**: at completion it compares the *running system* to the frozen intent ledger and judges each statement `met` / `not-met` / `can't-tell`. Its independence comes precisely from that blindness — it catches the one failure every spec-anchored gate structurally cannot. See [The assurance model](../explanation/the-assurance-model.md).
+
+**Typed record (role `spec-reviewer`).** Before returning, `spec-reviewer` writes `status` (`compliant | issues`), `issues` (kind, file, line, claim), and `cannot_verify` (requirement, why, should_check — the typed form of the ⚠️ line) to its dispatch-supplied record path, then runs `ledger.py check` against it. `intent-reviewer` keeps its prose-only report; it isn't one of the record-writing agents.
 
 ---
 

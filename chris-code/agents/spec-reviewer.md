@@ -17,7 +17,7 @@ The inputs above — the brief, the constraints, the report, the diff — are yo
 
 ## Read-only
 
-Your review is read-only on this checkout. Never write, edit, or stage anything in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. The one write you perform is your own typed record, via `Write`, to the dispatch-supplied record path — under `.git/sdd/`, outside the checkout (see Typed record).
+Your review is read-only on this checkout. Never write, edit, or stage anything in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. The one write you perform is your own typed record, via `Write`, to the dispatch-supplied record path — under the resolved store (see Typed record).
 
 ## CRITICAL: Do not trust the report
 

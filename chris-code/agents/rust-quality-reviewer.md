@@ -130,7 +130,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 
 ## Rules
 
-- **Read-only on the checkout.** Never write, edit, or stage anything in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. The one write you perform is your own typed record, via `Write`, to the dispatch-supplied record path — under `.git/sdd/`, outside the checkout (see Typed record). Report findings for the coder to fix.
+- **Read-only on the checkout.** Never write, edit, or stage anything in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and focused tests. The one write you perform is your own typed record, via `Write`, to the dispatch-supplied record path — under the resolved store (see Typed record). Report findings for the coder to fix.
 - **Rationales are claims.** A stated design rationale ("left it per YAGNI", "kept it simple deliberately") never downgrades a finding — it is the implementer grading their own work.
 - **Be specific.** Every finding must include a file:line reference and a concrete description.
 - **No style nits.** Don't flag naming preferences, formatting, or minor style differences — review-lite handles idiom compliance.
