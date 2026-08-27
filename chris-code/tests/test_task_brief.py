@@ -144,6 +144,20 @@ class TestExtractTaskEntry(unittest.TestCase):
         with self.assertRaises(task_brief.UsageError):
             task_brief.extract_task_entry(PLAN_TEXT, "99")
 
+    def test_task_1_does_not_absorb_task_10(self):
+        # this_task_re's number-boundary guard ((?:[^0-9]|$) after the
+        # literal task number) must reject "Task 10" when asked for task
+        # "1" — a prefix match without the boundary would incorrectly
+        # absorb every Task 1X heading into Task 1's entry.
+        text = (
+            "### Task 1: first\n- [ ] do first\n"
+            "### Task 10: tenth\n- [ ] do tenth\n"
+        )
+        entry = task_brief.extract_task_entry(text, "1")
+        self.assertIn("do first", entry)
+        self.assertNotIn("do tenth", entry)
+        self.assertNotIn("Task 10", entry)
+
 
 # --- find_consumes_pointers ---
 #
@@ -204,6 +218,22 @@ class TestFindConsumesPointers(unittest.TestCase):
         findings = task_brief.find_consumes_pointers(entry)
         self.assertEqual(findings.pointers, [])
 
+    def test_bare_path_with_trailing_period_rstrips_to_the_real_path(self):
+        # Sentence-final punctuation with no space before it: the trailing
+        # "." must rstrip off, leaving the real file-shaped path — not the
+        # path-plus-period as one (never-existing) token.
+        entry = "### Task 2: x\n- Consumes: see chris-code/tests/test_ledger.py. for details\n"
+        findings = task_brief.find_consumes_pointers(entry)
+        self.assertEqual([p.raw for p in findings.pointers], ["chris-code/tests/test_ledger.py"])
+
+    def test_bare_slashed_prose_with_trailing_period_stays_prose(self):
+        # "store/records" has no dot in its final segment even after the
+        # sentence-final period rstrips off — stays prose, same as without
+        # the trailing period.
+        entry = "### Task 2: x\n- Consumes: the store/records. API from earlier work\n"
+        findings = task_brief.find_consumes_pointers(entry)
+        self.assertEqual(findings.pointers, [])
+
     def test_section_ref_token_with_slash_is_not_treated_as_a_path(self):
         # "§6/§7" contains a literal "/" but must stay a section-ref pair,
         # not a false-positive path pointer.
@@ -211,6 +241,17 @@ class TestFindConsumesPointers(unittest.TestCase):
         findings = task_brief.find_consumes_pointers(entry)
         self.assertEqual(findings.pointers, [])
         self.assertEqual(sorted(findings.section_refs), ["6", "7"])
+
+    def test_section_ref_masking_preserves_word_separation(self):
+        # A §-ref span masks to a single SPACE, not empty string: with no
+        # space in the original text at all ("a/b.py§6c/d.py"), masking
+        # with "" would fuse the trailing path onto the removed span's
+        # neighbor (bogus single token "a/b.pyc/d.py"); masking with " "
+        # keeps the two real paths apart and the section ref intact.
+        entry = "### Task 2: x\n- Consumes: a/b.py§6c/d.py\n"
+        findings = task_brief.find_consumes_pointers(entry)
+        self.assertEqual([p.raw for p in findings.pointers], ["a/b.py", "c/d.py"])
+        self.assertEqual(findings.section_refs, ["6"])
 
     def test_multiple_comma_separated_backtick_paths(self):
         entry = "### Task 2: x\n- Consumes: things → `dir/a.py`, `dir/b.py`\n"
@@ -295,6 +336,18 @@ class TestValidateConsumes(TaskBriefTestCase):
         entry = "### Task 2: x\n- Consumes: thing from spec §6\n"
         task_brief.validate_consumes(entry, str(self.spec_path))  # no raise
 
+    def test_h3_subsection_ref_resolves(self):
+        # §6.1 names an h3 "### 6.1 ..." subsection heading, one level
+        # deeper than every other resolvable-ref fixture in this file —
+        # pins HEADING_NUMBER_RE's "#{1,6}" depth end to end.
+        spec_with_subsection = self.tmp / "spec_with_subsection.md"
+        spec_with_subsection.write_text(
+            "# Fixture Spec\n\n## 6. Canonical interfaces\n\n"
+            "### 6.1 A subsection\n\nBody text.\n",
+            encoding="utf-8")
+        entry = "### Task 2: x\n- Consumes: thing from spec §6.1\n"
+        task_brief.validate_consumes(entry, str(spec_with_subsection))  # no raise
+
     def test_section_ref_without_spec_raises_usage_error(self):
         entry = "### Task 2: x\n- Consumes: thing from spec §6\n"
         with self.assertRaises(task_brief.UsageError):
@@ -339,6 +392,18 @@ class TestValidateConsumes(TaskBriefTestCase):
         entry = "### Task 2: x\n- Consumes: see https://example.com/a/b.py for details\n"
         task_brief.validate_consumes(entry, None)  # no raise
 
+    def test_bare_path_with_trailing_period_validates_the_real_repo_relative_file(self):
+        # Repo-root-relative, no chdir needed (paths resolve against the
+        # invoking CWD by convention — spec Sec 6): this file really
+        # exists, so the rstripped path must validate clean even though
+        # the raw un-rstripped token (with the period) would not.
+        entry = "### Task 2: x\n- Consumes: see chris-code/tests/test_ledger.py. for details\n"
+        task_brief.validate_consumes(entry, None)  # no raise
+
+    def test_bare_slashed_prose_with_trailing_period_is_not_validated(self):
+        entry = "### Task 2: x\n- Consumes: the store/records. API from earlier work\n"
+        task_brief.validate_consumes(entry, None)  # no raise
+
     def test_bare_trailing_slash_directory_is_validated_and_stale(self):
         entry = "### Task 2: x\n- Consumes: things under some/missing/dir/\n"
         with self.assertRaisesRegex(task_brief.BriefValidationError, "some/missing/dir/"):
@@ -368,6 +433,34 @@ class TestExtractSection(unittest.TestCase):
     def test_missing_heading_raises_usage_error(self):
         with self.assertRaises(task_brief.UsageError):
             task_brief.extract_section("# No such section here\n", "Constraints")
+
+
+# --- heading_section_numbers (HEADING_NUMBER_RE's "#{1,6}" depth) ---
+
+class TestHeadingSectionNumbers(unittest.TestCase):
+    def test_h3_subsection_number_is_found(self):
+        # HEADING_NUMBER_RE matches "#{1,6}", not just the h1/h2 depths
+        # every other fixture in this file happens to use — an h3
+        # "### 6.1 ..." subsection heading must resolve too.
+        text = "# Fixture Spec\n\n## 6. Canonical interfaces\n\n### 6.1 A subsection\n\nBody text.\n"
+        numbers = task_brief.heading_section_numbers(text)
+        self.assertEqual(numbers, {"6", "6.1"})
+
+
+# --- build_brief (direct, not just through run()) ---
+
+class TestBuildBrief(unittest.TestCase):
+    def test_zero_notes_renders_the_none_placeholder(self):
+        brief = task_brief.build_brief(
+            task_n="2", task_entry="### Task 2: x\n- [ ] do it\n", intent="make it work",
+            notes=(), constraints=None, shapes_text="(none recorded yet)")
+        self.assertIn("## Cross-task notes", brief)
+        lines = brief.splitlines()
+        notes_heading = lines.index("## Cross-task notes")
+        # The placeholder is the next non-blank line after the heading —
+        # not just present anywhere in the brief, but standing in for the
+        # empty notes list specifically.
+        self.assertEqual(lines[notes_heading + 2], "(none)")
 
 
 # --- run() end-to-end (acceptance criteria 1, 2, 6) ---
@@ -495,6 +588,12 @@ class TestCLI(TaskBriefTestCase):
         self.plan_path.write_text(PLAN_TEXT, encoding="utf-8")
         result = self._run()  # no --intent at all
         self.assertEqual(result.returncode, task_brief.EXIT_INVALID)
+        # A literal-3 pin alongside the constant-based assert above: if
+        # EXIT_INVALID and EXIT_USAGE ever drifted to the same value (or
+        # either drifted off its spec-mandated number), a mutant that
+        # swaps one constant's value for the other's would still pass the
+        # constant-based assert but fail this one.
+        self.assertEqual(result.returncode, 3)
         self.assertFalse(any(self.store.rglob("*brief*")))
 
     def test_bad_plan_file_exits_2(self):
@@ -503,6 +602,7 @@ class TestCLI(TaskBriefTestCase):
              "--intent", "x", "--store", str(self.store)],
             capture_output=True, text=True)
         self.assertEqual(result.returncode, task_brief.EXIT_USAGE)
+        self.assertEqual(result.returncode, 2)
 
     def test_valid_run_exits_0_and_prints_path(self):
         consumed = self.tmp / "consumed.py"

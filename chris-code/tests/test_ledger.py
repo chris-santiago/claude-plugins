@@ -48,6 +48,17 @@ def _spec_reviewer(**overrides) -> dict:
     return data
 
 
+def _review_lite(**overrides) -> dict:
+    data = {
+        "schema": 1, "agent": "python-review-lite", "role": "review-lite",
+        "task": 1, "status": "clean", "cycle": 1, "findings": [],
+        "linter": {"ran": True, "name": "ruff", "passed": True},
+        "verdict_path": "",
+    }
+    data.update(overrides)
+    return data
+
+
 def _write(store: Path, name: str, data: dict) -> Path:
     path = store / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -290,6 +301,34 @@ class TestComputeOpenItems(LedgerTestCase):
         kinds = {i.kind for i in items}
         self.assertEqual(kinds, {"status", "malformed"})
 
+    def test_coder_needs_context_status_is_open(self):
+        # CODER_OPEN_STATUSES has two members (blocked, needs_context);
+        # existing coverage only exercised "blocked" — pin the other one
+        # discriminately so a mutant that drops needs_context from the
+        # open set (or swaps it for another status) is caught.
+        _write(self.store, "task-1-python-coder.json", _coder(status="needs_context"))
+        items = ledger.compute_open_items(ledger.load_records(self.store), resolved_ids=set())
+        self.assertEqual([i.id for i in items], ["task-1-python-coder#status"])
+
+    def test_review_lite_block_status_is_open(self):
+        # review-lite had zero record-level tests: pin each of its three
+        # statuses discriminately (block/escalate open, clean not) so a
+        # mutant touching REVIEWER_OPEN_STATUSES or the review-lite branch
+        # of is_open_status is caught here, not just via a coder record.
+        _write(self.store, "task-1-python-review-lite.json", _review_lite(status="block"))
+        items = ledger.compute_open_items(ledger.load_records(self.store), resolved_ids=set())
+        self.assertEqual([i.id for i in items], ["task-1-python-review-lite#status"])
+
+    def test_review_lite_escalate_status_is_open(self):
+        _write(self.store, "task-1-python-review-lite.json", _review_lite(status="escalate"))
+        items = ledger.compute_open_items(ledger.load_records(self.store), resolved_ids=set())
+        self.assertEqual([i.id for i in items], ["task-1-python-review-lite#status"])
+
+    def test_review_lite_clean_status_is_not_open(self):
+        _write(self.store, "task-1-python-review-lite.json", _review_lite(status="clean"))
+        items = ledger.compute_open_items(ledger.load_records(self.store), resolved_ids=set())
+        self.assertEqual(items, [])
+
     def test_additive_same_role_pair_coexists(self):
         # Acceptance criterion 7: two same-role agents on one task produce
         # two distinct record files with no collision.
@@ -343,6 +382,19 @@ class TestShapes(LedgerTestCase):
             new_shared_symbols=[{"symbol": "foo", "path": "a.py", "why": "shared"}]))
         [shape] = ledger.list_shapes(ledger.load_records(self.store))
         self.assertEqual(shape.symbol, "foo")
+
+    def test_role_filter_ignores_new_shared_symbols_on_non_coder_record(self):
+        # list_shapes filters by role == "coder" explicitly; a
+        # spec-reviewer record carrying a stray new_shared_symbols field
+        # (informational and unvalidated for that role) must not surface
+        # as a shape — a mutant weakening the role check to "any role" or
+        # dropping it entirely is caught here.
+        data = _spec_reviewer(status="compliant")
+        data["new_shared_symbols"] = [{"symbol": "foo", "path": "a.py", "why": "shared"}]
+        _write(self.store, "task-1-spec-reviewer.json", data)
+        records = ledger.load_records(self.store)
+        self.assertTrue(records[0].ok)  # the stray key doesn't fail validation
+        self.assertEqual(ledger.list_shapes(records), [])
 
     def test_shapes_never_appear_in_open(self):
         # A record whose only content is a new_shared_symbols entry has no
@@ -565,6 +617,28 @@ class TestCmdResolve(LedgerTestCase):
         self.assertIn("first note", message)
 
 
+# --- _entry_digest canonicalization (independent of the function under
+# test: expected hex is hardcoded, not recomputed via ledger._entry_digest
+# itself) ---
+
+class TestEntryDigestCanonicalization(unittest.TestCase):
+    def test_digest_matches_a_known_literal_hex_value(self):
+        # Pinned externally: sha1('{"sites":["a.py:1"],"wants_owner":
+        # "b.py","why":"x"}').hexdigest()[:8], computed independently of
+        # _entry_digest's own implementation, so a mutant that changes the
+        # hash algorithm, the digest length, or the separators/sort_keys
+        # canonicalization is caught by a value mismatch, not just a
+        # shape/type check.
+        entry = {"sites": ["a.py:1"], "wants_owner": "b.py", "why": "x"}
+        self.assertEqual(ledger._entry_digest(entry), "ea29e8b1")
+
+    def test_digest_is_independent_of_key_order(self):
+        entry_a = {"sites": ["a.py:1"], "wants_owner": "b.py", "why": "x"}
+        entry_b = {"why": "x", "sites": ["a.py:1"], "wants_owner": "b.py"}
+        self.assertEqual(ledger._entry_digest(entry_a), ledger._entry_digest(entry_b))
+        self.assertEqual(ledger._entry_digest(entry_b), "ea29e8b1")
+
+
 # --- content-derived resolution ids (spec Sec 6, amended 2026-08-27) ---
 
 class TestContentDerivedResolutionIds(LedgerTestCase):
@@ -714,6 +788,17 @@ class TestCLI(LedgerTestCase):
         return subprocess.run(
             [sys.executable, str(LEDGER_PY), *args, "--store", str(self.store)],
             capture_output=True, text=True)
+
+    def test_append_task_zero_exits_2(self):
+        # _task_arg rejects 0 (must be a positive integer or 'final');
+        # argparse.ArgumentTypeError maps to the standard argparse usage
+        # exit code.
+        result = self._run("append", "--type", "progress", "--task", "0", "--note", "x")
+        self.assertEqual(result.returncode, 2)
+
+    def test_append_task_negative_exits_2(self):
+        result = self._run("append", "--type", "progress", "--task", "-1", "--note", "x")
+        self.assertEqual(result.returncode, 2)
 
     def test_check_cli_exit_codes(self):
         good = _write(self.store, "task-1-python-coder.json", _coder())
