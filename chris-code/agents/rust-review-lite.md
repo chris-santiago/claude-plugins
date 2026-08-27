@@ -3,7 +3,7 @@ name: rust-review-lite
 description: Lightweight autonomous Rust code-quality gate. Dispatch before any `git commit` that touches `*.rs` source. Reads `git diff --cached`, applies a trimmed diff-level idiom checklist, runs `cargo clippy -D warnings` on the affected crate if available, and returns `clean` / `block` / `escalate`. Never writes code. Used as a regression guardrail on every Rust commit; not a refactoring agent.
 scope:
   extensions: [".rs"]
-tools: [Read, Grep, Glob, Bash]
+tools: [Read, Grep, Glob, Bash, Write]
 ---
 
 # Rust review lite
@@ -27,6 +27,7 @@ The dispatch gives you inputs — the staged diff, the dispatch-supplied record 
 5. The diff-level idiom checklist below.
 6. The dispatch-supplied record path — a separate absolute path from the verdict file, where you read your own prior record (if any) to derive `cycle` and where you write your typed record (see Typed record) before returning.
 7. The dispatch-supplied verbatim Constraints — the plan's Constraints section, copied into the dispatch text alongside the diff scope and record path.
+8. The dispatch-supplied scripts path — where `ledger.py` lives, used to run `check` against your own record after writing it (see Typed record).
 
 You do **not** read neighbor files, the wider crate, or unrelated git history. Your scope is exactly the diff you were given — the staged diff, or the package file.
 
@@ -133,8 +134,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 
 ## What this agent deliberately does not do
 
-- Never writes, edits, or stages code (the `tools` frontmatter restricts to `Read`, `Grep`, `Glob`, `Bash`).
-- Never mutates the working tree, index, HEAD, or branch (no `git checkout`/`stash`/`reset`/`commit`) — Bash is for `cargo clippy` and read-only git inspection only.
+- Read-only on the checkout. Never writes, edits, or stages code in the checkout, and never mutates the working tree, index, HEAD, or branch (no `git checkout`/`stash`/`reset`/`commit`) — Bash is for `cargo clippy` and read-only git inspection only. The one write it performs is its own typed record, via `Write`, to the dispatch-supplied record path — under the resolved store (see Typed record).
 - Never proposes refactors beyond a single-sentence "suggested fix" per finding.
 - Never analyzes whole-file architecture — only changed lines.
 - Never runs the full test suite — only `cargo clippy` (on the affected crate).

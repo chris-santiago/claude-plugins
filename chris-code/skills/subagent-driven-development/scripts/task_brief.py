@@ -38,13 +38,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
+# The one sanctioned sys.path hack in this codebase: this script is
+# invoked directly as `python3 task_brief.py` (stdlib only, no installed
+# package), so ledger.py's directory must be added to sys.path explicitly
+# to import it as a sibling module.
 sys.path.insert(0, str(SCRIPTS_DIR))
 import ledger  # noqa: E402
 
 __all__ = [
     "EXIT_USAGE", "EXIT_INVALID",
     "UsageError", "BriefValidationError",
-    "ConsumesPointer", "ConsumesFindings",
+    "ConsumesPointer", "ConsumesFindings", "BriefRequest",
     "extract_task_entry", "extract_section", "heading_section_numbers",
     "find_consumes_pointers", "validate_consumes",
     "build_brief", "run", "build_parser", "main",
@@ -100,6 +104,23 @@ class ConsumesPointer:
 class ConsumesFindings:
     section_refs: list[str] = field(default_factory=list)
     pointers: list[ConsumesPointer] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class BriefRequest:
+    """run()'s explicit contract, so a caller (main(), a test) states its
+    intent in named fields instead of building an argparse.Namespace just
+    to hand run() something with the right attribute names. main()
+    translates the parsed CLI args into one of these; nothing about run()
+    depends on argparse."""
+    plan_file: str
+    task_n: str
+    intent: str | None
+    note: list[str] = field(default_factory=list)
+    spec: str | None = None
+    constraints_from: str | None = None
+    store: str | None = None
+    output: str | None = None
 
 
 def _iter_fence_aware(lines: list[str]):
@@ -296,12 +317,11 @@ def _extract_bare_pointers(text: str) -> list[ConsumesPointer]:
 def find_consumes_pointers(task_entry: str) -> ConsumesFindings:
     """Every §-ref, and every pointer, across all 'Consumes:' bullets in
     the task entry — by extracting spans directly from each bullet's raw
-    text rather than classifying whitespace-split tokens (spec Sec 6,
-    amended after two Task 2 quality-review rounds: token classification
-    needed an ever-growing set of punctuation apologies — glued arrows,
-    glued §-refs, markdown wrappers — that span extraction sidesteps
-    structurally, since a regex match's boundary is never "wrong
-    whitespace", only a character outside its class).
+    text rather than classifying whitespace-split tokens (spec Sec 6):
+    token classification needed an ever-growing set of punctuation
+    apologies — glued arrows, glued §-refs, markdown wrappers — that span
+    extraction sidesteps structurally, since a regex match's boundary is
+    never "wrong whitespace", only a character outside its class.
 
     Per bullet: (1) §-ref spans (e.g. "§6", the chained "§6/§7") are
     pulled out first, as combined runs, so a chain is removed as one
@@ -421,52 +441,52 @@ def build_brief(*, task_n: str, task_entry: str, intent: str, notes: list[str],
     return "\n".join(parts).rstrip("\n") + "\n"
 
 
-def run(args: argparse.Namespace) -> Path:
+def run(request: BriefRequest) -> Path:
     """Build and write the brief; return its path. Raises UsageError
     (exit 2) or BriefValidationError (exit 3) on any failure — nothing is
     written until every check passes."""
-    plan_path = Path(args.plan_file)
+    plan_path = Path(request.plan_file)
     if not plan_path.is_file():
-        raise UsageError(f"no such plan file: {args.plan_file}")
-    plan_text = _read_text(plan_path, error_cls=UsageError, label=f"plan file {args.plan_file}")
-    task_entry = extract_task_entry(plan_text, args.task_n)
+        raise UsageError(f"no such plan file: {request.plan_file}")
+    plan_text = _read_text(plan_path, error_cls=UsageError, label=f"plan file {request.plan_file}")
+    task_entry = extract_task_entry(plan_text, request.task_n)
 
-    intent = (args.intent or "").strip()
+    intent = (request.intent or "").strip()
     if not intent:
         raise BriefValidationError(
             "missing/empty --intent: a task brief cannot be produced without a stated intent")
 
-    if args.spec is not None and not Path(args.spec).is_file():
-        raise UsageError(f"no such spec file: {args.spec}")
-    validate_consumes(task_entry, args.spec)
+    if request.spec is not None and not Path(request.spec).is_file():
+        raise UsageError(f"no such spec file: {request.spec}")
+    validate_consumes(task_entry, request.spec)
 
     constraints = None
-    if args.constraints_from is not None:
-        constraints_path = Path(args.constraints_from)
+    if request.constraints_from is not None:
+        constraints_path = Path(request.constraints_from)
         if not constraints_path.is_file():
             raise UsageError(
-                f"no such plan file for --constraints-from: {args.constraints_from}")
+                f"no such plan file for --constraints-from: {request.constraints_from}")
         constraints_text = _read_text(
             constraints_path, error_cls=UsageError,
-            label=f"--constraints-from file {args.constraints_from}")
+            label=f"--constraints-from file {request.constraints_from}")
         constraints = extract_section(constraints_text, "Constraints")
 
     try:
-        store_dir = ledger.get_store_dir(args.store)
+        store_dir = ledger.get_store_dir(request.store)
     except RuntimeError as e:
         raise UsageError(str(e)) from e
     shapes_text = ledger.render_shapes(ledger.list_shapes(ledger.load_records(store_dir)))
 
-    brief = build_brief(task_n=args.task_n, task_entry=task_entry, intent=intent,
-                         notes=args.note, constraints=constraints, shapes_text=shapes_text)
+    brief = build_brief(task_n=request.task_n, task_entry=task_entry, intent=intent,
+                         notes=request.note, constraints=constraints, shapes_text=shapes_text)
 
     try:
-        if args.output is not None:
-            out_path = Path(args.output)
+        if request.output is not None:
+            out_path = Path(request.output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
         else:
             store_dir.mkdir(parents=True, exist_ok=True)
-            out_path = store_dir / f"task-{args.task_n}-brief.md"
+            out_path = store_dir / f"task-{request.task_n}-brief.md"
         out_path.write_text(brief, encoding="utf-8")
     except OSError as e:
         raise UsageError(f"cannot write brief: {e}") from e
@@ -502,8 +522,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    request = BriefRequest(
+        plan_file=args.plan_file, task_n=args.task_n, intent=args.intent,
+        note=args.note, spec=args.spec, constraints_from=args.constraints_from,
+        store=args.store, output=args.output,
+    )
     try:
-        out_path = run(args)
+        out_path = run(request)
     except UsageError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(EXIT_USAGE)

@@ -92,7 +92,12 @@ class TaskBriefTestCase(unittest.TestCase):
         os.chdir(str(path))
         self.addCleanup(os.chdir, old)
 
-    def _args(self, **overrides):
+    def _args(self, **overrides) -> task_brief.BriefRequest:
+        # run() takes an explicit BriefRequest, not an argparse.Namespace,
+        # so tests build one directly instead of round-tripping through
+        # argv construction and argparse just to get an object with the
+        # right attribute names (TestCLI below still exercises the real
+        # argv -> exit-code interface via subprocess).
         base = dict(
             plan_file=str(self.plan_path),
             task_n="2",
@@ -104,24 +109,7 @@ class TaskBriefTestCase(unittest.TestCase):
             output=None,
         )
         base.update(overrides)
-        return task_brief.build_parser().parse_args(_to_argv(base))
-
-
-def _to_argv(kwargs: dict) -> list[str]:
-    argv = [kwargs["plan_file"], kwargs["task_n"]]
-    if kwargs.get("intent") is not None:
-        argv += ["--intent", kwargs["intent"]]
-    for note in kwargs.get("note") or []:
-        argv += ["--note", note]
-    if kwargs.get("spec") is not None:
-        argv += ["--spec", kwargs["spec"]]
-    if kwargs.get("constraints_from") is not None:
-        argv += ["--constraints-from", kwargs["constraints_from"]]
-    if kwargs.get("store") is not None:
-        argv += ["--store", kwargs["store"]]
-    if kwargs.get("output") is not None:
-        argv += ["-o", kwargs["output"]]
-    return argv
+        return task_brief.BriefRequest(**base)
 
 
 # --- extract_task_entry (fence-aware "Task N" heading match) ---
@@ -218,7 +206,7 @@ class TestFindConsumesPointers(unittest.TestCase):
 
     def test_section_ref_token_with_slash_is_not_treated_as_a_path(self):
         # "§6/§7" contains a literal "/" but must stay a section-ref pair,
-        # not a false-positive path pointer (real plan text: Task 1').
+        # not a false-positive path pointer.
         entry = "### Task 2: x\n- Consumes: amended contract from spec §6/§7\n"
         findings = task_brief.find_consumes_pointers(entry)
         self.assertEqual(findings.pointers, [])
@@ -236,26 +224,25 @@ class TestFindConsumesPointers(unittest.TestCase):
         self.assertEqual(pointer.symbol, "foo")
 
     def test_backticked_slash_path_out_of_convention_is_a_pointer(self):
-        # Reviewer repro 1: a backticked path with no arrow, phrased
-        # differently than the usual convention, must still be detected —
-        # backticks alone are enough to mark it a pointer.
+        # A backticked path with no arrow, phrased differently than the
+        # usual convention, must still be detected — backticks alone are
+        # enough to mark it a pointer.
         entry = "### Task 2: x\n- Consumes: `totally/missing/file.py` from earlier work\n"
         findings = task_brief.find_consumes_pointers(entry)
         self.assertEqual([p.raw for p in findings.pointers], ["totally/missing/file.py"])
 
     def test_ascii_arrow_bare_file_shaped_path_is_a_pointer(self):
-        # Reviewer repro 2: a plain ASCII "->" (not the unicode "→") next
-        # to a bare, un-backticked path — detection doesn't depend on the
-        # arrow at all, and the token is file-shaped (".py" extension).
+        # A plain ASCII "->" (not the unicode "→") next to a bare,
+        # un-backticked path — detection doesn't depend on the arrow at
+        # all, and the token is file-shaped (".py" extension).
         entry = "### Task 2: x\n- Consumes: thing -> nope/missing.py\n"
         findings = task_brief.find_consumes_pointers(entry)
         self.assertEqual([p.raw for p in findings.pointers], ["nope/missing.py"])
 
     def test_bare_slashed_prose_without_a_dot_is_not_a_pointer(self):
-        # Re-review false positive: "store/records" is prose (the plan's
-        # own Task 2 Consumes line), not a path — no dot in its final
-        # segment, so a bare token stays prose. Same for "read/write" and
-        # "Task 1/2".
+        # "store/records" is prose (the plan's own Task 2 Consumes line),
+        # not a path — no dot in its final segment, so a bare token stays
+        # prose. Same for "read/write" and "Task 1/2".
         entry = ("### Task 2: x\n"
                  "- Consumes: the store/records API, read/write access, Task 1/2 ordering\n")
         findings = task_brief.find_consumes_pointers(entry)
@@ -326,25 +313,25 @@ class TestValidateConsumes(TaskBriefTestCase):
         self.assertIn("missing2/file.py", message)
 
     def test_prose_symbol_token_is_not_validated(self):
-        # Ruling's negative case: a bare, non-path-shaped token in a
-        # Consumes: line (a subcommand name mentioned in prose) must not
-        # be checked against the filesystem at all, even though no file
-        # named "check" exists anywhere.
+        # A bare, non-path-shaped token in a Consumes: line (a subcommand
+        # name mentioned in prose) must not be checked against the
+        # filesystem at all, even though no file named "check" exists
+        # anywhere.
         entry = "### Task 2: x\n- Consumes: `check` contract from spec §6\n"
         task_brief.validate_consumes(entry, str(self.spec_path))  # no raise
 
     def test_ascii_arrow_stale_path_is_caught(self):
-        # Reviewer repro 2, exercised through validate_consumes: previously
-        # this silently passed (arrow-gated detection missed it entirely).
+        # Detection must not depend on the arrow character at all — an
+        # ASCII "->" next to a stale bare path is still caught end to end
+        # through validate_consumes.
         entry = "### Task 2: x\n- Consumes: thing -> nope/missing.py\n"
         with self.assertRaisesRegex(task_brief.BriefValidationError, "nope/missing.py"):
             task_brief.validate_consumes(entry, None)
 
     def test_bare_slashed_prose_is_not_validated(self):
-        # Re-review false positive, end to end: "store/records" is the
-        # plan's own Task 2 phrasing — a bare token with no dot in its
-        # final segment must not block the brief even though no file
-        # literally named "store/records" exists.
+        # "store/records" is the plan's own Task 2 phrasing — a bare token
+        # with no dot in its final segment must not block the brief even
+        # though no file literally named "store/records" exists.
         entry = "### Task 2: x\n- Consumes: the store/records API from earlier work\n"
         task_brief.validate_consumes(entry, None)  # no raise
 
@@ -560,8 +547,8 @@ class TestPunctuationAdjacencyMatrix(TaskBriefTestCase):
         task_brief.validate_consumes(entry, None)  # no raise
 
     def test_glued_section_ref_backticked_stale(self):
-        # Requirement 2's exact repro: a pointer glued directly to a
-        # §-ref with no space at all must still resolve.
+        # A pointer glued directly to a §-ref with no space at all must
+        # still resolve.
         missing = self.tmp / "totally" / "missing.py"
         entry = f"### Task 2: x\n- Consumes: §6→`{missing}`\n"
         with self.assertRaisesRegex(task_brief.BriefValidationError, re.escape(str(missing))):
@@ -684,10 +671,10 @@ class TestBarePathSymbol(TaskBriefTestCase):
         task_brief.validate_consumes(entry, None)  # no raise
 
 
-# --- backticked command span (quality round 2, required fix): a
-# backticked span may contain whitespace — a shell command is idiomatic
-# in this repo's plans — and the real path buried inside it must be
-# recovered and validated, not the command treated as one opaque token ---
+# --- backticked command span: a backticked span may contain whitespace —
+# a shell command is idiomatic in this repo's plans — and the real path
+# buried inside it must be recovered and validated, not the command
+# treated as one opaque token ---
 
 class TestBacktickedCommandSpan(TaskBriefTestCase):
     def test_command_span_extracts_only_the_path_word(self):

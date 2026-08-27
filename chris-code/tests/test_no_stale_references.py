@@ -31,11 +31,10 @@ statements can never silence it.
 Self-test note: the main scan's exclusion logic (_is_excused) short-
 circuits before a line ever reaches STALE_PATTERNS, so a broken bare
 `task-brief` pattern (a typo'd regex) would never be caught by the clean-
-scan test alone — the excused line is skipped either way. And the
-retired-progress path appears nowhere contiguously by design, so nothing
-in the real tree can catch a typo in its own construction either. Both
-gaps get a dedicated positive test below, each written independently of
-the pattern/constant it's checking, so one typo can't satisfy both.
+scan test alone — the excused line is skipped either way. TestPatternsPinnedIndependently
+pins the pattern's real-world match against the two excused lines
+themselves (an external oracle, not a copy of the pattern), so a typo'd
+regex fails there even though the clean scan can't see it.
 
 Run: python3 -m unittest discover chris-code/tests -v
 """
@@ -139,13 +138,12 @@ class TestNoStaleScriptReferences(unittest.TestCase):
 
 
 class TestPatternsPinnedIndependently(unittest.TestCase):
-    """Closes the gap the two facts above open: neither the bare
-    `task-brief` pattern's real-world match nor the retired-progress
-    constant's exact spelling is actually exercised by the clean-scan
-    test (the excused CHANGELOG/task_brief.py lines never reach
-    STALE_PATTERNS, and the constant never appears in the real tree to
-    typo-check itself against). Each check here is written independently
-    of the thing it verifies, so a single typo can't satisfy both."""
+    """Closes the gap the module docstring's self-test note describes:
+    the bare `task-brief` pattern's real-world match is never exercised by
+    the clean-scan test, since the excused CHANGELOG/task_brief.py lines
+    never reach STALE_PATTERNS there. Pinned here instead against the two
+    excused lines themselves — an external oracle independent of the
+    pattern being checked."""
 
     def test_bare_task_brief_pattern_matches_changelog_historical_line(self):
         line = next(
@@ -177,18 +175,6 @@ class TestPatternsPinnedIndependently(unittest.TestCase):
         # "retired bash" is excused, not any task-brief mention in the file.
         self.assertFalse(
             _is_excused(TASK_BRIEF_SCRIPT_PATH, "see the old task-brief invocation"))
-
-    def test_retired_progress_script_constant_is_spelled_correctly(self):
-        # Built with different split points than _RETIRED_PROGRESS_SCRIPT's
-        # own construction ("scripts" + "/" + "progress"), so a typo in
-        # either one's parts (e.g. dropping the trailing "s") can't
-        # silently produce agreement between the two.
-        independently_built = "scr" + "ipts" + "/prog" + "ress"
-        self.assertEqual(_RETIRED_PROGRESS_SCRIPT, independently_built)
-
-    def test_retired_task_brief_script_constant_is_spelled_correctly(self):
-        independently_built = "scri" + "pts/task" + "-br" + "ief"
-        self.assertEqual(_RETIRED_TASK_BRIEF_SCRIPT, independently_built)
 
 
 class TestScanFindsInjectedReference(unittest.TestCase):

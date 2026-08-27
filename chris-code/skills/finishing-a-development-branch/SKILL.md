@@ -162,6 +162,8 @@ First, remove the SDD run artifacts (task briefs, reports, review diffs, ledger 
 rm -rf "$(git rev-parse --git-path sdd)"   # .git/sdd, or .git/worktrees/<name>/sdd in a worktree
 ```
 
+If the session resolved its store with a `--store` override directory (e.g. a worktree-isolated session barred from writing under the shared checkout's `.git`), remove that directory too — it holds the same records, progress log, briefs, and reports, and the disposable-store invariant applies to it exactly as it does to the default location.
+
 In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case.
 
 ```bash

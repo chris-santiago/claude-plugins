@@ -126,11 +126,10 @@ When in doubt, serialize. The cost of a conflict is higher than the cost of wait
 Anything you paste into a dispatch — and anything a subagent prints back — stays resident in your context for the rest of the session. Hand artifacts over as files instead, all under one resolved store directory, per-worktree and uncommitted. Resolve it **once**, at the start of the session, and reuse it everywhere:
 
 ```
-STORE=$(git rev-parse --git-path sdd)
-case "$STORE" in /*) ;; *) STORE="$PWD/$STORE" ;; esac
+STORE=$(python3 scripts/ledger.py store-dir)
 ```
 
-`git rev-parse --git-path sdd` is not reliably absolute by itself: a linked worktree prints an absolute path under `.git/worktrees/<name>/sdd`, while a plain checkout typically prints one relative to the current directory, `.git/sdd` — agents are forbidden from computing their own paths (see below), so the path you hand them must be correct by construction regardless of which form git returns; the two-liner above's `case` handles both, forcing the result absolute either way. Pass `--store "$STORE"` on every `ledger.py`/`task_brief.py` call this session, and build every record path as `$STORE/task-N-<agent-name>.json`. If a worktree-isolated session can't write under the shared checkout's `.git`, override instead — point `STORE` at an in-tree, gitignored directory (e.g. the absolute path of `.claude/sdd` inside your own worktree) and use it identically everywhere; every subcommand accepts `--store DIR`.
+`ledger.py store-dir` is the single authority for the store location, and skills reference it instead of restating the derivation: `git rev-parse --git-path sdd` is not reliably absolute by itself (a linked worktree prints an absolute path under `.git/worktrees/<name>/sdd`, while a plain checkout typically prints one relative to the current directory, `.git/sdd`), so `store-dir` resolves it to the correct absolute path either way — agents are forbidden from computing their own paths (see below), so the path you hand them must be correct by construction regardless of which form git returns underneath. Pass `--store "$STORE"` on every `ledger.py`/`task_brief.py` call this session, and build every record path as `$STORE/task-N-<agent-name>.json`. If a worktree-isolated session can't write under the shared checkout's `.git`, override instead — point `STORE` at an in-tree, gitignored directory (e.g. the absolute path of `.claude/sdd` inside your own worktree) via `STORE=$(python3 scripts/ledger.py store-dir --store DIR)`, then use it identically everywhere; every subcommand accepts `--store DIR`.
 
 - **Task brief:** the brief is a *reference sheet*, not a restatement of the spec. Assemble it with `python3 scripts/task_brief.py PLAN_FILE N --intent "..." [--note "..."]... [--spec SPEC_FILE] [--constraints-from PLAN_FILE] --store "$STORE" -o "$STORE/task-N-brief.md"` (repeat `--note` per cross-task note you hold; `--spec` is required only when the task entry contains a §-ref) — the script extracts the plan's task entry (its actions, `Consumes:` pointers, and spec §-references), embeds the intent and notes you pass it, copies the plan's Constraints verbatim when `--constraints-from` is given, and always appends the shared-shapes section (see Cross-Task Pattern Ledger). It fails loudly — non-zero exit, no file written — on a missing/empty `--intent` or a stale `Consumes:` pointer; fix the plan or the intent rather than routing around the failure. The dispatch carries: (1) one line on where this task fits **and the observable outcome it must produce — the *why* (see Intent below)**; (2) the brief path, introduced as "read this first — your task and the sections to read"; (3) the spec path, where the coder reads the referenced §§; for a contract built by an earlier task, name the file or spec § rather than restating its signature; (4) the Global Constraints copied verbatim; (5) the report-file path; (6) the record path — `$STORE/task-N-<agent-name>.json`, or `$STORE/final-<agent-name>.json` at the whole-change gate, which has no task number (see Whole-Change Commit Gate); (7) the scripts path — the absolute path of this skill's `scripts/` directory (not a repo-root-relative literal: when SDD runs in a user project, the skill lives at the plugin install path, not under the project's own repo root), which every record-writing agent needs to run `ledger.py check` on its own record before returning.
 - **Intent (the *why*) — required:** a coder recovers *what* and *where* by reading the brief, the spec, and the repo, but it cannot recover *why* — the observable outcome this task serves. A fresh subagent does not inherit your conversation, so the brief is intent's only channel: the dispatch must carry it — one or two lines on the outcome this task must produce, quoting the relevant intent-ledger statement where one exists. Hand over the goal, not just the change — a coder given only *what* and *where* optimizes the diff and can ship the wrong thing correctly. If you cannot state the why, the task isn't ready to dispatch (the intent lives only in your head — externalize it or keep the task in-session).
@@ -145,7 +144,7 @@ case "$STORE" in /*) ;; *) STORE="$PWD/$STORE" ;; esac
 You are the only actor who sees the task sequence — briefs carry intent and contracts, coders are scope-disciplined against out-of-task refactoring, reviewers see one diff. Cross-task shape tracking is therefore yours to act on, though the record-keeping itself is now automatic: coders declare `new_shared_symbols` and `duplication_pending` in their typed record (see the coder agent's Typed record section) instead of a prose sentinel, and `ledger.py shapes` derives the shared-shapes list from those records on the fly. Untracked, a shape repeated across tasks still lands as N verbatim copies that every per-task gate passes — the typing removes the "forgot to note it" failure, not the need to act on what's noted.
 
 - **Shapes carry automatically:** every brief `task_brief.py` produces includes the shared-shapes section unconditionally (no flag disables it), so no manual append step is needed to populate it. If a later same-family task needs the pointer called out more directly than the brief's list does, add a cross-task note — "the composite dispatch lives at `<symbol>` — call it, don't re-inline."
-- **On a `duplication_pending` entry** — visible via `python3 scripts/ledger.py open --store "$STORE"` or read straight off a coder's record — assign the hoist to the next task whose footprint covers the owning file, or append a small hoist task if none does. Don't let it ride to the whole-change commit gate — by then the copies are committed and the fix is rework across N commits. Once the hoist lands, run `python3 scripts/ledger.py resolve <id> --note "..." --store "$STORE"` so it stops appearing in `open`.
+- **On a `duplication_pending` entry** — visible via `python3 scripts/ledger.py open --store "$STORE"` or read straight off a coder's record — assign the hoist to the next task whose footprint covers the owning file, or append a small hoist task if none does. Don't let it ride to the whole-change commit gate — by then the copies are committed and the fix is rework across N commits. Once the hoist lands, run `python3 scripts/ledger.py resolve <id> --note "..." --store "$STORE"` so it stops appearing in `open` — `<id>` is content-derived (a digest of the entry, e.g. `task-1-python-coder#duplication_pending[a1b2c3d4]`), not a positional index, so copy it verbatim from `open`'s output rather than constructing it by hand; a rewritten record whose entry changes gets a new id even at the same field.
 - **`ledger.py shapes` is incomplete while any `#malformed` item is open in `ledger.py open`.** A record that fails to parse or fails validation is skipped by `shapes` entirely, so its `new_shared_symbols` (and its `duplication_pending`) stay invisible until the writing agent fixes it with `ledger.py check`. Don't trust `shapes` as complete while `open` still lists a malformed record.
 
 ## Global Constraints
@@ -175,15 +174,15 @@ And before you dispatch: **don't hand a subagent context you've only externalize
 
 ## Handling ⚠️ Items
 
-The spec-reviewer's "⚠️ Cannot verify from diff" line is typed: each item lands in its record's `cannot_verify` field (see spec-reviewer's Typed record) and surfaces in `python3 scripts/ledger.py open --store "$STORE"`, keyed as `<record-stem>#cannot_verify[N]`. These do not block the rest of the review, but resolve each one yourself before marking the task complete: you hold the plan and cross-task context the reviewer lacks. This is the judgment-shaped case from *Judging from Compressed Reports* — ground each item in the actual code, don't act on the ⚠️ label or the `open` summary alone. Once grounded, run `python3 scripts/ledger.py resolve <id> --note "..." --store "$STORE"` so it stops appearing in `open`; a confirmed gap is a failed spec review instead — send it back to the coder and re-review (the re-review overwrites the record and its `cannot_verify` list).
+The spec-reviewer's "⚠️ Cannot verify from diff" line is typed: each item lands in its record's `cannot_verify` field (see spec-reviewer's Typed record) and surfaces in `python3 scripts/ledger.py open --store "$STORE"`, keyed as `<record-stem>#cannot_verify[<digest>]` — content-derived from the entry, not a positional index, so copy the id verbatim from `open`'s output when resolving rather than constructing it by hand. These do not block the rest of the review, but resolve each one yourself before marking the task complete: you hold the plan and cross-task context the reviewer lacks. This is the judgment-shaped case from *Judging from Compressed Reports* — ground each item in the actual code, don't act on the ⚠️ label or the `open` summary alone. Once grounded, run `python3 scripts/ledger.py resolve <id> --note "..." --store "$STORE"` so it stops appearing in `open`; a confirmed gap is a failed spec review instead — send it back to the coder and re-review (the re-review overwrites the record and its `cannot_verify` list).
 
 ## Durable Progress
 
 Conversation memory does not survive compaction; a controller that loses its place can re-dispatch finished tasks. Track progress in the typed store, not only in TodoWrite.
 
-- At start, run `python3 scripts/ledger.py read --store "$STORE"` for the full store as markdown and `python3 scripts/ledger.py open --store "$STORE"` for what's still unresolved. A task with a rendered `- task N: complete` progress-log line is DONE — do not re-dispatch it, even if `open` still lists a `duplication_pending` entry for it; the Pattern Ledger deliberately carries that forward as assigned work for a later task, not as evidence this one is unfinished (see Cross-Task Pattern Ledger and Red Flags). Any *other* open item on a completed task — `cannot_verify`, an unresolved status, a malformed record — means the completion note was wrong; treat it as unfinished and investigate before resuming past it. Resume at the first task without a complete note. If the store belongs to a different branch or a stale run, `python3 scripts/ledger.py clear --store "$STORE"` first.
-- When a task's reviews come back clean, run `python3 scripts/ledger.py append --type progress --task N --note "complete (commits <base7>..<head7>, review clean)" --store "$STORE"` alongside marking it done in TodoWrite. TodoWrite is your live view; the store is the durable recovery map.
-- After compaction, re-resolve `$STORE` (see the two-liner above) since it doesn't survive compaction either, then rebuild the TodoWrite list from `ledger.py read --store "$STORE"` and `ledger.py open --store "$STORE"`, and trust them and `git log` over your own recollection — `open` also surfaces anything left unresolved before the compaction hit (a `duplication_pending` entry, a `cannot_verify` item), not just task completion.
+- At start, run `python3 scripts/ledger.py read --store "$STORE"` for the full store as markdown, `python3 scripts/ledger.py open --store "$STORE"` for what's still unresolved, and `python3 scripts/ledger.py completed --store "$STORE"` for which task ids are done. A task id listed by `completed` is DONE — do not re-dispatch it, even if `open` still lists a `duplication_pending` entry for it; the Pattern Ledger deliberately carries that forward as assigned work for a later task, not as evidence this one is unfinished (see Cross-Task Pattern Ledger and Red Flags). Any *other* open item on a completed task — `cannot_verify`, an unresolved status, a malformed record — means the completion was premature; treat it as unfinished and investigate before resuming past it. Resume at the first task id `completed` does not list. If the store belongs to a different branch or a stale run, `python3 scripts/ledger.py clear --store "$STORE"` first.
+- When a task's reviews come back clean, run `python3 scripts/ledger.py append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"` alongside marking it done in TodoWrite. TodoWrite is your live view; the store — and `ledger.py completed` specifically — is the durable recovery map, a typed entry rather than a prose substring to pattern-match.
+- After compaction, re-resolve `$STORE` (see File Handoffs) since it doesn't survive compaction either, then rebuild the TodoWrite list from `ledger.py read --store "$STORE"`, `ledger.py open --store "$STORE"`, and `ledger.py completed --store "$STORE"`, and trust them and `git log` over your own recollection — `open` also surfaces anything left unresolved before the compaction hit (a `duplication_pending` entry, a `cannot_verify` item), not just task completion.
 
 ## Handling Implementer Status
 
@@ -229,8 +228,8 @@ All dispatches use file handoffs (see File Handoffs): pass brief, report, record
 
 ```
 [Read plan: .claude/output/plans/feature-plan.md]
-[Resolve the store once: STORE=$(git rev-parse --git-path sdd); case "$STORE" in /*) ;; *) STORE="$PWD/$STORE" ;; esac]
-[python3 scripts/ledger.py read --store "$STORE" + open --store "$STORE" → empty store, start at Task 1]
+[Resolve the store once: STORE=$(python3 scripts/ledger.py store-dir)]
+[python3 scripts/ledger.py read --store "$STORE" + open --store "$STORE" + completed --store "$STORE" → empty store, start at Task 1]
 [Extract 5 tasks, map file footprints, group into 3 stages]
 [Stage 1: Tasks 1,2 (disjoint files) | Stage 2: Task 3 | Stage 3: Tasks 4,5 (disjoint)]
 
@@ -245,13 +244,13 @@ Stage 1 — dispatching 2 tasks in parallel:
   Task 1: coder writes task-1-python-coder.json (done, duplication_pending: 1 site) →
     spec reviewer ✅ → quality reviewer ❌ (S3: hidden side effect in helper) → coder
     fixes → quality reviewer ✅ → python-review-lite ✅ (self-derived cycle 1) →
-    `ledger.py append --type progress --task 1 --note "complete (...)" --store "$STORE"`
+    `ledger.py append --type complete --task 1 --note "..." --store "$STORE"`
     → mark complete (the open duplication_pending below doesn't block this — see Durable
     Progress and Red Flags)
   Task 2: coder completes → spec reviewer ✅ → quality reviewer ✅ → python-review-lite ✅
     → mark complete
 
-  [python3 scripts/ledger.py open --store "$STORE" → task-1-python-coder#duplication_pending[0]
+  [python3 scripts/ledger.py open --store "$STORE" → task-1-python-coder#duplication_pending[a1b2c3d4]
    still open; Task 3 owns the file, so its brief carries the pointer as a cross-task note]
 
 Stage 2:
@@ -263,7 +262,7 @@ Stage 2:
   [Task 3 shares conftest.py with Tasks 1,2 — must wait for Stage 1]
 
   Task 3: coder hoists the helper (new_shared_symbols: 1) → reviews pass → commit gate →
-    `ledger.py resolve task-1-python-coder#duplication_pending[0] --note "hoisted in Task 3"
+    `ledger.py resolve task-1-python-coder#duplication_pending[a1b2c3d4] --note "hoisted in Task 3"
     --store "$STORE"` → mark complete
   [Task 4's brief now carries the hoisted helper automatically in its shared-shapes section]
 
@@ -291,8 +290,9 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never start quality review before spec compliance passes
 - Never mark a task complete with a `cannot_verify` item, an unresolved status, or a malformed record still open in `ledger.py open` for that task — an open `duplication_pending` entry alone does not block completion; the Pattern Ledger deliberately assigns its hoist to a later task
 - Never enter the whole-change commit gate with an open `duplication_pending` entry in `ledger.py open` — resolve it (the hoist landed) or reassign it to a task still ahead first
-- Never re-dispatch a task `ledger.py read` lists as complete
+- Never re-dispatch a task `ledger.py completed` lists
 - Never construct a dispatch brief by hand when `task_brief.py` can produce it — a hand-assembled brief skips `Consumes:` validation and the shared-shapes section
+- Never construct a resolution id by hand — ids are content-derived (a digest of the entry), not positional, so copy them verbatim from `ledger.py open`'s output
 - Never pass a `cycle` value in a `*-review-lite` dispatch — dispatches carry no cycle counter; the agent self-derives `cycle` from its own prior record at the same record path
 - Never let a subagent compute its own record or scripts path — the dispatch supplies both, exactly as it supplies the report path
 - Never move to next task while any review has open issues

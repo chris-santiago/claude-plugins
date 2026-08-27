@@ -18,20 +18,26 @@ malformed entry, never hides its siblings. Required-ness is scoped to
 decision-driving fields only; informational fields are unvalidated.
 Totality ("never crash on any input") is explicitly not a goal.
 
-Usage: python3 ledger.py read|open|shapes|clear [--store DIR]
-       python3 ledger.py append --type progress --task N|final --note "..." [--store DIR]
+Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR]
+       python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
-       python3 ledger.py check <record-path>
+       python3 ledger.py check <record-path> [--store DIR]
 
-Importable API (used by task_brief.py): see __all__ below — one list, not
-two, so the two can't drift. Functions raise instead of calling sys.exit,
-so callers own exit codes.
+Importable API: see __all__ below — the module's public query/validate/
+render surface (data classes, `get_store_dir`, the `load_*`/`compute_*`/
+`list_*`/`render_*` functions). `task_brief.py` imports a subset of it
+(`get_store_dir`, `load_records`, `list_shapes`, `render_shapes`); the CLI
+subcommand handlers (`cmd_*`), `build_parser`, and `main` are plumbing
+invoked only through this script's own `main()` and are not part of the
+importable surface. Functions raise instead of calling sys.exit, so
+callers (task_brief.py, tests) own exit codes.
 """
 
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import subprocess
 import sys
@@ -41,8 +47,9 @@ from pathlib import Path
 __all__ = [
     "RecordError", "Record", "OpenItem", "Shape",
     "get_store_dir", "validate_record",
-    "load_records", "load_progress_log", "resolved_ids_from_log",
+    "load_records", "load_progress_log", "resolutions_from_log",
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
+    "completed_task_ids",
 ]
 
 SCHEMA_VERSION = 1
@@ -213,8 +220,12 @@ def load_progress_log(store_dir: Path) -> list[dict]:
     return entries
 
 
-def resolved_ids_from_log(log: list[dict]) -> set[str]:
-    return {entry["resolves"] for entry in log
+def resolutions_from_log(log: list[dict]) -> dict[str, str]:
+    """Every resolution entry's id -> note. `open` needs only the id set
+    (`set(resolutions_from_log(log))`); `resolve`'s already-resolved
+    corrective message needs the note too — one scan of the log serves
+    both instead of each keeping its own near-identical loop."""
+    return {entry["resolves"]: entry.get("note", "") for entry in log
             if entry.get("type") == "resolution" and isinstance(entry.get("resolves"), str)}
 
 
@@ -264,28 +275,14 @@ def _open_items_for_record(rec: Record) -> list[OpenItem]:
                           summary=f"error building open items: {e}", source=rec.stem)]
 
 
-def _build_open_items(rec: Record) -> list[OpenItem]:
-    role, status = rec.data["role"], rec.data["status"]
-    items: list[OpenItem] = []
-    is_open_status = (
-        (role == "coder" and status in CODER_OPEN_STATUSES)
-        or (role != "coder" and status in REVIEWER_OPEN_STATUSES)
-    )
-    if is_open_status:
-        items.append(OpenItem(id=f"{rec.stem}#status", kind="status",
-                               summary=f"{role} status: {status}", source=rec.stem))
-
-    for idx, entry in enumerate(rec.data.get("duplication_pending", [])):
-        items.append(OpenItem(
-            id=f"{rec.stem}#duplication_pending[{idx}]", kind="duplication_pending",
-            summary=_describe_duplication(entry), source=rec.stem))
-
-    for idx, entry in enumerate(rec.data.get("cannot_verify", [])):
-        items.append(OpenItem(
-            id=f"{rec.stem}#cannot_verify[{idx}]", kind="cannot_verify",
-            summary=_describe_cannot_verify(entry), source=rec.stem))
-
-    return items
+def _entry_digest(entry: dict) -> str:
+    """First 8 hex of the sha1 of the entry's canonical JSON — the
+    content-derived component of an entry-level id (spec Sec 6, amended
+    2026-08-27): a resolution id names *what the entry says*, not *where
+    it sits*, so a record rewritten with a different entry at the same
+    position gets a new id and the old resolution can't suppress it."""
+    canonical = json.dumps(entry, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:8]
 
 
 def _describe_duplication(entry: dict) -> str:
@@ -297,6 +294,50 @@ def _describe_duplication(entry: dict) -> str:
 def _describe_cannot_verify(entry: dict) -> str:
     return (f"{entry.get('requirement', '')} — {entry.get('why', '')} "
             f"(should_check: {entry.get('should_check', '')})")
+
+
+_FIELD_DESCRIBERS = {
+    "duplication_pending": _describe_duplication,
+    "cannot_verify": _describe_cannot_verify,
+}
+
+
+def _build_open_items(rec: Record) -> list[OpenItem]:
+    role, status = rec.data["role"], rec.data["status"]
+    items: list[OpenItem] = []
+    is_open_status = (
+        (role == "coder" and status in CODER_OPEN_STATUSES)
+        or (role != "coder" and status in REVIEWER_OPEN_STATUSES)
+    )
+    if is_open_status:
+        items.append(OpenItem(id=f"{rec.stem}#status", kind="status",
+                               summary=f"{role} status: {status}", source=rec.stem))
+
+    # Entry-level items are read only from fields the per-role validation
+    # table (DECISION_LIST_FIELDS) actually requires for this record's
+    # role, filtered to the kinds that are open-item-producing
+    # (RESOLVABLE_KINDS) rather than shape-producing (new_shared_symbols).
+    # A field an unvalidated role happens to carry (e.g. a stray
+    # duplication_pending on a spec-reviewer record) is never read: it
+    # was never validated, so it must never drive an open item either.
+    for field_name in DECISION_LIST_FIELDS.get(role, ()):
+        if field_name not in RESOLVABLE_KINDS:
+            continue
+        describe = _FIELD_DESCRIBERS[field_name]
+        for entry in rec.data.get(field_name, []):
+            try:
+                summary = describe(entry)
+            except Exception as e:
+                # Names the offending sub-field, not just "something in
+                # this record failed to render" — the error is `check`'s
+                # correction (spec Sec 7).
+                raise RuntimeError(f"{field_name} entry {entry!r} failed to render: {e}") from e
+            digest = _entry_digest(entry)
+            items.append(OpenItem(
+                id=f"{rec.stem}#{field_name}[{digest}]", kind=field_name,
+                summary=summary, source=rec.stem))
+
+    return items
 
 
 def list_shapes(records: list[Record]) -> list[Shape]:
@@ -349,11 +390,31 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         lines.append("")
         if entry.get("type") == "progress":
             lines.append(f"- task {entry.get('task')}: {entry.get('note', '')}")
+        elif entry.get("type") == "complete":
+            lines.append(f"- task {entry.get('task')} **COMPLETE**: {entry.get('note', '')}")
         elif entry.get("type") == "resolution":
             lines.append(f"- resolves `{entry.get('resolves')}`: {entry.get('note', '')}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
+
+
+def completed_task_ids(log: list[dict]) -> list[str]:
+    """Task ids with a typed `"type": "complete"` entry in progress.jsonl,
+    in first-seen order, deduplicated. The machine-readable answer to
+    "what's done" — post-compaction recovery queries this instead of
+    pattern-matching a prose note in rendered markdown (spec Sec 6,
+    amended 2026-08-27)."""
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for entry in log:
+        if entry.get("type") != "complete":
+            continue
+        task_id = str(entry.get("task"))
+        if task_id not in seen_set:
+            seen_set.add(task_id)
+            seen.append(task_id)
+    return seen
 
 
 def cmd_read(store_dir: Path) -> None:
@@ -362,7 +423,7 @@ def cmd_read(store_dir: Path) -> None:
 
 def cmd_open(store_dir: Path) -> None:
     records = load_records(store_dir)
-    resolved = resolved_ids_from_log(load_progress_log(store_dir))
+    resolved = set(resolutions_from_log(load_progress_log(store_dir)))
     items = compute_open_items(records, resolved)
     if not items:
         print("No open items.")
@@ -375,9 +436,18 @@ def cmd_shapes(store_dir: Path) -> None:
     print(render_shapes(list_shapes(load_records(store_dir))))
 
 
-def cmd_append(store_dir: Path, task: int | str, note: str) -> None:
+def cmd_completed(store_dir: Path) -> None:
+    for task_id in completed_task_ids(load_progress_log(store_dir)):
+        print(task_id)
+
+
+def cmd_store_dir(store_dir: Path) -> None:
+    print(store_dir)
+
+
+def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> None:
     store_dir.mkdir(parents=True, exist_ok=True)
-    _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": "progress", "task": task, "note": note})
+    _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": entry_type, "task": task, "note": note})
 
 
 def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
@@ -388,10 +458,7 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
     note) from "never was open" (the id never matched a resolvable item;
     the message lists what's actually open right now)."""
     log = load_progress_log(store_dir)
-    already_resolved = {}
-    for entry in log:
-        if entry.get("type") == "resolution" and isinstance(entry.get("resolves"), str):
-            already_resolved[entry["resolves"]] = entry.get("note", "")
+    already_resolved = resolutions_from_log(log)
     if resolve_id in already_resolved:
         raise RecordError(
             f"{resolve_id!r} already resolved (note: {already_resolved[resolve_id]!r})")
@@ -430,18 +497,43 @@ def cmd_clear(store_dir: Path) -> None:
         progress_path.unlink()
 
 
-def cmd_check(record_path: str) -> None:
-    """Write-time gate: strict parse + validation; silent on success."""
-    path = Path(record_path)
+def _resolve_check_path(record_path: str, store: str | None) -> Path:
+    """A bare filename (no path separator, e.g. "task-1-python-coder.json")
+    resolves against the store directory; anything else — relative or
+    absolute, with a directory component — is used exactly as given,
+    relative to the current working directory, and never touches the
+    store at all. --store must never be accepted-and-ignored for `check`
+    (spec Sec 6, amended 2026-08-27), but resolving it is deferred to
+    exactly the bare-filename case, so a fully-qualified record path
+    (the common case: the dispatch hands agents an absolute path) doesn't
+    gain a new git-repository dependency it never had."""
+    if "/" in record_path or "\\" in record_path:
+        return Path(record_path)
+    return get_store_dir(store) / record_path
+
+
+def cmd_check(record_path: str, store: str | None = None) -> None:
+    """Write-time gate: strict parse + validation, then the same
+    item-construction path `open` uses (spec Sec 6, amended 2026-08-27) —
+    so a record that passes `check` cannot later render as malformed at
+    query time. Silent on success."""
+    path = _resolve_check_path(record_path, store)
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        raise RecordError(f"cannot read {record_path}: {e}") from e
+        raise RecordError(f"cannot read {path}: {e}") from e
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise RecordError(f"invalid JSON in {record_path}: {e}") from e
+        raise RecordError(f"invalid JSON in {path}: {e}") from e
     validate_record(data)
+
+    rec = Record(stem=path.stem, ok=True, data=data)
+    try:
+        _build_open_items(rec)
+    except Exception as e:
+        raise RecordError(
+            f"{path}: passes validation but fails to render as an open item: {e}") from e
 
 
 def _task_arg(value: str) -> int | str:
@@ -470,9 +562,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("read", parents=[store_parent], help="render the full store as markdown")
     sub.add_parser("open", parents=[store_parent], help="list unresolved open items")
     sub.add_parser("shapes", parents=[store_parent], help="list shared symbols recorded so far")
+    sub.add_parser("completed", parents=[store_parent],
+                    help="list completed task ids, one per line")
+    sub.add_parser("store-dir", parents=[store_parent],
+                    help="print the resolved absolute store directory")
 
     p_append = sub.add_parser("append", parents=[store_parent], help="append a progress note")
-    p_append.add_argument("--type", required=True, choices=["progress"])
+    p_append.add_argument("--type", required=True, choices=["progress", "complete"])
     p_append.add_argument("--task", required=True, type=_task_arg,
                            help="positive task number, or 'final' for the whole-change gate")
     p_append.add_argument("--note", required=True)
@@ -488,7 +584,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_check = sub.add_parser("check", parents=[store_parent],
                               help="validate a single record file (write-time gate)")
-    p_check.add_argument("record_path", help="path to the record JSON file to validate")
+    p_check.add_argument("record_path", help="path to the record JSON file to validate; "
+                                              "a bare filename resolves against --store")
 
     return parser
 
@@ -497,7 +594,7 @@ def main() -> None:
     args = build_parser().parse_args()
     try:
         if args.command == "check":
-            cmd_check(args.record_path)
+            cmd_check(args.record_path, args.store)
             return
         store_dir = get_store_dir(args.store)
         if args.command == "read":
@@ -506,8 +603,12 @@ def main() -> None:
             cmd_open(store_dir)
         elif args.command == "shapes":
             cmd_shapes(store_dir)
+        elif args.command == "completed":
+            cmd_completed(store_dir)
+        elif args.command == "store-dir":
+            cmd_store_dir(store_dir)
         elif args.command == "append":
-            cmd_append(store_dir, args.task, args.note)
+            cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":
