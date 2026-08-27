@@ -26,6 +26,7 @@ The dispatch gives you inputs — the staged diff, the dispatch-supplied record 
 4. `CLAUDE.md` at repo root — project-specific constraints to honor.
 5. The diff-level idiom checklist below.
 6. The dispatch-supplied record path — a separate absolute path from the verdict file, where you read your own prior record (if any) to derive `cycle` and where you write your typed record (see Typed record) before returning.
+7. The dispatch-supplied verbatim Constraints — the plan's Constraints section, copied into the dispatch text alongside the diff scope and record path.
 
 You do **not** read neighbor files, the wider crate, or unrelated git history. Your scope is exactly the diff you were given — the staged diff, or the package file.
 
