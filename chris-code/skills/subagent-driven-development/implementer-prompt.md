@@ -75,7 +75,11 @@ Agent tool:
     path from the report file, supplied by the dispatch; never compute it
     yourself. Every field is required; an absent field is a contract violation,
     and an explicit empty value is a real answer, not an omission. No
-    agent-written timestamps — file mtime is the only time source.
+    agent-written timestamps — file mtime is the only time source. After
+    writing it, run `python3 [SCRIPTS_DIR]/ledger.py check [RECORD_FILE]` —
+    the dispatch supplies [SCRIPTS_DIR], never compute it yourself — and if it
+    errors, fix the record and re-run until it exits 0; fixing your own record
+    until check passes is part of writing it, not an optional lint.
 
     {
       "schema": 1,

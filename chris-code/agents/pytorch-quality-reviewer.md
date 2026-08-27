@@ -109,7 +109,7 @@ In addition to ML-specific bugs, check for general Python issues:
 
 ## Typed record
 
-Before returning, write a JSON record to the dispatch-supplied record path — an absolute path supplied by the dispatch; never compute it yourself. This is the one write you perform; everywhere else you remain read-only on the checkout (see Rules). Every field is required; an absent field is a contract violation, and an explicit empty value is a real answer, not an omission. No agent-written timestamps — file mtime is the only time source.
+Before returning, write a JSON record to the dispatch-supplied record path — an absolute path supplied by the dispatch; never compute it yourself. This is the one write you perform; everywhere else you remain read-only on the checkout (see Rules). Every field is required; an absent field is a contract violation, and an explicit empty value is a real answer, not an omission. No agent-written timestamps — file mtime is the only time source. After writing it, run `python3 <scripts-path>/ledger.py check <your-record-path>` — `<scripts-path>` is the dispatch-supplied scripts path, never compute it yourself — and if it errors, fix the record and re-run until it exits 0; fixing your own record until check passes is part of writing it, not an optional lint.
 
 ```json
 {
