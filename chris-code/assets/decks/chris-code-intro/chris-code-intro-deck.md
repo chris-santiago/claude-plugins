@@ -135,6 +135,16 @@ Work is offloaded to subagents to keep the **orchestrator** (the main planning s
 
 ---
 
+## Typed handoffs — two chains
+
+Nothing passes through the orchestrator as prose. Artifacts move as **files** in a per-run store, on two chains with different consumers.
+
+![w:860](assets/two_chains.svg)
+
+Records are validated at write time (`ledger.py check`) — the agent fixes its own record, with its own context, until the check passes.
+
+---
+
 ## Parallelism without collisions
 
 Independent tasks run concurrently — after the orchestrator maps each task's file footprint to prove they don't collide.

@@ -56,7 +56,7 @@ The "why" box is the payoff. The ledger lives *outside* the spec on purpose. A s
 **Details not on the slide**
 
 - "Observable acceptance statement" means something you could watch the running system do and judge met-or-not — not an implementation step, not a design decision.
-- This connects directly to slide 12, step 5: the spec-blind intent re-check reads this exact ledger.
+- This connects directly to slide 13, step 5: the spec-blind intent re-check reads this exact ledger.
 
 ---
 
@@ -115,7 +115,7 @@ End with the forward hook: this leanness isn't just tidiness. The lean spec is t
 
 **Details not on the slide**
 
-- This is the sharpest divergence from the parent project, whose plans included full code "as if the engineer has zero context." Coming up on slide 13.
+- This is the sharpest divergence from the parent project, whose plans included full code "as if the engineer has zero context." Coming up on slide 14.
 - "Word-efficiency" is an explicit principle in the skill: every line must be load-bearing; length is treated as a smell.
 
 ---
@@ -126,7 +126,7 @@ Now the payoff of lean artifacts. chris-code offloads focused work to subagents 
 
 Use the figure to make it concrete. The orchestrator hands the coder a *brief* — mostly pointers: the contract built in an earlier task lives here, read these spec sections, obey these constraints verbatim. But look at the highlighted line: INTENT. A fresh coder can recover *what* and *where* by reading the spec and the repo. It cannot recover *why* — the outcome the change is supposed to produce — because that lived only in your conversation. So the brief must carry it. The grey panel states the whole lesson: hand over only what and where, and a capable coder will ship the wrong thing correctly.
 
-Mention the return leg briefly (bottom-left of the figure): what a subagent hands back is a compression, so the orchestrator re-reads the actual code slice rather than trusting the summary.
+Mention the return leg briefly (bottom-left of the figure): what a subagent hands back is a compression — and the next slide shows the machinery that keeps that compression honest in both directions.
 
 **Details not on the slide**
 
@@ -135,7 +135,24 @@ Mention the return leg briefly (bottom-left of the figure): what a subagent hand
 
 ---
 
-## Slide 10 — Parallelism without collisions
+## Slide 10 — Typed handoffs: two chains
+
+This slide is the mechanism behind the return-leg comment you just made. The figure splits every artifact in the run store into two lanes by who consumes it.
+
+Top lane, the reasoning chain: brief → report → verdict, all markdown, all handed **between agents by path**. Reviewers read the coder's report in the coder's words; a coder sent back to fix reads the reviewer's findings in the reviewer's words. The orchestrator carries the pointers and never restates — restating is where a finding quietly loses its severity, its file:line, or its reasoning.
+
+Bottom lane, the decision chain: every coder and reviewer also writes a small JSON record — a status from a per-role enum plus the few fields control flow consumes. The orchestrator steers by querying `ledger.py` views, never by scanning prose for sentinels. Land the closing line under the figure: the record is validated *at write time* — the agent runs `ledger.py check` on its own record and fixes it until the check passes, so what reaches the orchestrator is valid by construction, corrected while the author still had the context to correct it.
+
+If asked how the orchestrator handles a judgment call it can't take on faith: it doesn't re-read the code itself — it states one decidable claim and dispatches the `claim-checker` agent, which answers with a verdict word plus verbatim quoted lines. Evidence is mandatory, and quotation terminates the chain.
+
+**Details not on the slide**
+
+- The store is `.sdd/` at the repo toplevel — per-worktree, self-gitignored, disposable per run.
+- The tagline if you want one: prose is for minds, records are for steering; the hub holds pointers.
+
+---
+
+## Slide 11 — Parallelism without collisions
 
 Dispatch raises an obvious worry: if you run several coders at once, don't they collide? chris-code's answer is scheduling, not prohibition. Before dispatching, the orchestrator maps each task's file footprint — every source and test file it will touch — and groups tasks into stages where nothing overlaps.
 
@@ -150,7 +167,7 @@ The contrast with the parent project is the punchline: superpowers lists paralle
 
 ---
 
-## Slide 11 — Principle 5: prove it, honestly
+## Slide 12 — Principle 5: prove it, honestly
 
 chris-code runs a lot of review gates, and the honest slide is the one that says: green does not mean correct. This is where the framework earns trust by *not* overclaiming.
 
@@ -165,7 +182,7 @@ Define conformance because it's the crux: conformance asks "does the code match 
 
 ---
 
-## Slide 12 — The completion gate
+## Slide 13 — The completion gate
 
 Make the previous slide concrete: here is the actual gate that runs before anything is called done. Six steps, in order, and a failing step stops the line. Tests: full suite, zero failures. Lints: zero warnings. Design review: the senior read-only reviewers return PASS or CONCERNS. Requirements: every spec item traced to both the code that implements it and a test that verifies it. Step five, the one that matters most: a spec-blind intent-reviewer compares the shipped behavior to the frozen ledger from slide 4. And step six, when the change includes testable source: a mutation-tester deliberately breaks the changed code in an isolated worktree — no external tool, just an edit plus the project's own tests — and gates on any test that runs the code but doesn't fail when it's broken.
 
@@ -178,7 +195,7 @@ Stress two things. First, a PASS is not "nothing to do" — a gate can pass whil
 
 ---
 
-## Slide 13 — Zooming out: the surface area
+## Slide 14 — Zooming out: the surface area
 
 Having walked the pipeline, pull back and show the whole toolbox — because newcomers routinely underestimate the breadth. Twenty-five skills, organized into eight functional groups: design and planning, execution, the change engine, testing, completion, review, quality campaigns, and meta. The reassuring part to say out loud: you don't memorize these. Most fire automatically — invoked by the pipeline, by another skill, or by a phrase in your request — so you describe the work and the right skill runs.
 
@@ -191,7 +208,7 @@ Then land the quiet thesis on the figure's footer: even at the skill layer, thir
 
 ---
 
-## Slide 14 — One coder, twelve checkers
+## Slide 15 — One coder, twelve checkers
 
 This is the slide that makes the breadth *mean* something. Fifteen dedicated agents — a layer superpowers doesn't have at all — and the split is stark: three write code, twelve check it. The row of squares makes it visceral; three blue, twelve amber.
 
@@ -206,7 +223,7 @@ Note the dispatch mechanic in passing, because the next-but-one slide develops i
 
 ---
 
-## Slide 15 — Lineage: a superset of superpowers
+## Slide 16 — Lineage: a superset of superpowers
 
 Give credit and context. chris-code didn't appear from nowhere; it forked from the open-source *superpowers* project at v5.1.0 and kept the entire brainstorm → plan → execute → review → finish spine. If someone in the room knows superpowers, tell them they already know most of this. The inventory deltas tell the story: skills grew 14 → 25, agents 0 → 14, and a legacy hook went 1 → 0. Every superpowers skill still exists in chris-code — one renamed, one split — so it's a true superset, not a rewrite.
 
@@ -219,7 +236,7 @@ Don't dwell here unless the audience is superpowers users. The single sentence t
 
 ---
 
-## Slide 16 — The dispatch difference
+## Slide 17 — The dispatch difference
 
 This is the slide to slow down on, because it's the advantage people most often miss. Both projects dispatch subagents. The difference is *what the agent already knows when it arrives*. In superpowers, coding and review run through **generic** subagents steered by a prompt template the orchestrator supplies each time — so code quality depends on the orchestrator remembering to ask for it. If the prompt doesn't mention cohesion, idiom, and API design, the reviewer doesn't check them.
 
@@ -228,11 +245,11 @@ chris-code inverts the burden. Each agent is a **named, scoped role whose system
 **Details not on the slide**
 
 - Concrete dispatch example: in a PyTorch repo, `pytorch-coder` beats `python-coder` automatically, and both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on the diff.
-- This is why the ratio on slide 14 actually buys something: twelve checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
+- This is why the ratio on slide 15 actually buys something: twelve checkers only help if each one reliably checks the right things — which the scoped system prompts guarantee.
 
 ---
 
-## Slide 17 — When to use it (and when not)
+## Slide 18 — When to use it (and when not)
 
 Be honest about fit, which builds credibility. Reach for chris-code when the change is substantial enough to deserve a design and a review, when you want intent settled before code and drift caught before `main`, and when you work in Python or Rust — because the coder and review agents are language-scoped (the workflow skills themselves are language-agnostic).
 
@@ -245,7 +262,7 @@ And the counter-case, stated plainly: if you just want a quick one-off answer, y
 
 ---
 
-## Slide 18 — Recap: five ideas
+## Slide 19 — Recap: five ideas
 
 Land the five takeaways as a memorable set. Design before code — brainstorming is a hard gate and intent is frozen in your words. Determined isn't design-open — settled behavior routes to the coherent-change engine, which defends its choice rather than shipping the first thing that works. Lean artifacts — contracts stay, choreography goes, and that leanness is what makes dispatch lossless. Dispatch by scope but carry intent — a fresh agent recovers what and where by reading, so the brief must carry the why. And green isn't correct — assurance comes from the independent checks, not the number of passes.
 
@@ -253,5 +270,5 @@ Close on the four-verb summary: design it, defend it, dispatch it, prove it. The
 
 **Details not on the slide**
 
-- If you have time for one deeper thread, the richest is slide 6–7 (coherent change); if you have to cut, cut slide 10 (parallelism) — it's mechanics, not philosophy.
+- If you have time for one deeper thread, the richest is slide 6–7 (coherent change); if you have to cut, cut slide 11 (parallelism) — it's mechanics, not philosophy.
 - The docs site has a dedicated "Coherent change" explanation page that expands slide 6–7, including how coherence is preserved when a change fans out across parallel tasks.

@@ -8,6 +8,10 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-28 — Typed handoffs & grounded integration
+
+The typed handoff layer: agents hand reasoning to each other as files and decisions to the orchestrator as validated JSON records, the store moves out of `.git/`, and judgment-shaped verdicts are grounded by a dedicated quoting agent instead of orchestrator re-reads.
+
 ### Added
 - **`claim-checker` agent** (haiku, read-only, non-judging): settles one decidable factual claim about code by quoting the lines that answer it (`holds` / `does-not-hold` / `not-decidable-by-reading`, evidence mandatory). `subagent-driven-development` now grounds judgment-shaped verdicts and spec-reviewer `cannot_verify` items **by dispatch, not by reading** — the orchestrator formulates a decidable claim and the checker does the looking, so grounding stops costing the context the file handoffs protect. Agent count: 15.
 - **Typed handoff layer** in `subagent-driven-development`: the nine per-task-loop agents write JSON records validated against a shared contract (`scripts/ledger.py` — `check` as the agent's own write-time gate, `open`/`resolve` with content-derived ids, `shapes`, typed completion), and `scripts/task_brief.py` gates briefs on an intent statement and validates `Consumes:` pointers. Backed by a stdlib-only test suite under `chris-code/tests/`.
@@ -22,6 +26,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 - **Discovery skills now route to remediation.** `code-archaeology`, `bug-hunt`, and `technical-review` terminate at their artifact and **offer** batch remediation (bug-type → `remediating-issues`, structural → `coherent-change` batch) or defer — closing the previously-manual discovery→remediation seam.
 - **`python-review` / `rust-review` no longer apply patches.** They stay interactive discovery and route their proposed end-states through `coherent-change`, which finds the method and runs the close.
 - **`remediating-issues`' Batch Path** is now a bug-framed caller of `coherent-change` batch mode (one consolidated spec → plan), not per-issue fan-out.
+- **Docs, guide, and intro deck teach the two-chain flow**: markdown artifacts (brief → report → verdict) are the reasoning chain between agents, JSON records the decision chain to the orchestrator — new guide section, new deck slide with a `two_chains` figure, and a "two chains" paragraph in execution-mechanics.
+
+### Fixed
+- **A dispatch that omits the record path is now refused, not silently accommodated**: the first live trial produced no typed records because the orchestrator's dispatch stopped at the report instruction and the coder, told never to compute paths, silently skipped its record. The Report-file bullet now names dispatch elements 6–7, and every record-writing contract stops and asks (`NEEDS_CONTEXT` / refusal) when the record or scripts path is missing.
+- **Stale grounding prose retired**: execution-mechanics, the assurance model, context-and-dispatch, the README's integrator-grounding bullet, and the deck companion all said the orchestrator "re-reads the actual code slice" — updated to the ground-by-dispatch (`claim-checker`) model; `scope-dispatch.md` gains the claim-checker row; the guide's pre-existing stale 13-agent counts fixed.
 
 ## [0.3.0] - 2026-06-26 — Rigor hardening & documentation
 

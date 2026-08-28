@@ -507,6 +507,56 @@ def fig_agent_ratio():
 
 
 # --------------------------------------------------------------------------
+# FIG 8b — typed handoffs: the two chains
+# --------------------------------------------------------------------------
+def fig_two_chains():
+    s = SVG(1080, 440)
+    s.text(540, 34, "Two chains through one store (.sdd/)", 23, BLUE,
+           weight="bold")
+
+    bw, bh, gap = 240, 86, 60
+    x0 = (1080 - (3 * bw + 2 * gap)) / 2
+
+    # reasoning chain (markdown, agent -> agent)
+    y = 110
+    s.text(x0, y - 16, "REASONING — markdown, agent → agent, handed by path",
+           15, BLUE, weight="bold", anchor="start")
+    reasoning = [
+        ("brief", ["pointers + intent"]),
+        ("report", ["coder's reasoning"]),
+        ("verdict", ["reviewer's findings,", "read in its own words"]),
+    ]
+    for i, (name, sub) in enumerate(reasoning):
+        x = x0 + i * (bw + gap)
+        box(s, x, y, bw, bh, name, sub, fill=FILL_BLUE, stroke=BLUE, tsize=20)
+        if i < 2:
+            s.arrow(x + bw + 3, y + bh / 2, x + bw + gap - 3, y + bh / 2,
+                    stroke=BLUE, w=2.4)
+
+    # decision chain (JSON records, agent -> orchestrator)
+    y = 268
+    s.text(x0, y - 16, "DECISION — typed JSON records, agent → orchestrator",
+           15, ORANGE, weight="bold", anchor="start")
+    decision = [
+        ("typed record", ["task-N-<agent>.json,", "checked at write time"]),
+        ("ledger.py", ["open · completed · shapes"]),
+        ("orchestrator", ["steers on fields,", "never scans prose"]),
+    ]
+    for i, (name, sub) in enumerate(decision):
+        x = x0 + i * (bw + gap)
+        box(s, x, y, bw, bh, name, sub, fill=FILL_ORANGE, stroke=ORANGE, tsize=20)
+        if i < 2:
+            s.arrow(x + bw + 3, y + bh / 2, x + bw + gap - 3, y + bh / 2,
+                    stroke=ORANGE, w=2.4)
+
+    s.text(540, 408,
+           "Prose is for minds; records are for steering. The hub holds pointers "
+           "— restating is where a finding loses its severity and its file:line.",
+           15, GRAY, style="italic")
+    s.save("two_chains.svg")
+
+
+# --------------------------------------------------------------------------
 # FIG 9 — lineage from superpowers
 # --------------------------------------------------------------------------
 def fig_lineage():
@@ -609,5 +659,6 @@ if __name__ == "__main__":
     fig_assurance()
     fig_skill_groups()
     fig_agent_ratio()
+    fig_two_chains()
     fig_lineage()
     fig_dispatch_diff()

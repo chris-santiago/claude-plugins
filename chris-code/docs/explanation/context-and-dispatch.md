@@ -30,4 +30,4 @@ Briefs are reference sheets, not restatements of the spec. They carry pointers �
 
 ## The integrator side
 
-Dispatch has a return leg, too. Whatever a subagent hands back is a *compression*, and the orchestrator decides what to integrate from it — one step removed from the evidence. That seam has its own discipline (re-read the slice behind a judgment, escalate with evidence not a paraphrase), covered in [The assurance model](the-assurance-model.md#the-integrator-is-the-unguarded-seam).
+Dispatch has a return leg, too. Whatever a subagent hands back is a *compression*, and the orchestrator decides what to integrate from it — one step removed from the evidence. That seam has its own discipline (ground a judgment by `claim-checker` dispatch rather than re-reading the code yourself, escalate with evidence not a paraphrase), covered in [The assurance model](the-assurance-model.md#the-integrator-is-the-unguarded-seam).

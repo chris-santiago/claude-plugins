@@ -185,7 +185,7 @@
   .viz-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
   .viz-row .n { font-family: var(--mono); font-weight: 700; font-size: 22px; font-variant-numeric: tabular-nums; }
   .viz-row .lab { font-size: 13px; color: var(--muted); }
-  .squares { display: grid; grid-template-columns: repeat(13, 1fr); gap: 7px; margin: 8px 0 22px; }
+  .squares { display: grid; grid-template-columns: repeat(15, 1fr); gap: 7px; margin: 8px 0 22px; }
   .sq { aspect-ratio: 1; border-radius: 5px; }
   .sq.build { background: var(--build); }
   .sq.assure { background: var(--assure); }
@@ -314,6 +314,7 @@
       <a href="#assurance">assurance</a>
       <a href="#skills">skills</a>
       <a href="#agents">agents</a>
+      <a href="#handoffs">handoffs</a>
       <a href="#dispatch">dispatch</a>
       <a href="#superpowers">superpowers</a>
       <a href="#start">start</a>
@@ -325,11 +326,11 @@
   <div class="wrap hero-inner">
     <p class="eyebrow">The complete guide</p>
     <h1>Claude Code, with an opinion about <span class="cc">how</span> to build.</h1>
-    <p class="lede"><span class="mono">chris-code</span> turns Claude Code from a free-form chat assistant into a spec-driven engineering workflow: settle intent, design before code, dispatch focused agents, and gate drift before it reaches <span class="mono">main</span>. It ships <strong>25 skills</strong> and a <strong>13-agent</strong> layer — and where that breadth is spent tells you what it values.</p>
+    <p class="lede"><span class="mono">chris-code</span> turns Claude Code from a free-form chat assistant into a spec-driven engineering workflow: settle intent, design before code, dispatch focused agents, and gate drift before it reaches <span class="mono">main</span>. It ships <strong>25 skills</strong> and a <strong>15-agent</strong> layer — and where that breadth is spent tells you what it values.</p>
     <div class="counts">
       <div class="count"><b>25</b><span>skills · 8 groups</span></div>
-      <div class="count"><b>13</b><span>scoped agents</span></div>
-      <div class="count hl"><b>3&nbsp;:&nbsp;10</b><span>coders vs. checkers</span></div>
+      <div class="count"><b>15</b><span>scoped agents</span></div>
+      <div class="count hl"><b>3&nbsp;:&nbsp;12</b><span>coders vs. checkers</span></div>
       <div class="count"><b>1</b><span>fixed pipeline</span></div>
     </div>
   </div>
@@ -606,6 +607,47 @@
   </div>
 </section>
 
+<!-- ============ HANDOFFS ============ -->
+<section id="handoffs">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Typed handoffs · how information survives the hub</p>
+      <h2>Reasoning flows between agents. Decisions flow to the orchestrator. The hub holds pointers.</h2>
+      <p>Every hop through the orchestrator is a <em>compression</em> — restating a finding is where it quietly loses its severity, its <span class="mono">file:line</span>, or its reasoning. So nothing is pasted or paraphrased: artifacts move as files under one per-run store (<span class="mono">.sdd/</span>, self-gitignored), split into two chains with different consumers.</p>
+    </div>
+
+    <div class="two" style="margin-bottom:30px">
+      <div class="usecard" style="border-top:4px solid var(--navy)">
+        <h4>The reasoning chain — markdown, agent to agent</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px"><span class="mono">brief → report → verdict</span>. Reviewers read the coder's report (then verify against the actual code); a coder re-dispatched on a failed review reads the reviewer's findings <em>in the reviewer's own words</em>, handed over by path. The orchestrator carries the pointers, not the prose.</p>
+        <p class="pull">Findings hand over by path, never by paraphrase.</p>
+      </div>
+      <div class="usecard" style="border-top:4px solid var(--assure)">
+        <h4>The decision chain — JSON records, agent to orchestrator</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">Every coder and reviewer also writes a small typed record: a status from a per-role enum, plus the fields control flow consumes — <span class="mono">duplication_pending</span>, <span class="mono">cannot_verify</span>, <span class="mono">new_shared_symbols</span>. The orchestrator steers by querying <span class="mono">ledger.py</span> views (<span class="mono">open</span>, <span class="mono">completed</span>, <span class="mono">shapes</span>), never by scanning prose for sentinels.</p>
+        <p class="pull">Prose is for minds; records are for steering.</p>
+      </div>
+    </div>
+
+    <div class="ledger" style="margin-bottom:30px">
+      <p class="lbl">The write-time gate</p>
+      <h4>Records are corrected by the agent that wrote them, while it still has context.</h4>
+      <p>After writing its record, every agent runs <span class="mono">ledger.py check</span> against it. A contract violation raises a corrective error naming the field, the bad value, and the allowed set — and the agent fixes and re-runs until it exits clean. What reaches the orchestrator is valid by construction, so the hub never reads defensively. A dispatch that omits the record path is refused, not silently accommodated.</p>
+    </div>
+
+    <div class="two">
+      <div class="usecard" style="border-top:4px solid var(--navy)">
+        <h4>Judgment calls are grounded by dispatch</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0">A judgment-shaped verdict (“this duplicates X,” a “cannot verify”) is never integrated on trust or re-read by the hub. The orchestrator states one decidable claim and dispatches <span class="mono">claim-checker</span>, which answers with a verdict word <em>plus verbatim quoted lines</em> — evidence mandatory, and quotation terminates the chain.</p>
+      </div>
+      <div class="usecard" style="border-top:4px solid var(--assure)">
+        <h4>State survives context loss</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0">Completions are typed entries (<span class="mono">ledger.py completed</span>), open items resolve by content-derived ids copied verbatim, and shared shapes auto-carry into every later brief with no manual step. After compaction, the orchestrator rebuilds from the store — data, not recollection.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ DISPATCH ============ -->
 <section id="dispatch">
   <div class="wrap">
@@ -652,7 +694,7 @@
           <thead><tr><th>Inventory</th><th class="num">superpowers</th><th class="num">chris-code</th></tr></thead>
           <tbody>
             <tr><td>Skills</td><td class="num">14</td><td class="num grow">25</td></tr>
-            <tr><td>Agents</td><td class="num">0</td><td class="num grow">13</td></tr>
+            <tr><td>Agents</td><td class="num">0</td><td class="num grow">15</td></tr>
             <tr><td>Commands</td><td class="num">0</td><td class="num">0</td></tr>
             <tr><td>Hooks</td><td class="num">1</td><td class="num">0</td></tr>
           </tbody>
