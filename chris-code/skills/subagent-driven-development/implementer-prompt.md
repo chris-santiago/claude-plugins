@@ -79,7 +79,10 @@ Agent tool:
     writing it, run `python3 [SCRIPTS_DIR]/ledger.py check [RECORD_FILE]` —
     the dispatch supplies [SCRIPTS_DIR], never compute it yourself — and if it
     errors, fix the record and re-run until it exits 0; fixing your own record
-    until check passes is part of writing it, not an optional lint.
+    until check passes is part of writing it, not an optional lint. If this
+    dispatch reached you with no [RECORD_FILE] or no [SCRIPTS_DIR] filled in,
+    the dispatch is malformed — do not improvise a path and do not silently
+    skip the record: stop and return NEEDS_CONTEXT naming the missing input.
 
     {
       "schema": 1,

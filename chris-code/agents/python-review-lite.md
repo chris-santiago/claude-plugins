@@ -101,7 +101,7 @@ When `status: clean`, the "Findings" section may be empty; record S1/S2 counts i
 
 ## Typed record
 
-Before returning, write a JSON record to the dispatch-supplied record path — a separate absolute path from the verdict file, supplied by the dispatch; never compute it yourself. Every field is required; an absent field is a contract violation, and an explicit empty value is a real answer, not an omission. No agent-written timestamps — file mtime is the only time source. After writing it, run `python3 <scripts-path>/ledger.py check <your-record-path>` — `<scripts-path>` is the dispatch-supplied scripts path, never compute it yourself — and if it errors, fix the record and re-run until it exits 0; fixing your own record until check passes is part of writing it, not an optional lint.
+Before returning, write a JSON record to the dispatch-supplied record path — a separate absolute path from the verdict file, supplied by the dispatch; never compute it yourself. Every field is required; an absent field is a contract violation, and an explicit empty value is a real answer, not an omission. No agent-written timestamps — file mtime is the only time source. After writing it, run `python3 <scripts-path>/ledger.py check <your-record-path>` — `<scripts-path>` is the dispatch-supplied scripts path, never compute it yourself — and if it errors, fix the record and re-run until it exits 0; fixing your own record until check passes is part of writing it, not an optional lint. If the dispatch supplied no record path or no scripts path, the dispatch is malformed — do not improvise a path and do not silently skip the record: stop and return a one-line refusal naming the missing input instead of a verdict.
 
 ```json
 {
