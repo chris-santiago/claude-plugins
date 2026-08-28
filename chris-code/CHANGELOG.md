@@ -8,6 +8,9 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+### Fixed
+- **The missing-record-path backstop no longer overreaches ad-hoc dispatches**: coders skip the typed record (noting its absence) when a dispatch carries no store artifacts at all, and the review-lites return their verdict as a standalone pre-commit gate; the refusal now fires only on an SDD-shaped dispatch that omits the record or scripts path. The unconditional 0.4.0 form would have made plugin coders and review-lites refuse every legitimate non-SDD dispatch (e.g. a project agent delegating a fix, or the plain pre-commit gate).
+
 ## [0.4.0] - 2026-08-28 — Typed handoffs & grounded integration
 
 The typed handoff layer: agents hand reasoning to each other as files and decisions to the orchestrator as validated JSON records, the store moves out of `.git/`, and judgment-shaped verdicts are grounded by a dedicated quoting agent instead of orchestrator re-reads.
