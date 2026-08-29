@@ -75,6 +75,7 @@ Look for obvious bugs the coder may have introduced:
 - Are edge cases covered (empty input, single element, boundary values, error paths)?
 - Do tests use real types where possible, not excessive mocking?
 - Would a bug in the implementation actually cause a test to fail?
+- Are pins and RED proofs produced by the real path under test (or a documented mirror of it)? A fixture hand-built into a shape the production path never emits pins the wrong behavior — flag it.
 - Are `#[should_panic]` tests specific enough (check the panic message)?
 
 ## Verdict Format
@@ -116,7 +117,9 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "task": 5,
   "status": "approved | issues",
   "findings": [{"severity": 1, "file": "...", "line": 0, "claim": "..."}],
-  "lossiness": ["..."]
+  "lossiness": ["..."],
+  "recurring": [{"site": "file:line", "why": "..."}],
+  "cycle": 1
 }
 ```
 
@@ -126,7 +129,11 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `task` — the task number from the brief.
 - `status` — `approved` for a verdict of **APPROVED** above, `issues` for **REVISE** — the JSON value is `issues`, not `revise`; lowercase always, regardless of the verdict line's casing.
 - `findings` — one entry per finding surfaced across the axes above (Principle Adherence, S3+ Patterns, Bug Risk, Test Quality), `severity` as the integer form of the S1–S5 scale (1–2 patterns to watch, 3+ patterns to avoid, 4–5 for the Critical items — new `unsafe` blocks, panics at `pub` boundaries); empty list when the verdict is clean.
-- `lossiness` — the typed form of the Lossiness line above: one entry per thing this verdict compresses that the orchestrator should re-read rather than trust; empty list when "None" applies.
+- `lossiness` — the typed form of the Lossiness line above: one entry per thing this verdict compresses that the orchestrator should ground (by `claim-checker` dispatch) rather than trust; empty list when "None" applies.
+- `cycle` — `1` on a first review. A re-review points at this same record path: read your own prior record first and write its `cycle` + 1.
+- `recurring` — the fix-failure signal: one entry (`site`, `why`) per finding whose class recurs at the same site as your prior cycle's record — compare against the prior record you read to derive `cycle`. Empty list on a first review or when nothing recurs. A non-empty list tells the orchestrator that patching is failing and the next fix must defend its mechanism; flag recurrence honestly rather than softening a repeat finding.
+
+On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved earns a finding, not an approval.
 
 ## Rules
 

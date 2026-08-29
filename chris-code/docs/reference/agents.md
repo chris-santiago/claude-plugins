@@ -48,7 +48,7 @@ Crucially, a coder **reads the task's *intent* before the code** and builds towa
 
 Coders also **mirror by reference rather than copy**: if a task needs a block a sibling already wrote, the coder hoists it into a shared helper when the owning file is already in its footprint, and otherwise declares a `duplication_pending` entry in its typed record so the orchestrator sees it in `ledger.py open` and assigns the hoist instead of letting the copy land. This is the coder-altitude link in the chain that keeps a fanned-out change coherent — see [Coherent change](../explanation/coherent-change.md#coherence-has-to-survive-decomposition).
 
-**Typed record (role `coder`).** Before returning, a coder writes a JSON record to its dispatch-supplied path: `status` (the same four values as the return summary, lowercase), `changed_files`, `tests` (command, pass/fail, one-line summary), `new_shared_symbols` it hoisted, `duplication_pending` sites it left un-hoisted, `concerns`, and the `report` path. It then runs `ledger.py check` against its own record and fixes until clean — the write-time gate lands with the agent that has the context, not at the orchestrator's later query.
+**Typed record (role `coder`).** Before returning, a coder writes a JSON record to its dispatch-supplied path: `status` (the same four values as the return summary, lowercase), `changed_files`, `tests` (command, pass/fail, one-line summary), `new_shared_symbols` it hoisted, `duplication_pending` sites it left un-hoisted, `concerns`, `cycle` (self-derived: a fix re-dispatch points at the same record path, and the coder writes its prior record's cycle + 1), and the `report` path. From cycle 2 a `diagnosis` is required (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it): a fix states the cause it resolves before patching, and the re-reviewing agents judge it against that stated cause. It then runs `ledger.py check` against its own record and fixes until clean — the write-time gate lands with the agent that has the context, not at the orchestrator's later query.
 
 ---
 
@@ -64,7 +64,7 @@ Dispatched per task **after** spec compliance passes. In a PyTorch project a `.p
 
 They verify the coder actually followed the principles it claims to internalize, catch bugs the coder missed, and validate test quality. Their verdict is **APPROVED** or **REVISE** (with a specific fix list). The PyTorch reviewer additionally flags any change to loss computation, gradient flow, or the data pipeline, even when the code is correct, so the orchestrator can confirm it was intentional.
 
-**Typed record (role `quality-reviewer`).** Before returning, the reviewer writes `status` (`approved | issues`), `findings` (severity as the S1–S5 integer, file, line, claim), and `lossiness` (what the verdict compresses) to its dispatch-supplied record path, then runs `ledger.py check` against it.
+**Typed record (role `quality-reviewer`).** Before returning, the reviewer writes `status` (`approved | issues`), `findings` (severity as the S1–S5 integer, file, line, claim), `lossiness` (what the verdict compresses), `cycle` (self-derived on a re-review), and `recurring` (the fix-failure signal — see the spec-reviewer's record, same semantics) to its dispatch-supplied record path, then runs `ledger.py check` against it. On a re-review it also judges the fix against the coder's stated `diagnosis`, not just the finding sites.
 
 ---
 
@@ -107,7 +107,7 @@ Not scope-matched — these review conformance and behavior, not language idioms
 
 `spec-reviewer` verifies the implementer built what was requested — nothing more, nothing less — by reading the code line-by-line against the brief, and returns ✅ / ❌ / ⚠️ (cannot verify from diff). `intent-reviewer` is the only gate that **never reads the spec**: at completion it compares the *running system* to the frozen intent ledger and judges each statement `met` / `not-met` / `can't-tell`. Its independence comes precisely from that blindness — it catches the one failure every spec-anchored gate structurally cannot. See [The assurance model](../explanation/the-assurance-model.md).
 
-**Typed record (role `spec-reviewer`).** Before returning, `spec-reviewer` writes `status` (`compliant | issues`), `issues` (kind, file, line, claim), and `cannot_verify` (requirement, why, should_check — the typed form of the ⚠️ line) to its dispatch-supplied record path, then runs `ledger.py check` against it. `intent-reviewer` keeps its prose-only report; it isn't one of the record-writing agents.
+**Typed record (role `spec-reviewer`).** Before returning, `spec-reviewer` writes `status` (`compliant | issues`), `issues` (kind, file, line, claim), `cannot_verify` (requirement, why, should_check — the typed form of the ⚠️ line), `cycle` (self-derived on a re-review, same pattern as review-lite), and `recurring` — the fix-failure signal: entries for findings whose class recurs at the same site as its prior cycle. A non-empty `recurring` (also on the quality reviewers' records) tells the orchestrator patching has failed: the next fix dispatch must carry a defended mechanism choice. It then runs `ledger.py check` against the record. `intent-reviewer` keeps its prose-only report; it isn't one of the record-writing agents.
 
 ---
 

@@ -43,6 +43,7 @@ def _spec_reviewer(**overrides) -> dict:
     data = {
         "schema": 1, "agent": "spec-reviewer", "role": "spec-reviewer",
         "task": 1, "status": "compliant", "issues": [], "cannot_verify": [],
+        "recurring": [],
     }
     data.update(overrides)
     return data
@@ -166,6 +167,81 @@ class TestValidateRecord(LedgerTestCase):
 
 
 # --- load_records / per-record isolation ---
+
+class TestFixLoopFields(LedgerTestCase):
+    """Coder self-derived cycle + diagnosis-from-cycle-2, and the reviewer
+    recurring signal (fix-loop amendments, 2026-08-28)."""
+
+    def _diagnosis(self, **overrides):
+        d = {"root_cause": "validator missing on the discretizing path",
+             "end_state": "all threshold inputs validated at construction",
+             "resolves_cluster": "both findings trace to the same absent guard"}
+        d.update(overrides)
+        return d
+
+    def test_cycle_1_needs_no_diagnosis(self):
+        ledger.validate_record(_coder(cycle=1))  # no raise
+
+    def test_absent_cycle_needs_no_diagnosis(self):
+        ledger.validate_record(_coder())  # no raise
+
+    def test_cycle_2_without_diagnosis_raises_naming_the_field(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2))
+        self.assertIn("diagnosis", str(ctx.exception))
+        self.assertIn("cycle 2", str(ctx.exception))
+
+    def test_cycle_2_with_complete_diagnosis_passes(self):
+        ledger.validate_record(_coder(cycle=2, diagnosis=self._diagnosis()))
+
+    def test_diagnosis_missing_a_key_raises_naming_it(self):
+        bad = self._diagnosis()
+        del bad["end_state"]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, diagnosis=bad))
+        self.assertIn("diagnosis.end_state", str(ctx.exception))
+
+    def test_diagnosis_blank_value_raises(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(
+                _coder(cycle=3, diagnosis=self._diagnosis(root_cause="   ")))
+        self.assertIn("diagnosis.root_cause", str(ctx.exception))
+
+    def test_non_integer_cycle_raises(self):
+        for bad in ("2", 0, -1, True):
+            with self.assertRaises(ledger.RecordError, msg=repr(bad)):
+                ledger.validate_record(_coder(cycle=bad))
+
+    def test_reviewer_cycle_is_informational_not_validated(self):
+        # Only the coder's cycle drives a conditional requirement; a
+        # reviewer's cycle stays unvalidated like every informational field.
+        ledger.validate_record(_spec_reviewer(cycle=2))  # no raise
+
+    def test_recurring_required_on_spec_and_quality_reviewers(self):
+        quality = {"schema": 1, "agent": "python-quality-reviewer",
+                   "role": "quality-reviewer", "task": 1, "status": "approved",
+                   "findings": [], "lossiness": [], "recurring": []}
+        for record in (_spec_reviewer(), quality):
+            record = dict(record)
+            del record["recurring"]
+            with self.assertRaises(ledger.RecordError, msg=record["role"]) as ctx:
+                ledger.validate_record(record)
+            self.assertIn("recurring", str(ctx.exception))
+
+    def test_recurring_entries_must_be_objects(self):
+        with self.assertRaises(ledger.RecordError):
+            ledger.validate_record(_spec_reviewer(recurring=["site:1"]))
+
+    def test_recurring_never_becomes_an_open_item(self):
+        # recurring is a signal riding on findings, not separate work:
+        # it must stay out of `open` (same rule as new_shared_symbols).
+        record = _spec_reviewer(
+            status="issues",
+            recurring=[{"site": "a.py:10", "why": "same class as cycle 1"}])
+        _write(self.store, "task-1-spec-reviewer.json", record)
+        items = ledger.compute_open_items(ledger.load_records(self.store), set())
+        self.assertEqual([i.kind for i in items], ["status"])
+
 
 class TestLoadRecords(LedgerTestCase):
     def test_missing_store_dir_is_empty_not_error(self):
@@ -334,10 +410,12 @@ class TestComputeOpenItems(LedgerTestCase):
         # two distinct record files with no collision.
         _write(self.store, "task-1-python-quality-reviewer.json",
                {"schema": 1, "agent": "python-quality-reviewer", "role": "quality-reviewer",
-                "task": 1, "status": "issues", "findings": [], "lossiness": []})
+                "task": 1, "status": "issues", "findings": [], "lossiness": [],
+                "recurring": []})
         _write(self.store, "task-1-pytorch-quality-reviewer.json",
                {"schema": 1, "agent": "pytorch-quality-reviewer", "role": "quality-reviewer",
-                "task": 1, "status": "issues", "findings": [], "lossiness": []})
+                "task": 1, "status": "issues", "findings": [], "lossiness": [],
+                "recurring": []})
         records = ledger.load_records(self.store)
         self.assertEqual(len(records), 2)
         self.assertTrue(all(r.ok for r in records))

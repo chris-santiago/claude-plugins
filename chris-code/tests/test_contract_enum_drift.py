@@ -131,6 +131,19 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                     f"{path.name}: status alternatives {sorted(alternatives)} != "
                     f"ledger.STATUS_ENUMS[{role!r}] = {sorted(allowed)}")
 
+    def test_every_required_decision_field_appears_in_its_contract_blocks(self):
+        # A field ledger.py requires-present for a role must appear in every
+        # contract block advertising that role — otherwise an agent honestly
+        # copying its contract's example writes a record `check` rejects.
+        for path in CONTRACT_FILES:
+            with self.subTest(contract=path.name):
+                data = _load_record_example(path)
+                for field_name in ledger.DECISION_LIST_FIELDS.get(data["role"], ()):
+                    self.assertIn(
+                        field_name, data,
+                        f"{path.name}: required field {field_name!r} missing "
+                        "from the contract's record example")
+
 
 if __name__ == "__main__":
     unittest.main()

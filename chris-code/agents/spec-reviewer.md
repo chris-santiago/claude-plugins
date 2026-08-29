@@ -80,7 +80,9 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "task": 5,
   "status": "compliant | issues",
   "issues": [{"kind": "missing | extra | misunderstood", "file": "...", "line": 0, "claim": "..."}],
-  "cannot_verify": [{"requirement": "...", "why": "...", "should_check": "..."}]
+  "cannot_verify": [{"requirement": "...", "why": "...", "should_check": "..."}],
+  "recurring": [{"site": "file:line", "why": "..."}],
+  "cycle": 1
 }
 ```
 
@@ -91,3 +93,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `status` — `compliant` when your verdict above is ✅ with no ❌ findings, `issues` when it isn't — lowercase always, regardless of casing used elsewhere.
 - `issues` — one entry per ❌ finding above: `kind` is `missing` (requested but not built), `extra` (built but not requested), or `misunderstood` (right feature, wrong interpretation); empty list when nothing was flagged.
 - `cannot_verify` — one entry per ⚠️ item above, the typed form of the "Cannot verify from diff" line — replaces the old prose-only ⚠️ convention; `should_check` names what the orchestrator should look at to resolve it; empty list when everything was verifiable from the diff.
+- `cycle` — `1` on a first review. A re-review points at this same record path: read your own prior record first and write its `cycle` + 1.
+- `recurring` — the fix-failure signal: one entry (`site`, `why`) per finding whose class recurs at the same site as your prior cycle's record — compare against the prior record you read to derive `cycle`. Empty list on a first review or when nothing recurs. A non-empty list tells the orchestrator that patching is failing and the next fix must defend its mechanism; flag recurrence honestly rather than softening a repeat finding.
+
+On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved is not compliant with its own diagnosis.

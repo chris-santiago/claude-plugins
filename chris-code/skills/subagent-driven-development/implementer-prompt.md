@@ -36,7 +36,10 @@ Agent tool:
     ## Your Job
 
     1. Implement exactly what the brief specifies
-    2. Write tests (following TDD if the brief says to)
+    2. Write tests (following TDD if the brief says to). RED proofs and pinned
+       fixtures must be produced by the real path under test, or a documented
+       mirror of it — a hand-built shape the production path never emits
+       proves nothing
     3. Verify implementation works
     4. Self-review against your embedded checklist
     5. If you copied ≥5 lines near-verbatim from a sibling site, record the sites
@@ -95,6 +98,7 @@ Agent tool:
       "new_shared_symbols": [{"symbol": "...", "path": "...", "why": "..."}],
       "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
       "concerns": ["..."],
+      "cycle": 1,
       "report": "[REPORT_FILE]"
     }
 
@@ -121,6 +125,15 @@ Agent tool:
     - `concerns` — anything you'd flag in the prose report; empty list when
       clean.
     - `report` — [REPORT_FILE], so the orchestrator can find your reasoning.
+    - `cycle` — 1 on a first attempt. A fix re-dispatch points at this same
+      record path: read your own prior record first and write its cycle + 1.
+    - `diagnosis` — required from cycle 2 (`check` enforces it): an object
+      with non-empty `root_cause`, `end_state`, and `resolves_cluster`.
+      Before patching anything, state the cause behind the findings, the
+      end-state your fix serves, and why the fix resolves the findings as a
+      cluster rather than site-by-site — then implement that. Enumerate the
+      consumers of whatever you change as part of the diagnosis. Not
+      required at cycle 1; a first attempt is not a fix.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
     NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.

@@ -78,8 +78,15 @@ REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
 # cycle, ...) is informational and unvalidated (spec Sec 7 amendment).
 DECISION_LIST_FIELDS = {
     "coder": ("duplication_pending", "new_shared_symbols"),
-    "spec-reviewer": ("cannot_verify",),
+    "spec-reviewer": ("cannot_verify", "recurring"),
+    "quality-reviewer": ("recurring",),
 }
+
+# Fix-loop fields (2026-08-28): a coder re-dispatched to fix findings
+# self-derives `cycle` (prior record's cycle + 1, else 1); from cycle 2 a
+# `diagnosis` is required — the fix must state its cause, not just patch
+# sites. Keys are the slots reviewers verify the fix against.
+DIAGNOSIS_KEYS = ("root_cause", "end_state", "resolves_cluster")
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -180,6 +187,27 @@ def validate_record(data: object) -> None:
             if not isinstance(entry, dict):
                 raise RecordError(
                     f"{field_name}[{idx}]: got {entry!r}, expected an object")
+
+    if role == "coder" and "cycle" in data:
+        cycle = data["cycle"]
+        # bool is an int subclass; True would silently read as cycle 1.
+        if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
+            raise RecordError(
+                f"cycle: got {cycle!r}, expected a positive integer "
+                "(1 on a first attempt, prior + 1 on a fix)")
+        if cycle >= 2:
+            diagnosis = data.get("diagnosis")
+            if not isinstance(diagnosis, dict):
+                raise RecordError(
+                    "diagnosis: required from cycle 2 — a fix must state its "
+                    f"cause, not just patch sites; expected an object with "
+                    f"{', '.join(DIAGNOSIS_KEYS)}, got {diagnosis!r}")
+            for key in DIAGNOSIS_KEYS:
+                entry = diagnosis.get(key)
+                if not isinstance(entry, str) or not entry.strip():
+                    raise RecordError(
+                        f"diagnosis.{key}: got {entry!r}, expected a "
+                        "non-empty string")
 
 
 def load_records(store_dir: Path) -> list[Record]:

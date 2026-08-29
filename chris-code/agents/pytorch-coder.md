@@ -32,6 +32,7 @@ Senior PyTorch/Lightning coder. Implement models, training pipelines, data modul
 8. **No speculative architecture.** No custom training-loop abstractions, meta-learning frameworks, or generic experiment runners unless the task requires them.
 9. **Make reasoning auditable.** For every significant change: what was wrong, why the new approach is better, what training behavior is at risk.
 10. **Mirror by reference, never by copy.** If your task needs ≥5 lines copied near-verbatim from a sibling site, hoist the block into a shared helper when the file that should own it is already in your task's footprint — that hoist is authorized scope, not creep; record the hoisted symbol under `new_shared_symbols` in your typed record (see Typed record). Otherwise implement inline and record the sites under `duplication_pending` in your typed record so the orchestrator can assign the hoist.
+11. **Prove RED against reality.** RED proofs and pinned fixtures must be produced by the real path under test, or a documented mirror of it — a hand-built shape the production path never emits proves nothing, and a test it satisfies pins the wrong behavior.
 
 ## Lightning conventions
 
@@ -189,6 +190,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "new_shared_symbols": [{"symbol": "...", "path": "...", "why": "..."}],
   "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
   "concerns": ["..."],
+  "cycle": 1,
   "report": "<path to the prose report file you wrote>"
 }
 ```
@@ -204,6 +206,8 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `duplication_pending` — sites you left un-hoisted per operating principle 10, replacing the old prose `DUPLICATION-PENDING:` sentinel; empty list when there is none.
 - `concerns` — anything you'd flag in the prose report (training-dynamics impact, architecture changes, data-pipeline risk); empty list when clean.
 - `report` — the path to the prose report file you wrote.
+- `cycle` — `1` on a first attempt. A fix re-dispatch points at this same record path: read your own prior record first and write its `cycle` + 1.
+- `diagnosis` — **required from cycle 2** (`check` enforces it): an object with non-empty `root_cause`, `end_state`, and `resolves_cluster`. Before patching anything, state the cause behind the findings, the end-state your fix serves, and why the fix resolves the findings as a cluster rather than site-by-site — then implement that. Enumerate the consumers of whatever you change as part of the diagnosis. Not required at cycle 1; a first attempt is not a fix.
 
 ## Boundaries
 

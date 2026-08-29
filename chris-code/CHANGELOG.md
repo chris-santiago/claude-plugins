@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+### Added
+- **Diagnosis-first fix loop** (data-driven, from a 25-round wave analysis): coders self-derive `cycle` like review-lite (fix re-dispatch at the same record path), and from cycle 2 their record must carry a `diagnosis` (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it); re-reviewing agents judge the fix against the stated cause. Spec- and quality-reviewers gain a `recurring` field (same finding class at the same site across cycles) — the typed fix-failure signal; when it fires, the next fix dispatch must carry a **defended mechanism choice**. Cycle ≥3 still always escalates to the user, but a recurring-mechanism signature that persisted through a defended fix arrives briefed with a `coherent-change` defended choice.
+- **Fixture-reality principle** in all coder and quality-reviewer contracts: RED proofs and pinned fixtures must be produced by the real path under test (or a documented mirror) — a hand-built shape the production path never emits pins the wrong behavior. Three same-shaped failures in one wave earned the contract line.
+- **Reviewer accumulation rule**: never dispatch a fix while any reviewer for the same task is still out — one fix dispatch carrying every reviewer's record path.
+
 ### Fixed
 - **The missing-record-path backstop no longer overreaches ad-hoc dispatches**: coders skip the typed record (noting its absence) when a dispatch carries no store artifacts at all, and the review-lites return their verdict as a standalone pre-commit gate; the refusal now fires only on an SDD-shaped dispatch that omits the record or scripts path. The unconditional 0.4.0 form would have made plugin coders and review-lites refuse every legitimate non-SDD dispatch (e.g. a project agent delegating a fix, or the plain pre-commit gate).
 
