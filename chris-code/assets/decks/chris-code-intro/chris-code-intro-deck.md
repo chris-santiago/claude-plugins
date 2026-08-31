@@ -141,7 +141,7 @@ Nothing passes through the orchestrator as prose. Artifacts move as **files** in
 
 ![w:860](assets/two_chains.svg)
 
-Records are validated at write time (`ledger.py check`) — the agent fixes its own record, with its own context, until the check passes.
+Records are validated at write time (`ledger.py check`) — the agent fixes its own record, with its own context, until the check passes. And a failed review recurses with discipline: fixes **diagnose before they patch**, and **recurrence** — not new findings — is what escalates.
 
 ---
 

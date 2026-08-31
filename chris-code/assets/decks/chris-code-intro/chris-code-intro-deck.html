@@ -586,7 +586,7 @@ section.lead h1 {
 <h2 id="typed-handoffs--two-chains">Typed handoffs — two chains</h2>
 <p>Nothing passes through the orchestrator as prose. Artifacts move as <strong>files</strong> in a per-run store, on two chains with different consumers.</p>
 <p><img src="assets/two_chains.svg" alt="" style="width:860px;" /></p>
-<p>Records are validated at write time (<code>ledger.py check</code>) — the agent fixes its own record, with its own context, until the check passes.</p>
+<p>Records are validated at write time (<code>ledger.py check</code>) — the agent fixes its own record, with its own context, until the check passes. And a failed review recurses with discipline: fixes <strong>diagnose before they patch</strong>, and <strong>recurrence</strong> — not new findings — is what escalates.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="11" data-paginate="true" data-theme="default" data-style="section {
   font-size: 27px;

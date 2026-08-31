@@ -200,6 +200,7 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
 - **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `scripts/ledger.py append`; a controller that loses context after compaction resumes from `scripts/ledger.py read` instead of re-running finished work. TodoWrite stays the live view.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
+- **The disciplined fix loop.** Verdicts accumulate before any fix is dispatched; from cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster — enforced by `ledger.py check`) and re-reviewers judge it against that stated cause; a `recurring` finding (same class, same site, across cycles) — not merely new findings — escalates the next fix to a defended mechanism choice; cycle 3 always goes to the user, briefed with a `coherent-change` defended choice when the mechanism itself keeps failing.
 
 ## The determined-change engine
 

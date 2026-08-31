@@ -145,6 +145,8 @@ Bottom lane, the decision chain: every coder and reviewer also writes a small JS
 
 If asked how the orchestrator handles a judgment call it can't take on faith: it doesn't re-read the code itself — it states one decidable claim and dispatches the `claim-checker` agent, which answers with a verdict word plus verbatim quoted lines. Evidence is mandatory, and quotation terminates the chain.
 
+The closing line about the fix loop deserves a beat, because it was tuned on a measured 25-round wave rather than designed a priori. When a review fails, the recursion is disciplined four ways: all verdicts accumulate before any fix goes out; from the second cycle the fix must carry a diagnosis — root cause, end-state, why the findings resolve as a cluster — which `check` enforces and re-reviewers judge the fix against; the escalation signal is *recurrence* (same finding class, same site, across cycles), deliberately not "new findings," because a fix that wires up a dead path legitimately exposes new work and taxing that would punish the loop for working; and cycle 3 always goes to the human — briefed with a researched defended choice when the mechanism itself keeps failing, directly when the blocker is spec ambiguity or reviewer conflict.
+
 **Details not on the slide**
 
 - The store is `.sdd/` at the repo toplevel — per-worktree, self-gitignored, disposable per run.
