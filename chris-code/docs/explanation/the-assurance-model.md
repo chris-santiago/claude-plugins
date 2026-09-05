@@ -38,7 +38,7 @@ The coder and quality-review agents carry inlined review checklists. Clearing ev
 
 ## The integrator is the unguarded seam
 
-Every doer is told "Do Not Trust the Report" — verify by reading the actual code, not an agent's summary. But the *orchestrator* decides what to integrate from exactly those summaries, one compression removed from the evidence, and nobody points that discipline back at its own inputs. chris-code closes this: before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), the orchestrator re-reads the actual code slice rather than the summary, and reviewers flag their own lossiness to say where to look first. A verdict you haven't grounded in its evidence is an assertion laundered into a decision.
+Every doer is told "Do Not Trust the Report" — verify by reading the actual code, not an agent's summary. But the *orchestrator* decides what to integrate from exactly those summaries, one compression removed from the evidence, and nobody points that discipline back at its own inputs. chris-code closes this: before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), the orchestrator grounds it by dispatch — it states a decidable claim and sends `claim-checker` to read the code and return a verdict word plus verbatim quoted lines, evidence mandatory, so the grounding doesn't cost the orchestrator its own context and the quoted lines terminate the chain (quotation needs no grounding of its own). Reviewers flag their own lossiness to say what to ground first. A verdict you haven't grounded in its evidence is an assertion laundered into a decision.
 
 ## What to take away
 

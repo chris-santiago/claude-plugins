@@ -455,11 +455,11 @@ def fig_skill_groups():
 # --------------------------------------------------------------------------
 def fig_agent_ratio():
     s = SVG(1080, 600)
-    s.text(540, 34, "14 agents — 3 write code, 11 check it", 23, BLUE,
+    s.text(540, 34, "15 agents — 3 write code, 12 check it", 23, BLUE,
            weight="bold")
 
     # ratio squares
-    n = 14
+    n = 15
     sw_, gap = 46, 12
     total = n * sw_ + (n - 1) * gap
     x0 = (1080 - total) / 2
@@ -471,7 +471,7 @@ def fig_agent_ratio():
         else:
             s.rect(x, y, sw_, sw_, fill=ORANGE, stroke=ORANGE, sw=1, rx=7)
     s.text(x0 + 1.5 * sw_ + gap, y + sw_ + 24, "build", 15, BLUE, weight="bold")
-    s.text(x0 + 8 * (sw_ + gap) + sw_ / 2, y + sw_ + 24, "assure", 15, ORANGE,
+    s.text(x0 + 8.5 * (sw_ + gap) + sw_ / 2, y + sw_ + 24, "assure", 15, ORANGE,
            weight="bold")
 
     roles = [
@@ -482,6 +482,7 @@ def fig_agent_ratio():
         ("Conformance pair", 2, "assure", "spec + intent"),
         ("Test-writer", 1, "assure", "bug-hunter"),
         ("Mutation gate", 1, "assure", "breaks code, runs tests"),
+        ("Claim-checker", 1, "assure", "quotes code to settle claims"),
     ]
     palette = {"build": (FILL_BLUE, BLUE), "assure": (FILL_ORANGE, ORANGE)}
     cols, cw, ch, gx, gy = 3, 320, 96, 24, 20
@@ -506,6 +507,56 @@ def fig_agent_ratio():
 
 
 # --------------------------------------------------------------------------
+# FIG 8b — typed handoffs: the two chains
+# --------------------------------------------------------------------------
+def fig_two_chains():
+    s = SVG(1080, 440)
+    s.text(540, 34, "Two chains through one store (.sdd/)", 23, BLUE,
+           weight="bold")
+
+    bw, bh, gap = 240, 86, 60
+    x0 = (1080 - (3 * bw + 2 * gap)) / 2
+
+    # reasoning chain (markdown, agent -> agent)
+    y = 110
+    s.text(x0, y - 16, "REASONING — markdown, agent → agent, handed by path",
+           15, BLUE, weight="bold", anchor="start")
+    reasoning = [
+        ("brief", ["pointers + intent"]),
+        ("report", ["coder's reasoning"]),
+        ("verdict", ["reviewer's findings,", "read in its own words"]),
+    ]
+    for i, (name, sub) in enumerate(reasoning):
+        x = x0 + i * (bw + gap)
+        box(s, x, y, bw, bh, name, sub, fill=FILL_BLUE, stroke=BLUE, tsize=20)
+        if i < 2:
+            s.arrow(x + bw + 3, y + bh / 2, x + bw + gap - 3, y + bh / 2,
+                    stroke=BLUE, w=2.4)
+
+    # decision chain (JSON records, agent -> orchestrator)
+    y = 268
+    s.text(x0, y - 16, "DECISION — typed JSON records, agent → orchestrator",
+           15, ORANGE, weight="bold", anchor="start")
+    decision = [
+        ("typed record", ["task-N-<agent>.json,", "checked at write time"]),
+        ("ledger.py", ["open · completed · shapes"]),
+        ("orchestrator", ["steers on fields,", "never scans prose"]),
+    ]
+    for i, (name, sub) in enumerate(decision):
+        x = x0 + i * (bw + gap)
+        box(s, x, y, bw, bh, name, sub, fill=FILL_ORANGE, stroke=ORANGE, tsize=20)
+        if i < 2:
+            s.arrow(x + bw + 3, y + bh / 2, x + bw + gap - 3, y + bh / 2,
+                    stroke=ORANGE, w=2.4)
+
+    s.text(540, 408,
+           "Prose is for minds; records are for steering. The hub holds pointers "
+           "— restating is where a finding loses its severity and its file:line.",
+           15, GRAY, style="italic")
+    s.save("two_chains.svg")
+
+
+# --------------------------------------------------------------------------
 # FIG 9 — lineage from superpowers
 # --------------------------------------------------------------------------
 def fig_lineage():
@@ -517,14 +568,14 @@ def fig_lineage():
         ["skills-only", "generic subagents", "fork point: v5.1.0"],
         fill=FILL_GRAY, stroke=GRAY, tsize=22, ssize=15)
     box(s, 710, 90, 300, 150, "chris-code",
-        ["+ 11 new skills", "+ 14-agent layer", "coherence engine"],
+        ["+ 11 new skills", "+ 15-agent layer", "coherence engine"],
         fill=FILL_BLUE, stroke=BLUE, tsize=22, ssize=15)
     s.arrow(378, 176, 702, 176, stroke=GREEN, w=3, head=12)
     s.text(540, 143, "every superpowers", 14, GREEN, weight="bold")
     s.text(540, 161, "skill carried over", 14, GREEN, weight="bold")
 
     # delta chips
-    deltas = [("Skills", "14", "25"), ("Agents", "0", "14"), ("Hooks", "1", "0")]
+    deltas = [("Skills", "14", "25"), ("Agents", "0", "15"), ("Hooks", "1", "0")]
     dw, dgap = 150, 30
     total = len(deltas) * dw + (len(deltas) - 1) * dgap
     x0 = (1080 - total) / 2
@@ -608,5 +659,6 @@ if __name__ == "__main__":
     fig_assurance()
     fig_skill_groups()
     fig_agent_ratio()
+    fig_two_chains()
     fig_lineage()
     fig_dispatch_diff()

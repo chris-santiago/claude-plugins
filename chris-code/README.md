@@ -53,7 +53,7 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 **The why.** superpowers is skills-only. Its coding and review happen inline or through generic subagents steered by prompt-template files (`implementer-prompt.md`, `code-reviewer.md`). That works, but every dispatch is hand-rolled.
 
-chris-code adds **fourteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
+chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
 
 ### 3. Review is a uniform, multi-stage gate
 
@@ -62,7 +62,7 @@ chris-code adds **fourteen dedicated agents** with frontmatter scoping. The righ
 A more recent pass hardens *assurance* — what the gates actually prove:
 
 - **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
-- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it re-reads the actual code slice rather than the summary — and reviewers flag their own lossiness to point it where to look.
+- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it states a decidable claim and dispatches `claim-checker`, which reads the code and answers with verbatim quoted lines — evidence mandatory, so the grounding costs the orchestrator no context and the quotation terminates the chain. Reviewers flag their own lossiness to say what to ground first.
 - **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only a few axes are truly independent (a deterministic linter, a spec-blind check, a mutation gate that breaks the code and runs the real tests), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun
@@ -196,10 +196,11 @@ flowchart TB
 
 Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, these keep `subagent-driven-development`'s orchestrator context lean and the run recoverable:
 
-- **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.git/sdd/` (per-worktree, uncommitted) via `scripts/task-brief`, `scripts/review-package`, and `scripts/progress`; dispatches pass file paths, never pasted text or diffs.
+- **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.sdd/` at the repo toplevel (per-worktree, self-gitignored) via `scripts/task_brief.py`, `scripts/review-package`, and `scripts/ledger.py`, with implementer and reviewer reports written as typed records validated against a shared contract; dispatches pass file paths, never pasted text or diffs.
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
-- **Durable progress ledger.** Each clean task is appended to `.git/sdd/progress.md`; a controller that loses context after compaction resumes from the ledger instead of re-running finished work. TodoWrite stays the live view.
+- **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `scripts/ledger.py append`; a controller that loses context after compaction resumes from `scripts/ledger.py read` instead of re-running finished work. TodoWrite stays the live view.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
+- **The disciplined fix loop.** Verdicts accumulate before any fix is dispatched; from cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster — enforced by `ledger.py check`) and re-reviewers judge it against that stated cause; a `recurring` finding (same class, same site, across cycles) — not merely new findings — escalates the next fix to a defended mechanism choice; cycle 3 always goes to the user, briefed with a `coherent-change` defended choice when the mechanism itself keeps failing.
 
 ## The determined-change engine
 

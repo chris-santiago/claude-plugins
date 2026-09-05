@@ -28,7 +28,7 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 **The why.** superpowers is skills-only. Its coding and review happen inline or through generic subagents steered by prompt-template files (`implementer-prompt.md`, `code-reviewer.md`). That works, but every dispatch is hand-rolled.
 
-chris-code adds **fourteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
+chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
 
 ### 3. Review is a uniform, multi-stage gate
 
@@ -37,7 +37,7 @@ chris-code adds **fourteen dedicated agents** with frontmatter scoping. The righ
 A more recent pass hardens *assurance* — what the gates actually prove:
 
 - **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
-- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it re-reads the actual code slice rather than the summary — and reviewers flag their own lossiness to point it where to look.
+- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it states a decidable claim and dispatches `claim-checker`, which reads the code and answers with verbatim quoted lines — evidence mandatory, so grounding costs the orchestrator no context. Reviewers flag their own lossiness to say what to ground first.
 - **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only a few axes are truly independent (a deterministic linter, a spec-blind check, a mutation gate that breaks the code and runs the real tests), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun

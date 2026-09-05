@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 440" font-family="Helvetica,Arial,sans-serif">
+<text x="540.0" y="34.0" font-size="23" fill="#1a4a7a" text-anchor="middle" font-weight="bold">Two chains through one store (.sdd/)</text>
+<text x="120.0" y="94.0" font-size="15" fill="#1a4a7a" text-anchor="start" font-weight="bold">REASONING — markdown, agent → agent, handed by path</text>
+<rect x="120.0" y="110.0" width="240.0" height="86.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="240.0" y="151.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">brief</text>
+<text x="240.0" y="169.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">pointers + intent</text>
+<line x1="363.0" y1="153.0" x2="417.0" y2="153.0" stroke="#1a4a7a" stroke-width="2.4"/>
+<polygon points="417.0,153.0 408.0,157.9 408.0,148.1" fill="#1a4a7a"/>
+<rect x="420.0" y="110.0" width="240.0" height="86.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="540.0" y="151.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">report</text>
+<text x="540.0" y="169.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">coder's reasoning</text>
+<line x1="663.0" y1="153.0" x2="717.0" y2="153.0" stroke="#1a4a7a" stroke-width="2.4"/>
+<polygon points="717.0,153.0 708.0,157.9 708.0,148.1" fill="#1a4a7a"/>
+<rect x="720.0" y="110.0" width="240.0" height="86.0" rx="8" fill="#eaf1f8" stroke="#1a4a7a" stroke-width="2"/>
+<text x="840.0" y="151.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">verdict</text>
+<text x="840.0" y="169.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">reviewer's findings,</text>
+<text x="840.0" y="185.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">read in its own words</text>
+<text x="120.0" y="252.0" font-size="15" fill="#d97706" text-anchor="start" font-weight="bold">DECISION — typed JSON records, agent → orchestrator</text>
+<rect x="120.0" y="268.0" width="240.0" height="86.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="240.0" y="309.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">typed record</text>
+<text x="240.0" y="327.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">task-N-&lt;agent&gt;.json,</text>
+<text x="240.0" y="343.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">checked at write time</text>
+<line x1="363.0" y1="311.0" x2="417.0" y2="311.0" stroke="#d97706" stroke-width="2.4"/>
+<polygon points="417.0,311.0 408.0,315.9 408.0,306.1" fill="#d97706"/>
+<rect x="420.0" y="268.0" width="240.0" height="86.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="540.0" y="309.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">ledger.py</text>
+<text x="540.0" y="327.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">open · completed · shapes</text>
+<line x1="663.0" y1="311.0" x2="717.0" y2="311.0" stroke="#d97706" stroke-width="2.4"/>
+<polygon points="717.0,311.0 708.0,315.9 708.0,306.1" fill="#d97706"/>
+<rect x="720.0" y="268.0" width="240.0" height="86.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="2"/>
+<text x="840.0" y="309.0" font-size="20" fill="#1a1a2e" text-anchor="middle" font-weight="bold">orchestrator</text>
+<text x="840.0" y="327.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">steers on fields,</text>
+<text x="840.0" y="343.0" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="normal">never scans prose</text>
+<text x="540.0" y="408.0" font-size="15" fill="#6b7280" text-anchor="middle" font-weight="normal" font-style="italic">Prose is for minds; records are for steering. The hub holds pointers — restating is where a finding loses its severity and its file:line.</text>
+</svg>

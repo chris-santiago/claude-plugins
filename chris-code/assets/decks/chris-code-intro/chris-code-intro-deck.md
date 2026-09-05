@@ -62,7 +62,7 @@ It routes every non-trivial change through **one pipeline** instead of ad-hoc ch
 
 ![w:880](assets/pipeline.svg)
 
-**25 skills** and **14 agents**, most auto-dispatched — you describe the work, not the tool.
+**25 skills** and **15 agents**, most auto-dispatched — you describe the work, not the tool.
 
 ---
 
@@ -135,6 +135,16 @@ Work is offloaded to subagents to keep the **orchestrator** (the main planning s
 
 ---
 
+## Typed handoffs — two chains
+
+Nothing passes through the orchestrator as prose. Artifacts move as **files** in a per-run store, on two chains with different consumers.
+
+![w:860](assets/two_chains.svg)
+
+Records are validated at write time (`ledger.py check`) — the agent fixes its own record, with its own context, until the check passes. And a failed review recurses with discipline: fixes **diagnose before they patch**, and **recurrence** — not new findings — is what escalates.
+
+---
+
 ## Parallelism without collisions
 
 Independent tasks run concurrently — after the orchestrator maps each task's file footprint to prove they don't collide.
@@ -178,9 +188,9 @@ Most of these fire automatically: you describe the work, the pipeline picks the 
 
 ---
 
-## One coder, eleven checkers
+## One coder, twelve checkers
 
-The 14 agents split sharply between writing code and checking it — and the split *is* the philosophy.
+The 15 agents split sharply between writing code and checking it — and the split *is* the philosophy.
 
 ![w:840](assets/agent_ratio.svg)
 

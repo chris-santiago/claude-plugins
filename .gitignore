@@ -3,3 +3,4 @@ SYNC.md
 **/.DS_Store
 site/
 .zensical/
+__pycache__/

@@ -22,7 +22,7 @@ This is the quiet payoff of the [lean artifacts](the-pipeline.md#lean-artifacts)
 
 A coder recovers *what* and *where* by reading — the files it touches, the spec sections it's pointed at, the repo's idioms. It cannot recover *why*: the observable outcome the change must produce. A fresh subagent does not inherit your conversation, so the brief is intent's only channel.
 
-That makes intent a **required element** of every dispatch, not an optional nicety. The brief carries one or two lines on the outcome the task must produce (quoting the intent-ledger statement where one exists). Handing over only *what* and *where* lets a coder optimize the diff and ship the wrong thing correctly. The loop is two-sided: the orchestrator must supply the why, and the coder is told to **demand it** — to escalate rather than guess when a brief gives only *what* and *where*. If the orchestrator can't state the why, that's the signal the task isn't ready to dispatch.
+That makes intent a **required element** of every dispatch, not an optional nicety, and the requirement is enforced structurally rather than by discipline: `task_brief.py` takes `--intent` as a required argument and refuses to write a brief at all — non-zero exit, no file — when it's missing or empty. The brief carries one or two lines on the outcome the task must produce (quoting the intent-ledger statement where one exists). Handing over only *what* and *where* lets a coder optimize the diff and ship the wrong thing correctly. The loop is two-sided: the orchestrator must supply the why, and the coder is told to **demand it** — to escalate rather than guess when a brief gives only *what* and *where*. If the orchestrator can't state the why, that's the signal the task isn't ready to dispatch.
 
 ## Pointer-based handoff
 
@@ -30,4 +30,4 @@ Briefs are reference sheets, not restatements of the spec. They carry pointers �
 
 ## The integrator side
 
-Dispatch has a return leg, too. Whatever a subagent hands back is a *compression*, and the orchestrator decides what to integrate from it — one step removed from the evidence. That seam has its own discipline (re-read the slice behind a judgment, escalate with evidence not a paraphrase), covered in [The assurance model](the-assurance-model.md#the-integrator-is-the-unguarded-seam).
+Dispatch has a return leg, too. Whatever a subagent hands back is a *compression*, and the orchestrator decides what to integrate from it — one step removed from the evidence. That seam has its own discipline (ground a judgment by `claim-checker` dispatch rather than re-reading the code yourself, escalate with evidence not a paraphrase), covered in [The assurance model](the-assurance-model.md#the-integrator-is-the-unguarded-seam).

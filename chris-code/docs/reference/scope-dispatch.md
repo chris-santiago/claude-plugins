@@ -13,6 +13,7 @@ Agents and review skills match by `scope.extensions` and `scope.require_dependen
 | `*-review` skills (standalone) | **Additive** — all matching fire | `python-review` + `rust-review` |
 | `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
 | `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 6), in an isolated worktree |
+| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to ground a judgment-shaped finding or a `cannot_verify` item |
 
 **Exclusive** means exactly one agent does the work — the most specific match. **Additive** means every agent matching the file extensions fires on the same diff; if findings conflict, the more specific agent's guidance wins. **Explicit** agents aren't matched by file type at all — the skills dispatch them by name. `mutation-tester` is explicit because it breaks code and runs the project's own tests, which needs no language-specific tooling; it fires once whenever the change includes testable source.
 

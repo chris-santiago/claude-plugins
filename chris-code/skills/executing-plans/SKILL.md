@@ -19,7 +19,7 @@ Load plan, review critically, execute all tasks, report when complete.
 1. Read plan file
 2. Review critically - identify any questions or concerns about the plan
 3. If concerns: Raise them with your human partner before starting
-4. If no concerns: check the progress ledger (`subagent-driven-development/scripts/progress read`) — tasks listed complete are DONE, so rebuild TodoWrite from the ledger and resume at the first unlisted task; otherwise create TodoWrite and proceed
+4. If no concerns: check the progress ledger (`subagent-driven-development/scripts/ledger.py read --store "$STORE"`, where `STORE` is resolved once per subagent-driven-development's File Handoffs via `STORE=$(python3 subagent-driven-development/scripts/ledger.py store-dir)` — the single authority for the store path, default or the session's `--store` override) and `subagent-driven-development/scripts/ledger.py completed --store "$STORE"` for which task ids are DONE — rebuild TodoWrite from the ledger and resume at the first task id `completed` doesn't list; otherwise create TodoWrite and proceed
 
 ### Step 2: Execute Tasks
 
@@ -28,15 +28,15 @@ For each task:
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
 4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
-5. Mark as completed in TodoWrite, and append to the ledger: `subagent-driven-development/scripts/progress append "Task N: complete (commits <base7>..<head7>, review clean)"`
+5. Mark as completed in TodoWrite, and append to the ledger the typed completion entry: `subagent-driven-development/scripts/ledger.py append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`
 
 ### Step 3: Commit Gate
 
 Before each commit (end of plan or mid-plan commit points):
 
 1. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
-2. **Dispatch** all matching agents against the staged diff. Pass `cycle: N` — `1` on the first dispatch for this commit, incremented each time you re-dispatch after a fix. At `cycle >= 3` the agent escalates to break a stuck loop; omit the counter and that backstop never fires.
-3. If any agent returns **block**: fix the issue and re-dispatch (incrementing `cycle`) before committing
+2. **Dispatch** all matching agents against the staged diff, supplying each a record path (`$STORE/task-<N>-<agent-name>.json`, per subagent-driven-development's File Handoffs). Never pass a `cycle` value: the agent reads its own prior record at that path and self-derives `cycle` as prior + 1 (else 1), escalating at `cycle >= 3` with findings remaining — the backstop fires on its own as long as the record path stays stable across re-dispatches.
+3. If any agent returns **block**: fix the issue and re-dispatch at the same record path before committing
 4. If any agent returns **escalate**: stop and surface to the user
 
 Only dispatch when there are staged changes to review.
