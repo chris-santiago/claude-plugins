@@ -70,11 +70,14 @@ Inputs:
   - Changed files: <git diff --name-only <merge-base>..HEAD>
   - Spec/plan: <paths>
   - Project constraints: <CLAUDE.md / plan Constraints, verbatim>
+  - Report path: <$STORE/design-review-<agent-name>.md>
 ```
+
+Resolve `$STORE` once via `python3 <sdd-scripts-path>/ledger.py store-dir` (the same authority subagent-driven-development uses). The agent writes its full report to that path and returns only `<agent-name> — PASS | CONCERNS — report: <path>` — the architecture analysis stays out of your context; read the report (or hand its path to a fix dispatch) only when the verdict is CONCERNS. On a re-run after remediation, pass the *same* report path: the agent reads its prior report there and judges whether the findings were addressed rather than re-deriving them.
 
 Pass it the inputs and constraints, never a narrowed scope. Do not tell the agent to skip a concern or pre-rate a severity — its findings and verdict are its own.
 
-**Must see:** Verdict PASS from every dispatched agent (no S3+ findings). If any returns CONCERNS, address the findings and re-run.
+**Must see:** Verdict PASS from every dispatched agent (no S3+ findings). If any returns CONCERNS, address the findings — hand the fix dispatch the report path, never a paraphrase — and re-run.
 
 ### Step 4: Requirements Check
 
@@ -99,9 +102,13 @@ Inputs (exactly two):
     (for a bug remediation, the issue text IS the ledger — pass it instead)
   - The running system (the agent inspects and exercises it read-only)
 
+Report path (output destination, not an input): <$STORE/intent-recheck.md>
+
 Do NOT pass the spec, the plan, the design doc, or the implementer's report —
 the agent's independence depends on judging behavior against the ask alone.
 ```
+
+The agent writes its full per-statement re-check to the report path and returns only `intent-reviewer — PASS | CONCERNS — report: <path>`. On a re-check after remediation, pass the same path so it can state per statement whether a prior `not-met` now holds.
 
 If no intent ledger exists and no original-ask statement is recoverable (a change that never had one), note that explicitly and skip this step — do not fabricate a ledger after the fact.
 

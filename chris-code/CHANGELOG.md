@@ -8,6 +8,9 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+### Fixed
+- **Gate reviewers join the file-handoff system**: the design reviewers and `intent-reviewer` — the last agents returning full reports inline into the orchestrator's context — now write their report to a dispatch-supplied path under the run store and return only `PASS | CONCERNS` plus the path (read-only on the checkout otherwise; a re-run reads its own prior report; an ad-hoc dispatch with no path still gets the report inline). `verification-before-completion` supplies the paths via `ledger.py store-dir`. Surfaced by a live session hitting the design reviewer's inability to persist its cycle-2 verdict.
+
 ### Added
 - **Diagnosis-first fix loop** (data-driven, from a 25-round wave analysis): coders self-derive `cycle` like review-lite (fix re-dispatch at the same record path), and from cycle 2 their record must carry a `diagnosis` (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it); re-reviewing agents judge the fix against the stated cause. Spec- and quality-reviewers gain a `recurring` field (same finding class at the same site across cycles) — the typed fix-failure signal; when it fires, the next fix dispatch must carry a **defended mechanism choice**. Cycle ≥3 still always escalates to the user, but a recurring-mechanism signature that persisted through a defended fix arrives briefed with a `coherent-change` defended choice.
 - **Fixture-reality principle** in all coder and quality-reviewer contracts: RED proofs and pinned fixtures must be produced by the real path under test (or a documented mirror) — a hand-built shape the production path never emits pins the wrong behavior. Three same-shaped failures in one wave earned the contract line.
