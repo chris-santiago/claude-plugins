@@ -80,7 +80,7 @@ Write the full report (the format above) to the dispatch-supplied report path, t
 rust-design-reviewer — PASS | CONCERNS — report: <path>
 ```
 
-The report travels by path, like every other handoff — returning it inline would park the whole architecture analysis in the orchestrator's context permanently. On a re-review, the dispatch points at the same report path: read your own prior report there before overwriting it, so you can judge whether prior findings were addressed rather than re-deriving them. If the dispatch supplied no report path (an ad-hoc dispatch outside the gate), return the full report inline instead — do not invent a path.
+The report travels by path, like every other handoff — returning it inline would park the whole architecture analysis in the orchestrator's context permanently. On a re-review, the dispatch points at the same report path: read your own prior report there before overwriting it, so you can judge whether prior findings were addressed rather than re-deriving them. A re-review may also carry `Remediation range: <sha>..HEAD`: report each new finding as inside or outside that range, since a finding outside it is fresh sampling of code the remediation never touched, not a regression it caused. If the dispatch supplied no report path (an ad-hoc dispatch outside the gate), return the full report inline instead — do not invent a path.
 
 ## Boundaries
 

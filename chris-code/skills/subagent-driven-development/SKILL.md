@@ -5,17 +5,17 @@ description: Use when executing implementation plans with independent tasks in t
 
 # Subagent-Driven Development
 
-Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance review first, then code quality review.
+Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance and code quality reviewers dispatched together, their findings triaged once.
 
-**Core principle:** Specialized coder agent per task → spec review → quality review → commit gate. Fresh context per task, staged parallelism for independent tasks.
+**Core principle:** Specialized coder agent per task → spec + quality review in parallel → one batched fix → commit gate. Fresh context per task, staged parallelism for independent tasks.
 
 **Continuous execution:** Do not pause between tasks. The only reasons to stop: unresolvable BLOCKED status, ambiguity that prevents progress, or all tasks complete.
 
-**Every task gets every gate.** The three-stage review (spec → quality → review-lite) applies to ALL tasks — not just the first one. You will feel pressure to skip gates on later tasks because "the pattern is established" or "this one is simple." That impulse is the exact failure mode this rule prevents. Task 5 gets the same gates as Task 1. No exceptions.
+**Every task gets every gate.** The three-stage review (spec + quality, then review-lite) applies to ALL tasks — not just the first one. You will feel pressure to skip gates on later tasks because "the pattern is established" or "this one is simple." That impulse is the exact failure mode this rule prevents. Task 5 gets the same gates as Task 1. No exceptions.
 
 ## Pre-Flight Plan Review
 
-Before dispatching Task 1, load the progress ledger (see Durable Progress) and resume at the first task not marked complete. Then read the plan once and check for:
+Before dispatching Task 1, load the progress ledger (see Durable Progress). Clear it first if it belongs to a finished run (the test is in Durable Progress), then resume at the first task not marked complete. Then read the plan once and check for:
 
 - **Internal conflicts** — tasks that contradict each other or the plan's Constraints.
 - **Plan-mandated defects** — anything the plan asks for that a reviewer would flag (a test that asserts nothing, verbatim duplication, a swallowed error).
@@ -31,12 +31,13 @@ flowchart TB
         questions{"Coder asks questions?"}
         answer["Answer questions, provide context"]
         implement["Coder implements, tests, self-reviews"]
-        spec_rev["Dispatch spec reviewer"]
-        spec_ok{"Spec compliant?"}
-        fix_spec["Coder fixes spec gaps"]
-        quality_rev["Dispatch *-quality-reviewer agent"]
-        quality_ok{"Quality approved?"}
-        fix_quality["Coder fixes quality issues"]
+        reviews["Dispatch spec reviewer + *-quality-reviewer agents together;<br/>wait for every verdict"]
+        reviews_ok{"Any finding on any record?<br/>(approved ones included)"}
+        cap{"Cycle ≥ 3 with a non-trivial<br/>finding still open?"}
+        escalate["Escalate to the user<br/>(records + decision docs)"]
+        triage["Triage the batch once"]
+        decision["Non-trivial findings: decision doc<br/>(remediating-issues, per-task variant)"]
+        fix["Coder fixes the whole batch<br/>(cycle + 1, against the decision doc)"]
         commit_gate["Per-task commit gate: *-review-lite"]
         done["Mark task complete<br/>(TodoWrite + ledger)"]
     end
@@ -53,15 +54,16 @@ flowchart TB
     questions -->|yes| answer
     answer --> coder
     questions -->|no| implement
-    implement --> spec_rev
-    spec_rev --> spec_ok
-    spec_ok -->|no| fix_spec
-    fix_spec -->|re-review| spec_rev
-    spec_ok -->|yes| quality_rev
-    quality_rev --> quality_ok
-    quality_ok -->|no| fix_quality
-    fix_quality -->|re-review| quality_rev
-    quality_ok -->|yes| commit_gate
+    implement --> reviews
+    reviews --> reviews_ok
+    reviews_ok -->|yes| cap
+    cap -->|yes| escalate
+    cap -->|no| triage
+    triage -->|any non-trivial| decision
+    triage -->|all trivial| fix
+    decision --> fix
+    fix -->|"every reviewer re-reviews"| reviews
+    reviews_ok -->|no| commit_gate
     commit_gate --> done
     done --> more_tasks
     more_tasks -->|"yes (parallel within stage)"| coder
@@ -135,7 +137,7 @@ STORE=$(python3 scripts/ledger.py store-dir)
 - **Intent (the *why*) — required:** a coder recovers *what* and *where* by reading the brief, the spec, and the repo, but it cannot recover *why* — the observable outcome this task serves. A fresh subagent does not inherit your conversation, so the brief is intent's only channel: the dispatch must carry it — one or two lines on the outcome this task must produce, quoting the relevant intent-ledger statement where one exists. Hand over the goal, not just the change — a coder given only *what* and *where* optimizes the diff and can ship the wrong thing correctly. If you cannot state the why, the task isn't ready to dispatch (the intent lives only in your head — externalize it or keep the task in-session).
 - **Cross-task notes (orchestrator-only, terse):** beyond intent (above), the other thing the coder cannot recover by reading the spec and the repo is cross-task context. Add it to the brief as pointers and decisions, never as dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict adjudication (`finding §5 governs the extent→band call`), a code entry point (the landing symbol, plus any new wire-key value), or a shared-shape pointer from the pattern ledger (see Cross-Task Pattern Ledger). Grounding beyond the entry point is the coder's job (its first step is to read the files it will touch), so point at the entry and let it trace the chain. Keep this to a few lines; if it grows, the requirement belongs in the spec, or the conflict belonged in the Pre-Flight Plan Review.
 - **Report file:** name it after the brief (`task-N-brief.md` → `task-N-report.md`). The implementer writes its full report there and returns only status, the changed-file list, a one-line test summary, and concerns. This bullet is not the whole closing instruction: the same dispatch must also carry the record path and the scripts path (elements 6 and 7 above) — a dispatch that ends at "write your report and return the summary" produces no typed record, and the agent cannot self-supply the path it was never given.
-- **Reviewer inputs:** spec-reviewer and `*-quality-reviewer` agents get the brief path, the report path, the changed-file list, the verbatim Constraints, the record path, and the scripts path, and read the actual changed files. Do not paste diffs.
+- **Reviewer inputs:** spec-reviewer and `*-quality-reviewer` agents get the brief path, the report path, the changed-file list, the verbatim Constraints, the record path, the coder's record path (where a re-review reads the fix's `diagnosis`), and the scripts path, and read the actual changed files. Do not paste diffs.
 - **Review-lite inputs:** `*-review-lite` agents get only what their contract asks for — the staged diff (its default, via `git diff --cached`), or the review-package file path in its place at the whole-change gate, plus the verbatim Constraints, the record path, and the scripts path. No brief path, no report path, no changed-file list: it reviews exactly the diff it's handed, nothing else (see Whole-Change Commit Gate).
 - **Never** paste task text, prior-task summaries, or diffs into a dispatch or into your own context. A fresh subagent needs its brief, the interfaces it touches, and the constraints — nothing else.
 
@@ -155,11 +157,12 @@ Copy the plan's Constraints section verbatim (exact values, formats, and stated 
 
 - **Never pre-judge.** Do not instruct a reviewer to ignore, not-flag, or pre-rate a finding. If your dispatch contains "do not flag," "at most Minor," or "the plan chose," stop — you are pre-judging to spare yourself a review loop. Let the reviewer raise it and adjudicate it in the loop.
 - **Hand findings over by path, never by paraphrase.** When a review comes back `issues`, `block`, or `escalate`, the fix dispatch carries the reviewer's record path (and report path, where the contract writes one) and does not restate the findings. You still read them to decide what happens next, and you still ground judgment-shaped calls before acting on them, but the coder reads each finding in the reviewer's own words rather than in yours. Restating is where a finding quietly loses its severity, its `file:line`, or its reasoning — the hub corrupting the review signal is exactly what typed records exist to prevent.
-- **Never dispatch a fix while any reviewer for the same task is still out.** Accumulate every verdict first, then send one fix dispatch carrying every reviewer's record path. A fix dispatched against a partial verdict set buys one guaranteed extra round when the late reviewer's findings land.
-- **Fix dispatches re-point at the same record path.** The coder reads its own prior record there and self-derives `cycle` as prior + 1 — no counter passed, same mechanism as `*-review-lite`. From cycle 2 its record must carry a `diagnosis` (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it): the fix states the cause it resolves before patching, and the re-reviewing agents judge the fix against that stated cause, not just the finding sites.
-- **A non-empty `recurring` on a reviewer's record escalates the fix, not the review.** Recurrence — the same finding class at the same site across cycles — is typed evidence that patching failed. The next fix dispatch must then carry a **defended mechanism choice**: name at least two candidate mechanisms and why the chosen one resolves the recurrence, in the dispatch itself. New findings on newly reachable surface are *not* recurrence — a fix that makes a dead path real legitimately exposes new work; don't treat discovery as failure.
-- **Cycle ≥ 3 always escalates to the user.** When the records show the recurring-mechanism signature persisting *through* a defended-mechanism fix, run `coherent-change`'s research-and-defend first and attach the defended choice (and rejected alternatives) as the escalation's briefing — the user decides between researched options instead of debugging the loop. Every other cycle-3 signature (spec ambiguity, reviewer conflict, scope) escalates directly; research would only delay the adjudication.
-- **Re-dispatch `*-review-lite` at the same record path.** When a commit-gate `*-review-lite` returns block/escalate, the coder fixes and you re-dispatch the same agent on the same diff, pointed at the *same* dispatch-supplied record path as the first attempt. The agent reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — dispatches carry no cycle counter, so there's nothing for you to pass or forget. At `cycle >= 3` with a finding remaining, it escalates to break a stuck fix loop. `ledger.py` doesn't know which reviewers were supposed to fire for a task; if a record looks missing, that detection stays with you at integration time, not with the script.
+- **Dispatch the spec reviewer and every matching `*-quality-reviewer` together, and never dispatch a fix while any of them is still out.** Accumulate every verdict first, then triage once and send one fix dispatch carrying every reviewer's record path. A fix dispatched against a partial verdict set buys one guaranteed extra round when the late reviewer's findings land. Every re-review cycle re-dispatches all of them at their same record paths, since a fix for one reviewer's finding can break another's verdict.
+- **Triage the batch before the fix goes out.** The batch is every finding on every reviewer record, including findings attached to a `compliant` or `approved` verdict. Verify judgment-shaped findings first (see *Judging from Compressed Reports*), then sort each one. **Trivial:** it changes no behavior, touches one site, and touches no contract (a docstring, comment, message or log text, local rename, or lint). **Non-trivial:** everything else, including anything recurring or anything you hesitate to call trivial. An all-trivial batch goes straight to the coder. A batch with any non-trivial finding first goes through `chris-code:remediating-issues`, per-task variant (name it in the dispatch). Dispatch a general-purpose agent to run it over the task's non-trivial findings. Give it the reviewer record paths, the brief path, the changed-file list, any earlier decision docs for this task, the verbatim Constraints, and the output path `$STORE/task-N-decision-c<cycle>.md`, where `<cycle>` is the coder's upcoming fix cycle. It writes one decision doc there (consolidated research and a defended choice per finding) and returns only the path. The variant has no approval checkpoint, spec, or plan, so execution stays continuous. A missing requirement routes here too, even though the spec settles *what* to build: the doc settles *how* it fits the code around it. The fix dispatch then carries the decision doc path alongside the record paths, and the coder implements the defended choices it records.
+- **Fix dispatches re-point at the same record path.** The coder reads its own prior record there and self-derives `cycle` as prior + 1 — no counter passed, same mechanism as `*-review-lite`. From cycle 2 its record must carry a `diagnosis` (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it): the fix states the cause it resolves before patching, and the re-reviewing agents judge the fix against that stated cause, not just the finding sites. When a decision doc was produced, the diagnosis restates its root causes, so the reviewers judge the defended choice through it.
+- **A non-empty `recurring` on a reviewer's record escalates the fix, not the review.** Recurrence — the same finding class at the same site across cycles — is typed evidence that patching failed. Read `recurring` off the reviewer records themselves: `ledger.py open` does not list it. A recurring finding is always non-trivial, and its decision doc must say why the previous mechanism failed and choose a different one, with at least two candidates weighed. New findings on newly reachable surface are *not* recurrence — a fix that makes a dead path real legitimately exposes new work; don't treat discovery as failure.
+- **Cycle ≥ 3 always escalates to the user.** Count by the spec and quality reviewers' own `cycle`, whatever triggered the re-review (their findings, a non-trivial lite fix, or a user ruling). A task gets at most two fix attempts. The second one is where a recurrence-driven decision doc picks a different mechanism. When a re-review at cycle ≥ 3 still has open non-trivial findings, do not dispatch another fix: escalate. Trivial-only leftovers at any cycle don't escalate: the coder fixes them and the reviewers re-review as usual, which is also what clears a reviewer's open `issues` status. The escalation briefing is the reviewer records, every decision doc for the task, and any `recurring` entries. When the recurring-mechanism signature persisted *through* a decision-doc fix, those docs show the user the researched options and rejected alternatives instead of a loop to debug. Every other cycle-3 signature (spec ambiguity, reviewer conflict, scope) escalates directly; research would only delay the adjudication. The user's ruling becomes the next fix's decision, and the reviewers re-review it as usual.
+- **Re-dispatch `*-review-lite` at the same record path.** When a commit-gate `*-review-lite` returns block/escalate, the coder fixes, you re-stage the fixed files, and you re-dispatch the same agent on the new staged diff, pointed at the *same* dispatch-supplied record path as the first attempt. A trivial lite fix re-runs only review-lite. A non-trivial one changed behavior the reviewers approved, so the spec and quality reviewers re-review it first. The agent reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — dispatches carry no cycle counter, so there's nothing for you to pass or forget. Its findings get the same triage as the reviewers': a non-trivial one goes through the per-task decision doc before the coder fixes it. At `cycle >= 3` with a finding remaining, it escalates to break a stuck fix loop. `ledger.py` doesn't know which reviewers were supposed to fire for a task; if a record looks missing, that detection stays with you at integration time, not with the script.
 - **Never narrow the mandate.** Do not reframe a reviewer's job to a subset of its remit ("just check for bugs," "only look at the parser," "skip the tests"). Each reviewer's system prompt defines its full scope — hand it the inputs and constraints, not a reduced charter. Under-cueing the scope is as corrosive as suppressing a finding: a design reviewer told to "look for bugs" stops reviewing design.
 - **Do not** ask a reviewer to re-run tests the implementer already ran, or add open-ended directives ("check all uses") without a concrete, task-specific reason.
 - **Plan-mandated defects are the user's call.** If a finding conflicts with what the plan mandates, present the finding and the plan text and ask which governs. Do not dismiss it because the plan mandated it, and do not dispatch a fix that contradicts the plan without asking.
@@ -194,7 +197,7 @@ The spec-reviewer's "⚠️ Cannot verify from diff" line is typed: each item la
 
 Conversation memory does not survive compaction; a controller that loses its place can re-dispatch finished tasks. Track progress in the typed store, not only in TodoWrite.
 
-- At start, run `python3 scripts/ledger.py read --store "$STORE"` for the full store as markdown, `python3 scripts/ledger.py open --store "$STORE"` for what's still unresolved, and `python3 scripts/ledger.py completed --store "$STORE"` for which task ids are done. A task id listed by `completed` is DONE — do not re-dispatch it, even if `open` still lists a `duplication_pending` entry for it; the Pattern Ledger deliberately carries that forward as assigned work for a later task, not as evidence this one is unfinished (see Cross-Task Pattern Ledger and Red Flags). Any *other* open item on a completed task — `cannot_verify`, an unresolved status, a malformed record — means the completion was premature; treat it as unfinished and investigate before resuming past it. Resume at the first task id `completed` does not list. If the store belongs to a different branch or a stale run, `python3 scripts/ledger.py clear --store "$STORE"` first. A malformed `progress.jsonl` line stops `read`/`open`/`completed` loudly (the error names the file and line): fix that line, or `clear` if the log is disposable — `append`, `shapes`, `store-dir`, and `check` keep working meanwhile.
+- At start, run `python3 scripts/ledger.py read --store "$STORE"` for the full store as markdown, `python3 scripts/ledger.py open --store "$STORE"` for what's still unresolved, and `python3 scripts/ledger.py completed --store "$STORE"` for which task ids are done. A task id listed by `completed` is DONE — do not re-dispatch it, even if `open` still lists a `duplication_pending` entry for it; the Pattern Ledger deliberately carries that forward as assigned work for a later task, not as evidence this one is unfinished (see Cross-Task Pattern Ledger and Red Flags). Any *other* open item on a completed task — `cannot_verify`, an unresolved status, a malformed record — means the completion was premature; treat it as unfinished and investigate before resuming past it. Resume at the first task id `completed` does not list. If the store belongs to a different branch or a stale run, `python3 scripts/ledger.py clear --store "$STORE"` first. A close-gate remediation plan (see `chris-code:verification-before-completion`, *The Close Round*) is the same run, not a stale one: never clear its store, since that would erase the finished tasks and the close-round count. You can recognize one in `ledger.py read`: a `close round 1` entry, then a `close-gate remediation r1: plan <path>, …` note naming **the plan you were handed**, and no `close round 2` yet. Then resume that plan, and when its last task completes, the next step is verification's round 2 (`close-round --expect 2`), followed by the front-end the note names. A store whose close rounds belong to any other plan is a finished run, and so is one that already has round 2. Clear it before starting, or `completed` will skip your new plan's tasks as done. A malformed `progress.jsonl` line stops `read`/`open`/`completed` loudly (the error names the file and line): fix that line, or `clear` if the log is disposable — `append`, `shapes`, `store-dir`, and `check` keep working meanwhile.
 - When a task's reviews come back clean, run `python3 scripts/ledger.py append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"` alongside marking it done in TodoWrite. TodoWrite is your live view; the store — and `ledger.py completed` specifically — is the durable recovery map, a typed entry rather than a prose substring to pattern-match.
 - After compaction, re-resolve `$STORE` (see File Handoffs) since it doesn't survive compaction either, then rebuild the TodoWrite list from `ledger.py read --store "$STORE"`, `ledger.py open --store "$STORE"`, and `ledger.py completed --store "$STORE"`, and trust them and `git log` over your own recollection — `open` also surfaces anything left unresolved before the compaction hit (a `duplication_pending` entry, a `cannot_verify` item), not just task completion.
 
@@ -202,7 +205,7 @@ Conversation memory does not survive compaction; a controller that loses its pla
 
 Implementer subagents report one of four statuses. Handle each appropriately:
 
-**DONE:** Proceed to spec compliance review.
+**DONE:** Proceed to the spec + quality review.
 
 **DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review — these are judgment-shaped (see *Judging from Compressed Reports*): ground the concern by `claim-checker` dispatch rather than acting on the summary. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
 
@@ -224,11 +227,11 @@ The task commits are already in, so `git diff --cached` is empty and `*-review-l
 
 1. `BASE=$(git merge-base HEAD <base-branch>)`, `HEAD=$(git rev-parse HEAD)`.
 2. Run `scripts/review-package "$BASE" "$HEAD" "$STORE/review-whole-change.diff"` — it writes the commit list, stat, and full multi-commit diff to that file and prints the path (the diff never enters your context). Pass the explicit `$STORE` outfile: the script's own default resolves the session-independent default store, which is the wrong location when the session overrode `--store`.
-3. Dispatch each matching `*-review-lite` agent with that package-file path, a record path at `$STORE/final-<agent-name>.json` (`"task": "final"` — this gate has no task number; `$STORE` is the same resolved store from File Handoffs), and the scripts path. The agent reads the package and reviews the whole-change diff, not `--cached`.
+3. Dispatch each matching `*-review-lite` agent with that package-file path, a record path at `$STORE/final-<agent-name>.json` (`$STORE/final-r2-<agent-name>.json` in a close-gate remediation run, so the agent doesn't inherit the original run's gate cycle) (`"task": "final"` — this gate has no task number; `$STORE` is the same resolved store from File Handoffs), and the scripts path. The agent reads the package and reviews the whole-change diff, not `--cached`.
 
 Handle block/escalate exactly as at a per-commit gate — re-dispatch at the same record path so the agent self-derives `cycle` from its own prior record.
 
-**This gate is necessary, not sufficient.** It is the diff-level idiom check applied across commits; it doesn't exercise behavior or assess architecture. After it passes, the caller still owes the heavyweight close: `chris-code:verification-before-completion` (the `*-design-reviewer` cohesion gate and the `intent-reviewer` spec-blind behavior check), then `chris-code:finishing-a-development-branch`. A green suite plus a passing lite gate is not "verified": a green suite proves the assertions you wrote pass, not that behavior is correct or the design coheres. The close is mandatory either way: a front-end (`coherent-change`, `remediating-issues`) owns it if one drove SDD; on direct invocation you do. Being the caller is not an exemption.
+**This gate is necessary, not sufficient.** It is the diff-level idiom check applied across commits; it doesn't exercise behavior or assess architecture. After it passes, the caller still owes the heavyweight close: `chris-code:verification-before-completion` (the `*-design-reviewer` cohesion gate and the `intent-reviewer` spec-blind behavior check), then `chris-code:finishing-a-development-branch`. A green suite plus a passing lite gate is not "verified": a green suite proves the assertions you wrote pass, not that behavior is correct or the design coheres. The close is mandatory either way: a front-end (`coherent-change`, `remediating-issues`) owns it if one drove SDD; on direct invocation you do. Being the caller is not an exemption. In a close-gate remediation run, that close *is* verification's round 2: invoke it once, not once for SDD and again for the front-end.
 
 ## Prompt Templates
 
@@ -256,12 +259,14 @@ Stage 1 — dispatching 2 tasks in parallel:
     — brief $STORE/task-2-brief.md, record $STORE/task-2-python-coder.json
 
   Task 1: coder writes task-1-python-coder.json (done, duplication_pending: 1 site) →
-    spec reviewer ✅ → quality reviewer ❌ (S3: hidden side effect in helper) → coder
-    fixes → quality reviewer ✅ → python-review-lite ✅ (self-derived cycle 1) →
+    spec reviewer ✅ + quality reviewer ❌ (dispatched together; S3: hidden side effect
+    in helper) → triage: non-trivial → per-task decision doc → coder fixes against it
+    (cycle 2, diagnosis) → spec reviewer ✅ + quality reviewer ✅ → python-review-lite ✅
+    (self-derived cycle 1) →
     `ledger.py append --type complete --task 1 --note "..." --store "$STORE"`
     → mark complete (the open duplication_pending below doesn't block this — see Durable
     Progress and Red Flags)
-  Task 2: coder completes → spec reviewer ✅ → quality reviewer ✅ → python-review-lite ✅
+  Task 2: coder completes → spec reviewer ✅ + quality reviewer ✅ → python-review-lite ✅
     → mark complete
 
   [python3 scripts/ledger.py open --store "$STORE" → task-1-python-coder#duplication_pending[a1b2c3d4]
@@ -301,7 +306,8 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never dispatch subagents in parallel when their file footprints overlap
 - Never paste task text or diffs into a dispatch or your own context — hand the task brief as a file (`python3 scripts/task_brief.py`), and never hand a subagent the whole plan file
 - Never coach a reviewer to suppress, soften, or pre-rate a finding
-- Never start quality review before spec compliance passes
+- Never dispatch a fix before every spec and quality verdict for the task is in
+- Never send a non-trivial finding to the coder without a per-task decision doc (`chris-code:remediating-issues`, per-task variant)
 - Never mark a task complete with a `cannot_verify` item, an unresolved status, or a malformed record still open in `ledger.py open` for that task — an open `duplication_pending` entry alone does not block completion; the Pattern Ledger deliberately assigns its hoist to a later task
 - Never enter the whole-change commit gate with an open `duplication_pending` entry in `ledger.py open` — resolve it (the hoist landed) or reassign it to a task still ahead first
 - Never re-dispatch a task `ledger.py completed` lists
@@ -310,7 +316,7 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never pass a `cycle` value in a `*-review-lite` dispatch — dispatches carry no cycle counter; the agent self-derives `cycle` from its own prior record at the same record path
 - Never let a subagent compute its own record or scripts path — the dispatch supplies both, exactly as it supplies the report path
 - Never move to next task while any review has open issues
-- If a reviewer finds issues: coder fixes → reviewer re-reviews → repeat until approved
+- If reviewers find issues: triage the batch → decision doc for any non-trivial finding → coder fixes the whole batch → every reviewer re-reviews → repeat until approved (cycle ≥ 3 escalates)
 - If a subagent is blocked: provide more context, upgrade model, or break the task apart — never force retry without changes
 
 ## Integration

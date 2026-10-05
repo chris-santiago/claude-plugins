@@ -200,7 +200,8 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
 - **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `scripts/ledger.py append`; a controller that loses context after compaction resumes from `scripts/ledger.py read` instead of re-running finished work. TodoWrite stays the live view.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
-- **The disciplined fix loop.** Verdicts accumulate before any fix is dispatched; from cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster — enforced by `ledger.py check`) and re-reviewers judge it against that stated cause; a `recurring` finding (same class, same site, across cycles) — not merely new findings — escalates the next fix to a defended mechanism choice; cycle 3 always goes to the user, briefed with a `coherent-change` defended choice when the mechanism itself keeps failing.
+- **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage. Trivial findings go straight to the coder; non-trivial ones first get a per-task decision doc from `remediating-issues` (research once, defended choice per finding, no approval pause). From cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster, enforced by `ledger.py check`), and re-reviewers judge it against that stated cause. A `recurring` finding (same class, same site, across cycles), not merely a new one, forces the next decision doc to replace the failed mechanism. Cycle 3 always goes to the user, briefed with the decision docs.
+- **The close round.** `verification-before-completion` dispatches its design, intent, and mutation gates together and triages once; the non-trivial findings go to `remediating-issues` as one close-gate batch (decision doc → `lean-plan` → SDD, no `lean-spec`). Round 2 re-checks at the same report paths, and anything non-trivial left after it goes to the user. `ledger.py close-round` enforces the two-round cap.
 
 ## The determined-change engine
 
@@ -294,7 +295,7 @@ One coder per task. Dispatched by `subagent-driven-development` and `executing-p
 
 ### Quality Review Agents (additive — all matching fire)
 
-Dispatched per task after spec compliance review passes. All agents matching the file extensions fire on the same diff.
+Dispatched per task alongside the spec reviewer; both verdicts are triaged once. All agents matching the file extensions fire on the same diff.
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|

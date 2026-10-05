@@ -152,7 +152,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `concerns` — anything you'd flag in the prose report (public-API changes, cross-language wiring, architectural questions); empty list when clean.
 - `report` — the path to the prose report file you wrote.
 - `cycle` — `1` on a first attempt. A fix re-dispatch points at this same record path: read your own prior record first and write its `cycle` + 1.
-- `diagnosis` — **required from cycle 2** (`check` enforces it): an object with non-empty `root_cause`, `end_state`, and `resolves_cluster`. Before patching anything, state the cause behind the findings, the end-state your fix serves, and why the fix resolves the findings as a cluster rather than site-by-site — then implement that. Enumerate the consumers of whatever you change as part of the diagnosis. Not required at cycle 1; a first attempt is not a fix.
+- `diagnosis` — **required from cycle 2** (`check` enforces it): an object with non-empty `root_cause`, `end_state`, and `resolves_cluster`. Before patching anything, state the cause behind the findings, the end-state your fix serves, and why the fix resolves the findings as a cluster rather than site-by-site — then implement that. Enumerate the consumers of whatever you change as part of the diagnosis. Not required at cycle 1; a first attempt is not a fix. When the fix dispatch carries a decision doc path, implement the defended choices it records, not a mechanism of your own; your `root_cause` restates the doc's.
 
 ## Boundaries
 

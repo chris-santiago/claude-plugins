@@ -29,6 +29,8 @@ BEFORE claiming any status or expressing satisfaction:
 
 ## Verification Steps
 
+The steps are numbered for reference, not run in sequence: Steps 1–2 run first, then Steps 3, 5, and 6 are dispatched together, with Step 4 done alongside them, as one close round (see *The Close Round*).
+
 ### Step 1: Tests
 
 Run the project's full test suite. Not a subset. Not "the tests I think are relevant."
@@ -73,22 +75,22 @@ Inputs:
   - Report path: <$STORE/design-review-<agent-name>.md>
 ```
 
-Resolve `$STORE` once via `python3 <sdd-scripts-path>/ledger.py store-dir` (the same authority subagent-driven-development uses). The agent writes its full report to that path and returns only `<agent-name> — PASS | CONCERNS — report: <path>` — the architecture analysis stays out of your context; read the report (or hand its path to a fix dispatch) only when the verdict is CONCERNS. On a re-run after remediation, pass the *same* report path: the agent reads its prior report there and judges whether the findings were addressed rather than re-deriving them.
+Resolve `$STORE` once via `python3 <sdd-scripts-path>/ledger.py store-dir` (the same authority subagent-driven-development uses), where `<sdd-scripts-path>` is the absolute path of the `subagent-driven-development` skill's `scripts/` directory at the plugin install location. Use it even when SDD did not run: `store-dir` works in any git repo. The agent writes its full report to that path and returns only `<agent-name> — PASS | CONCERNS — report: <path>`, so the architecture analysis stays out of your context until triage. At triage, read every report, not only the CONCERNS ones: a PASS can still carry S1–S2 findings. On a re-run after remediation, pass the *same* report path: the agent reads its prior report there and judges whether the findings were addressed rather than re-deriving them.
 
 Pass it the inputs and constraints, never a narrowed scope. Do not tell the agent to skip a concern or pre-rate a severity — its findings and verdict are its own.
 
-**Must see:** Verdict PASS from every dispatched agent (no S3+ findings). If any returns CONCERNS, address the findings — hand the fix dispatch the report path, never a paraphrase — and re-run.
+**Must see:** Verdict PASS from every dispatched agent (no S3+ findings), or every CONCERNS finding resolved through the close round. A CONCERNS verdict is not fixed here: its findings go to the close round's single triage (see *The Close Round*).
 
 ### Step 4: Requirements Check
 
-Re-read the plan or spec that drove this work. For each requirement:
+Re-read the plan or spec that drove this work. With no spec (a bug remediation or a single `coherent-change` build), the issue text and the decision doc are the requirements. In round 2, add the close-gate decision doc and remediation plan. For each requirement:
 
 1. Can you point to the code that implements it?
 2. Can you point to a test that verifies it?
 3. Is there anything in the spec that was not implemented?
 4. Is there anything implemented that was not in the spec?
 
-**Must see:** Every requirement covered. If gaps exist, report them — do not claim completion.
+**Must see:** Every requirement covered. A gap does not get claimed as complete: it joins the close round's triage alongside the gate findings.
 
 ### Step 5: Intent Re-check
 
@@ -112,13 +114,13 @@ The agent writes its full per-statement re-check to the report path and returns 
 
 If no intent ledger exists and no original-ask statement is recoverable (a change that never had one), note that explicitly and skip this step — do not fabricate a ledger after the fact.
 
-**Must see:** Verdict PASS (no `not-met` statements). A `not-met` is a real gap between behavior and the ask — fix it (or, if the ledger itself is wrong, that is a user decision). Resolve every `can't-tell` before claiming completion.
+**Must see:** Verdict PASS (no `not-met` statements). A `not-met` is a real gap between behavior and the ask and goes to the close round's triage (or, if the ledger itself is wrong, that is a user decision). Resolve every `can't-tell` before claiming completion. A PASS can still carry `can't-tell` items, so read the report at triage either way.
 
 ### Step 6: Mutation Re-check
 
 Steps 1–5 trust the tests: if the suite is green, they treat the tested behavior as verified. But a test can execute a line and assert nothing about it — a green suite that proves nothing. This step checks that the tests written for this change *actually detect failures*: in a throwaway worktree the agent deliberately breaks the changed code and confirms a test fails. It uses no external mutation-testing tool — it edits the code and runs the project's own tests — so it works in any language with a runnable suite.
 
-Run when the change includes testable source; skip a docs-only diff. It runs last because it is the most expensive gate and only meaningful on the green suite Steps 1–2 established.
+Run when the change includes testable source; skip a docs-only diff. It is the most expensive gate and only meaningful on the green suite Steps 1–2 established.
 
 Dispatch the **`mutation-tester`** agent **with worktree isolation** — it deliberately breaks code, so it must never touch the working tree:
 
@@ -131,20 +133,42 @@ Inputs:
   - Project constraints: <CLAUDE.md, verbatim>
 ```
 
-The agent scopes mutation to the changed lines (`<merge-base>..HEAD`), so the branch work must be committed — the same assumption Steps 3 and 5 make.
+The agent scopes mutation to the changed lines (`<merge-base>..HEAD`), so the branch work must be committed — the same assumption Steps 3 and 5 make. Unlike the other gates it runs in an isolated worktree and returns its report inline, with no report path. Save that report to `$STORE/mutation-review.md` so a fix dispatch can carry the path; a re-run judges the code fresh, not against a prior report.
 
-**Must see:** Verdict PASS. **CONCERNS** means a test executes changed code but no test fails when the agent breaks it — a trivial/non-discriminating test. Strengthen the test so it fails on the break, then re-run. Uncovered breaks (missing tests) and breaks the agent discards as behavior-preserving (equivalent) are advisory notes — they do not block. A non-green baseline or a scope with nothing to mutate yields a non-blocking `skipped`/`inconclusive` (note it, do not stall the review).
+**Must see:** Verdict PASS. **CONCERNS** means a test executes changed code but no test fails when the agent breaks it — a trivial/non-discriminating test. The fix is a test that fails on the break, routed through the close round's triage. Uncovered breaks (missing tests) and breaks the agent discards as behavior-preserving (equivalent) are advisory notes — they do not block. A non-green baseline or a scope with nothing to mutate yields a non-blocking `skipped`/`inconclusive` (note it, do not stall the review).
+
+## The Close Round: Dispatch Together, Triage Once
+
+Steps 3, 5, and 6 are independent read-only reviews of the same committed HEAD. Fixing after each one in turn is what makes a close cascade: the design fix lands, then intent flags something on the patched code, then mutation does, and every behavioral fix reopens the gates before it. A **close round** replaces that with one dispatch wave and one triage. Run Steps 1–2 first and fix them in place (they are deterministic and gate everything after them), then:
+
+1. **Start the round.** `python3 <sdd-scripts-path>/ledger.py close-round --expect <N> --note "<the plan or issue path being closed>" --store "$STORE"`, where `<N>` is `1` for a fresh close and `2` only on return from this run's close-gate remediation (step 6). It prints the round number and records the HEAD it reviews. The note must name the work, because after a compaction it is how you recognize your own round. If the store disagrees with `--expect`, it fails. On an `--expect 1` failure, read the latest round's note in `ledger.py read`. If it names the work you're closing, it is this run's round 1: resume its triage (the gate reports are still at their paths), and never clear. If it names other work, it belongs to an earlier, finished run: `ledger.py clear` and retry. The cap is **two rounds**: past it the command exits non-zero, and the open findings escalate to the user (step 7). Never clear the store to get past the cap.
+2. **Dispatch every applicable gate in one message:** each matching `*-design-reviewer` (Step 3), `intent-reviewer` (Step 5), and `mutation-tester` (Step 6), in parallel. Do the Step 4 requirements check while they run.
+3. **Wait for every verdict.** Never start a fix while any gate in the round is still out; a fix made against a partial verdict set guarantees an extra round when the late gate lands.
+4. **Triage every finding once,** reading every report (a PASS can carry S1–S2 findings and `can't-tell` items). Verify each finding is real (`chris-code:receiving-code-review`), then sort it:
+   - **Trivial:** it changes no behavior, touches one site, and touches no contract: a docstring, comment, message or log text, local rename, or lint. Fix it inline.
+   - **Test-only strengthening:** a mutation CONCERNS whose fix is a discriminating test and no source change. Dispatch the language-matched coder directly with `$STORE/mutation-review.md`, the record path `$STORE/final-close-r<N>-<coder-name>.json`, and the scripts path.
+   - **`can't-tell`:** re-dispatch `intent-reviewer` at its same report path with the missing observation or access it named. This happens inside the current round, not as a new one. Wait for that verdict and triage it with the rest before step 5, so a late `not-met` joins the batch. If the access can't be provided, ask the user.
+   - **Separable:** a larger improvement the change is fully correct without. Log it as a follow-up (*Fix Fully, Defer Only the Separable*).
+   - **Non-trivial:** everything else, including anything you hesitate to call trivial. Never fix it inline.
+5. **Commit the inline and test-only fixes** through the `*-review-lite` gate before anything else runs. Round 2 and the remediation's whole-change gate review committed HEAD, so an uncommitted fix is invisible to them.
+6. **Route the non-trivial set as one batch** through `chris-code:remediating-issues` (Batch Path, close-gate variant). Hand over the gate report paths, not a paraphrase: they frame each finding's end-state. `coherent-change` batch mode runs one consolidated research pass, writes one decision doc, and presents it at its stage-4 approval checkpoint. Then the batch **skips `lean-spec`** (the gate reports are the *what* and the decision doc is the *how*) and goes straight to one `lean-plan`, whose spec references are the decision doc and the report paths. Record the remediation so a compaction can't lose it: `ledger.py append --type progress --task final --note "close-gate remediation r1: plan <path>, decision <path>, intent <path>, front-end <skill>" --store "$STORE"`. Here `intent` is the round-2 intent ledger; when that is issue text named only in session, save it to `$STORE/intent-issue.md` first. `front-end` is the skill whose close resumes after round 2 (`remediating-issues`, `coherent-change`, or none). Execute the plan with `subagent-driven-development` **on this same store**, never `clear` it mid-close, and number the plan's tasks after the highest numeric id `ledger.py completed` lists so the new tasks never collide with finished ones. That SDD run's own close *is* round 2: invoke this skill once when its last task completes.
+7. **Close again: round 2.** `close-round --expect 2` prints `2`. Every gate re-runs in parallel, and the design and intent gates re-run at their **same report paths**. Each judges whether its prior findings were addressed instead of re-deriving the whole change. The design reviewers get one added input, `Remediation range: <round-1 head>..HEAD`, with the round-1 head taken from `ledger.py read`, so they can scope new problems to the remediation. The intent-reviewer keeps its two spec-blind inputs. Use the same range yourself when sorting findings. Triage round 2 as in step 4, with three differences:
+   - A finding that recurs from round 1 is always non-trivial.
+   - A new finding outside the remediation range is fresh sampling, not a regression the fix caused. Log it as a follow-up in your completion report, and it does not block completion. The exception is an S4+ (correctness) finding, which escalates to the user wherever it sits.
+   - Any non-trivial finding left after round 2 **escalates to the user**, with the report paths and the decision doc attached. There is no round 3. If the user rules it should be fixed, their ruling is the decision. Dispatch the language-matched coder with the ruling, the gate report path, the record path `$STORE/final-close-r2-<coder-name>.json`, and the scripts path. Commit the fix through `*-review-lite`, then re-run Steps 1–2 plus each gate that flagged it, at its same report path, with `Remediation range: <round-2 head>..HEAD` for a design reviewer. That re-check sits outside the round count, so it gets one attempt: if a gate still flags it, return to the user rather than looping.
+
+After either round, inline and test-only fixes close the same way: commit them, re-run Steps 1–2, and re-mutate a strengthened test with one `mutation-tester` re-dispatch (not a new round). A round 1 whose findings were all trivial, test-only, `can't-tell`, or separable needs no round 2, so you're done once those are closed.
 
 ### Discriminating checks, and re-running after remediation
 
 Two failure modes quietly turn a green gate into a false pass:
 
 - **A behavioral check that doesn't discriminate proves nothing, even when it passes.** Whether the intent-reviewer exercises the system or you confirm a fix by observation, the check must hold under correct behavior and fail under the bug (see the discriminating-assertion rule in `chris-code:regression-test`). "Output is present", "renders without error", "is not None" are satisfied by the broken state too. A reviewer can be fooled by the same weak heuristic you would be, so treat a PASS built on a non-discriminating observation as unproven.
-- **A CONCERNS→fix leaves a stale verdict until you re-run.** When Step 3 (design), Step 5 (intent), or Step 6 (mutation) returns findings and you remediate, re-run that gate on the fixed code; the prior PASS describes the pre-fix system. A strengthened test must be re-mutated — the old mutation verdict was measured against the trivial test. If the fix changed behavior at all, re-run *both* the design and intent gates, not only the one that flagged. Don't substitute "it's byte-identical so the verdict holds" for the re-run: prove byte-identity first (stash the fix, diff output or hashes), and if it isn't identical, regenerate and re-inspect every golden it touched before the verdict counts.
+- **A CONCERNS→fix leaves a stale verdict until you re-run.** When a round's findings are remediated, the prior verdicts describe the pre-fix system; round 2 re-runs every gate on the fixed code for that reason. A strengthened test must be re-mutated — the old mutation verdict was measured against the trivial test. Don't substitute "it's byte-identical so the verdict holds" for the re-run: prove byte-identity first (stash the fix, diff output or hashes), and if it isn't identical, regenerate and re-inspect every golden it touched before the verdict counts.
 
 ## After Verification Passes
 
-All six steps green → you may claim completion. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+Every finding fixed, logged as a follow-up (separable, or fresh sampling in round 2), or adjudicated by the user → you may claim completion, listing the follow-ups. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
 ## What These Gates Do and Don't Prove
 
@@ -175,6 +199,9 @@ Run the gates — they catch real drift. Just don't read green as proof of its a
 - **`*-design-reviewer` agents** — read-only senior-level review, auto-dispatched by scope (Step 3)
 - **`intent-reviewer`** — read-only, spec-blind behavior-vs-intent re-check (Step 5)
 - **`mutation-tester`** — mutation gate in an isolated worktree (breaks changed code, runs the tests, reverts), dispatched when the change includes testable source (Step 6)
+
+**This skill routes:**
+- **chris-code:remediating-issues** — a close round's non-trivial findings, as one batch (close-gate variant: no `lean-spec`)
 
 **Related skills:**
 - **chris-code:test-driven-development** — TDD ensures tests exist; this skill ensures they pass

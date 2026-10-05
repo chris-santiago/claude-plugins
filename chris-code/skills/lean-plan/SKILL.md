@@ -129,3 +129,8 @@ After saving the plan, offer:
 
 - **Subagent-Driven:** REQUIRED SUB-SKILL: `chris-code:subagent-driven-development`
 - **Inline:** REQUIRED SUB-SKILL: `chris-code:executing-plans`
+
+**Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in three ways:
+- §2's spec references are the decision doc and the gate report paths.
+- Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
+- Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.

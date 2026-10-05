@@ -8,6 +8,17 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-04 — Batched, coherent remediation
+
+Review findings stop cascading: every review loop batches its verdicts, triages once, and routes non-trivial fixes through the coherence engine, with the close capped at two rounds.
+
+### Changed
+- **Batched, coherent remediation at every review loop.** Fix rounds were cascading: findings fixed one gate at a time as point patches, outside the coherence engine, each fix surfacing new findings on its own surface.
+  - **Per task (SDD):** the spec reviewer and quality reviewers now run in parallel (spec-first ordering removed), and every verdict accumulates before one triage. Trivial findings (no behavior change, one site, no contract) go straight to the coder. Non-trivial ones first go through `remediating-issues`' new **per-task variant**: decision-only, with one decision doc of defended choices and no approval checkpoint. The coder fixes against that doc. A recurring finding's doc must replace the failed mechanism. Cycle ≥ 3 escalation is unchanged.
+  - **Completion close:** `verification-before-completion` runs its design, intent, and mutation gates as one **close round**, dispatched together and triaged once. Non-trivial findings go through `remediating-issues`' new **close-gate variant** (decision doc, then `lean-plan`, then SDD on the same store; the only batch that skips `lean-spec`). Round 2 re-checks at the same report paths. A new finding on code the remediation never touched is logged as a follow-up, and anything non-trivial left after round 2 goes to the user.
+  - **`ledger.py close-round --expect N`** records each round, and the HEAD it reviewed, as a typed progress entry and refuses a third, so the two-round cap and round 2's remediation range survive compaction. `--expect` fails when the store disagrees (for example, a fresh close finding an earlier run's rounds), so a stale store can't silently start a new run at round 2.
+  - **`ledger.py clear`** now also removes the run's handoff files (briefs, reports, per-task decision docs, gate reports, review packages). Gate reviewers read their report path as their prior verdict, so a surviving report would anchor an unrelated run on stale findings.
+
 ### Fixed
 - **Gate reviewers join the file-handoff system**: the design reviewers and `intent-reviewer` — the last agents returning full reports inline into the orchestrator's context — now write their report to a dispatch-supplied path under the run store and return only `PASS | CONCERNS` plus the path (read-only on the checkout otherwise; a re-run reads its own prior report; an ad-hoc dispatch with no path still gets the report inline). `verification-before-completion` supplies the paths via `ledger.py store-dir`. Surfaced by a live session hitting the design reviewer's inability to persist its cycle-2 verdict.
 
@@ -109,6 +120,7 @@ The initial chris-code workflow, forked and generalized from superpowers v5.1.0.
 - superpowers-specific language and project-specific ("Ferrum") terms throughout the skills.
 
 [Unreleased]: https://github.com/chris-santiago/claude-plugins/commits/main
+[0.5.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.3.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.2.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.1.0]: https://github.com/chris-santiago/claude-plugins/commits/main

@@ -23,6 +23,7 @@ Totality ("never crash on any input") is explicitly not a goal.
 
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
+       python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -53,7 +54,7 @@ __all__ = [
     "get_store_dir", "ensure_store", "validate_record",
     "load_records", "load_progress_log", "resolutions_from_log",
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
-    "completed_task_ids",
+    "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
 ]
 
 SCHEMA_VERSION = 1
@@ -89,6 +90,12 @@ DECISION_LIST_FIELDS = {
 DIAGNOSIS_KEYS = ("root_cause", "end_state", "resolves_cluster")
 
 PROGRESS_FILENAME = "progress.jsonl"
+
+# Close-gate rounds (2026-10-04): each run of verification-before-
+# completion's review gates is one round. Round 1 is the first close;
+# round 2 re-checks a batched remediation. Findings after the last round
+# escalate to the user — a further round is refused, not counted.
+CLOSE_ROUND_CAP = 2
 
 
 class RecordError(Exception):
@@ -468,6 +475,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             lines.append(f"- task {entry.get('task')} **COMPLETE**: {entry.get('note', '')}")
         elif entry.get("type") == "resolution":
             lines.append(f"- resolves `{entry.get('resolves')}`: {entry.get('note', '')}")
+        elif entry.get("type") == "close_round":
+            lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
+                          f"{entry.get('note', '')}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -481,6 +491,13 @@ def completed_task_ids(log: list[dict]) -> list[str]:
     amended 2026-08-27)."""
     return list(dict.fromkeys(
         str(entry.get("task")) for entry in log if entry.get("type") == "complete"))
+
+
+def close_rounds(log: list[dict]) -> int:
+    """How many close-gate rounds have started in this store — a typed
+    count, so the round cap survives compaction instead of living in the
+    orchestrator's memory."""
+    return sum(1 for entry in log if entry.get("type") == "close_round")
 
 
 def cmd_read(store_dir: Path) -> None:
@@ -520,6 +537,46 @@ def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> 
     _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": entry_type, "task": task, "note": note})
 
 
+def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
+    """Start the next close-gate round and print its number. `expect` is
+    the round the caller believes it is starting (1 for a fresh close, 2
+    on return from a close-gate remediation); a mismatch means the store
+    belongs to another run, so it raises instead of silently starting a
+    new run at round 2. The entry records the HEAD the round reviews, so
+    round 2 can name the remediation range (round-1 head..HEAD). Past
+    CLOSE_ROUND_CAP this raises and appends nothing: the cap is the
+    escalation trigger, so a further round must never start silently."""
+    started = close_rounds(load_progress_log(store_dir))
+    if expect != started + 1:
+        if expect == 1:
+            raise RecordError(
+                f"expected round 1, but this store already records {started} close "
+                "round(s). If the latest round's note names the work you are "
+                "closing, it is this run's round 1: resume its triage instead, and "
+                "after the remediation start round 2 with --expect 2. Otherwise the "
+                "rounds belong to an earlier, finished run: `clear` the store, then retry.")
+        raise RecordError(
+            f"expected round {expect}, but this store records {started} close "
+            f"round(s): round {expect} only follows round {expect - 1} of the same run.")
+    if started >= CLOSE_ROUND_CAP:
+        raise RecordError(
+            f"close-round cap ({CLOSE_ROUND_CAP}) reached: escalate the open "
+            "gate findings to the user instead of starting another round, and "
+            "never clear the store to get past the cap.")
+    ensure_store(store_dir)
+    _append_jsonl(store_dir / PROGRESS_FILENAME,
+                  {"type": "close_round", "round": started + 1, "head": head, "note": note})
+    print(started + 1)
+
+
+def _git_head() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise RuntimeError("close-round needs a git HEAD to record; run it inside the repo") from e
+
+
 def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
     """Record a resolution — but only for an id that is currently open and
     resolvable. A resolve that matches nothing is not a silent no-op: it
@@ -553,14 +610,26 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
                   {"type": "resolution", "resolves": resolve_id, "note": note})
 
 
+# Store-managed handoff files beyond the JSON records: briefs, reports,
+# per-task decision docs, gate reports, and review packages. Gate
+# reviewers read their own report path as their prior verdict, so these
+# must not outlive the run that wrote them.
+HANDOFF_FILE_PATTERNS = ("task-*-*.md", "design-review-*.md", "intent-recheck.md",
+                         "intent-issue.md", "mutation-review.md", "review-*.diff")
+
+
 def cmd_clear(store_dir: Path) -> None:
     """Delete files whose stem matches the record naming convention
-    (task-*-* or final-*) plus the progress log — content validity is
+    (task-*-* or final-*), the handoff files the run wrote
+    (HANDOFF_FILE_PATTERNS), and the progress log — content validity is
     irrelevant: a malformed record-attempt is clearable, an unrelated
     notes.json is not."""
     if store_dir.is_dir():
         for path in sorted(store_dir.glob("*.json")):
             if fnmatch.fnmatch(path.stem, "task-*-*") or fnmatch.fnmatch(path.stem, "final-*"):
+                path.unlink()
+        for pattern in HANDOFF_FILE_PATTERNS:
+            for path in sorted(store_dir.glob(pattern)):
                 path.unlink()
     progress_path = store_dir / PROGRESS_FILENAME
     if progress_path.is_file():
@@ -598,17 +667,24 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
             f"{path}: passes validation but fails to render as an open item: {e}") from e
 
 
-def _task_arg(value: str) -> int | str:
-    """A positive integer, or 'final' for the whole-change commit gate."""
-    if value == "final":
-        return value
+def _positive_int(value: str) -> int:
     try:
         n = int(value)
     except ValueError:
         n = None
     if n is None or n <= 0:
-        raise argparse.ArgumentTypeError("must be a positive integer or 'final'")
+        raise argparse.ArgumentTypeError("must be a positive integer")
     return n
+
+
+def _task_arg(value: str) -> int | str:
+    """A positive integer, or 'final' for the whole-change commit gate."""
+    if value == "final":
+        return value
+    try:
+        return _positive_int(value)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError("must be a positive integer or 'final'") from None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -636,6 +712,14 @@ def build_parser() -> argparse.ArgumentParser:
                            help="positive task number, or 'final' for the whole-change gate")
     p_append.add_argument("--note", required=True)
 
+    p_close = sub.add_parser("close-round", parents=[store_parent],
+                              help="start the next close-gate round and print its "
+                                   f"number; fails past the cap ({CLOSE_ROUND_CAP})")
+    p_close.add_argument("--expect", required=True, type=_positive_int,
+                          help="the round you are starting: 1 for a fresh close, "
+                               "2 on return from a close-gate remediation")
+    p_close.add_argument("--note", required=True)
+
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
                                 help="record a resolution for an open item")
     p_resolve.add_argument("id")
@@ -643,7 +727,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("clear", parents=[store_parent],
                     help="remove records matching the naming convention "
-                         "(task-*-*/final-*) and the progress log")
+                         "(task-*-*/final-*), the run's handoff files (briefs, "
+                         "reports, gate reports, review packages), and the "
+                         "progress log")
 
     p_check = sub.add_parser("check", parents=[store_parent],
                               help="validate a single record file (write-time gate)")
@@ -672,6 +758,8 @@ def main() -> None:
             cmd_store_dir(store_dir)
         elif args.command == "append":
             cmd_append(store_dir, args.type, args.task, args.note)
+        elif args.command == "close-round":
+            cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":

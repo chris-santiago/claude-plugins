@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 model: opus
-description: Read-only spec-compliance review — verifies an implementation matches its brief/spec (nothing more, nothing less) by reading the actual code, not the implementer's report. Language-agnostic; dispatched per-task by subagent-driven-development before the quality reviewer. Never edits code.
+description: Read-only spec-compliance review — verifies an implementation matches its brief/spec (nothing more, nothing less) by reading the actual code, not the implementer's report. Language-agnostic; dispatched per-task by subagent-driven-development alongside the quality reviewer. Never edits code.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 

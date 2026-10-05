@@ -54,7 +54,7 @@ Coders also **mirror by reference rather than copy**: if a task needs a block a 
 
 ## Quality review agents (additive — all matching fire)
 
-Dispatched per task **after** spec compliance passes. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
+Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|

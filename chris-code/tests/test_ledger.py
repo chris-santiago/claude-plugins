@@ -651,6 +651,81 @@ class TestCompletion(LedgerTestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
+# --- close-gate rounds (batched close remediation, 2026-10-04) ---
+
+class TestCloseRounds(LedgerTestCase):
+    def test_close_rounds_counts_only_close_round_entries(self):
+        log = [
+            {"type": "complete", "task": 1, "note": "shipped"},
+            {"type": "close_round", "round": 1, "note": "first close"},
+            {"type": "resolution", "resolves": "x#status", "note": ""},
+        ]
+        self.assertEqual(ledger.close_rounds(log), 1)
+
+    def test_first_and_second_rounds_print_their_number_and_append_typed_entries(self):
+        for expected, head in ((1, "aaa1111"), (2, "bbb2222")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ledger.cmd_close_round(self.store, f"round {expected}", head, expect=expected)
+            self.assertEqual(buf.getvalue().strip(), str(expected))
+        log = ledger.load_progress_log(self.store)
+        # Each round records the HEAD it reviewed, so round 2 can name the
+        # remediation range (round-1 head..HEAD) without memory.
+        self.assertEqual(log, [
+            {"type": "close_round", "round": 1, "head": "aaa1111", "note": "round 1"},
+            {"type": "close_round", "round": 2, "head": "bbb2222", "note": "round 2"},
+        ])
+
+    def test_round_past_the_cap_raises_and_appends_nothing(self):
+        # The cap is the escalation trigger: a third close round must not
+        # start silently — round 2's findings go to the user instead.
+        for n in range(ledger.CLOSE_ROUND_CAP):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ledger.cmd_close_round(self.store, f"round {n + 1}", "abc1234", expect=n + 1)
+        before = ledger.load_progress_log(self.store)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "one more", "abc1234",
+                                   expect=ledger.CLOSE_ROUND_CAP + 1)
+        message = str(ctx.exception)
+        self.assertIn(f"cap ({ledger.CLOSE_ROUND_CAP})", message)
+        self.assertIn("escalate", message)
+        # The error must not read as an invitation to bypass the cap.
+        self.assertIn("never clear", message)
+        self.assertEqual(ledger.load_progress_log(self.store), before)
+
+    def test_expect_mismatch_raises_and_appends_nothing(self):
+        # A fresh close expects round 1; a store left by an earlier run
+        # would otherwise silently start it at round 2.
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_close_round(self.store, "old run", "abc1234", expect=1)
+        before = ledger.load_progress_log(self.store)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "new feature", "def5678", expect=1)
+        message = str(ctx.exception)
+        self.assertIn("expected round 1", message)
+        self.assertIn("clear", message)
+        self.assertEqual(ledger.load_progress_log(self.store), before)
+
+    def test_expect_two_on_an_empty_store_raises(self):
+        # Round 2 only follows a round 1 of the same run.
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "orphan", "abc1234", expect=2)
+        self.assertIn("expected round 2", str(ctx.exception))
+
+    def test_clear_resets_the_round_count(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_close_round(self.store, "round 1", "abc1234", expect=1)
+        ledger.cmd_clear(self.store)
+        self.assertEqual(ledger.close_rounds(ledger.load_progress_log(self.store)), 0)
+
+    def test_close_round_entries_render_in_read(self):
+        log = [{"type": "close_round", "round": 2, "note": "after remediation"}]
+        rendered = ledger.render_store_markdown([], log)
+        line = next(ln for ln in rendered.splitlines() if "after remediation" in ln)
+        self.assertIn("close round 2", line)
+        self.assertNotIn("unknown entry", rendered)
+
+
 # --- store-dir (spec Sec 6, amended 2026-08-27) ---
 
 class TestCmdStoreDir(LedgerTestCase):
@@ -794,6 +869,24 @@ class TestClear(LedgerTestCase):
         self.assertFalse(final_record.exists())
         self.assertFalse(progress.exists())
         self.assertTrue(unrelated.exists())  # unrelated *.json is never touched
+
+    def test_clear_deletes_gate_reports_and_handoff_files(self):
+        # Gate reviewers re-run at the same report path and read it as
+        # their prior verdict, so a report surviving `clear` would anchor
+        # an unrelated run's reviewer on stale findings.
+        names = ["design-review-python-design-reviewer.md", "intent-recheck.md", "intent-issue.md",
+                 "mutation-review.md", "task-3-brief.md", "task-3-report.md",
+                 "task-3-decision-c2.md", "review-whole-change.diff"]
+        for name in names:
+            (self.store / name).write_text("x", encoding="utf-8")
+        keep = self.store / "notes.md"
+        keep.write_text("user notes", encoding="utf-8")
+
+        ledger.cmd_clear(self.store)
+
+        for name in names:
+            self.assertFalse((self.store / name).exists(), name)
+        self.assertTrue(keep.exists())
 
 
 # --- check (write-time gate) ---
@@ -1032,6 +1125,19 @@ class TestCLI(LedgerTestCase):
         result = self._run("completed")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
+
+    def test_close_round_cli_prints_rounds_then_fails_past_the_cap(self):
+        outputs = [self._run("close-round", "--expect", str(n), "--note", f"round {n}")
+                   for n in range(1, ledger.CLOSE_ROUND_CAP + 2)]
+        for n, result in enumerate(outputs[:-1], 1):
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), str(n))
+        # The CLI fills `head` from git (the test runs inside this repo).
+        heads = [e["head"] for e in ledger.load_progress_log(self.store)]
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{40}", h) for h in heads), heads)
+        past_cap = outputs[-1]
+        self.assertNotEqual(past_cap.returncode, 0)
+        self.assertIn("escalate", past_cap.stderr)
 
     def test_read_renders_complete_entries_distinctly_from_progress(self):
         self._run("append", "--type", "progress", "--task", "5", "--note", "working on it")

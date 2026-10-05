@@ -134,6 +134,9 @@ Agent tool:
       cluster rather than site-by-site — then implement that. Enumerate the
       consumers of whatever you change as part of the diagnosis. Not
       required at cycle 1; a first attempt is not a fix.
+      When the fix dispatch carries a decision doc path, implement the
+      defended choices it records, not a mechanism of your own; your
+      root_cause restates the doc's.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
     NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.
