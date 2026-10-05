@@ -19,7 +19,7 @@ Load plan, review critically, execute all tasks, report when complete.
 1. Read plan file
 2. Review critically - identify any questions or concerns about the plan
 3. If concerns: Raise them with your human partner before starting
-4. If no concerns: check the progress ledger (`subagent-driven-development/scripts/ledger.py read --store "$STORE"`, where `STORE` is resolved once per subagent-driven-development's File Handoffs via `STORE=$(python3 subagent-driven-development/scripts/ledger.py store-dir)` — the single authority for the store path, default or the session's `--store` override) and `subagent-driven-development/scripts/ledger.py completed --store "$STORE"` for which task ids are DONE — rebuild TodoWrite from the ledger and resume at the first task id `completed` doesn't list; otherwise create TodoWrite and proceed
+4. If no concerns: check the progress ledger (`python3 "$SDD_SCRIPTS/ledger.py" read --store "$STORE"`, where `SDD_SCRIPTS` and `STORE` are resolved once per subagent-driven-development's File Handoffs: `SDD_SCRIPTS` is that skill's absolute `scripts/` directory, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)` is the single authority for the store path, default or the session's `--store` override) and `python3 "$SDD_SCRIPTS/ledger.py" completed --store "$STORE"` for which task ids are DONE — rebuild TodoWrite from the ledger and resume at the first task id `completed` doesn't list; otherwise create TodoWrite and proceed
 
 ### Step 2: Execute Tasks
 
@@ -28,7 +28,7 @@ For each task:
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
 4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
-5. Mark as completed in TodoWrite, and append to the ledger the typed completion entry: `subagent-driven-development/scripts/ledger.py append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`
+5. Mark as completed in TodoWrite, and append to the ledger the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`
 
 ### Step 3: Commit Gate
 
@@ -46,7 +46,7 @@ Only dispatch when there are staged changes to review.
 After all tasks complete, review the whole change to catch cross-task idiom drift the per-commit gates missed. The task commits are already in, so `git diff --cached` is empty and `*-review-lite` cannot use its staged-diff path. Hand it the whole-change diff as a file:
 
 1. `BASE=$(git merge-base HEAD main)` (or the actual base), `HEAD=$(git rev-parse HEAD)`.
-2. Run `subagent-driven-development/scripts/review-package "$BASE" "$HEAD"` to write the multi-commit diff to a file and print its path.
+2. Run `"$SDD_SCRIPTS/review-package" "$BASE" "$HEAD"` to write the multi-commit diff to a file and print its path.
 3. Dispatch each matching `*-review-lite` agent with that package-file path; the agent reviews the package diff, not `--cached`.
 
 ### Step 5: Complete Development
