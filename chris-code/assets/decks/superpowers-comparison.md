@@ -77,7 +77,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | Skill | superpowers | chris-code |
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
-| **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec → quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
+| **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`) → Mutation re-check (`mutation-tester` in an isolated worktree). |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 

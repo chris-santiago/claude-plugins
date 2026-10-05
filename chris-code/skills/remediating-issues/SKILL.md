@@ -63,7 +63,7 @@ One issue is the atom. Work it through these stages. (A set of issues is just fa
 
 ## The Defended Choice
 
-The signature artifact, presented at the stage-4 checkpoint before any code changes. Mirror this structure — it is what the canonical remediation produces:
+The signature artifact, presented at `coherent-change`'s stage-4 approval checkpoint (reached from stage 2 above) before any code changes. Mirror this structure — it is what the canonical remediation produces:
 
 **1. Reframe.** The two or three facts from research that change the problem: what's actually in scope, what's irrelevant to the goal, where the real boundary sits.
 

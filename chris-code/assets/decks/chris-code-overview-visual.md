@@ -149,7 +149,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="chev">↓</div>
 <div class="node exec">using-git-worktrees → subagent-driven-development</div>
 <div class="chev">↓</div>
-<div class="node task">per task: coder → spec → quality → commit gate</div>
+<div class="node task">per task: coder → spec + quality → commit gate</div>
 <div class="chev">↓</div>
 <div class="node done">verification-before-completion</div>
 <div class="chev">↓</div>

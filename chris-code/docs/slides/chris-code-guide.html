@@ -712,7 +712,7 @@
         <ul class="shifts">
           <li><span class="idx">01</span><span><b>Lean artifacts.</b> <span class="d">Contracts stay, choreography goes — no 10k-word plans full of code the agent rewrites.</span></span></li>
           <li><span class="idx">02</span><span><b>A real agent layer, dispatched by scope.</b> <span class="d">Named coders and reviewers auto-fire by file type — not generic subagents.</span></span></li>
-          <li><span class="idx">03</span><span><b>A uniform, multi-stage review gate.</b> <span class="d">Spec → quality → commit-lite per task, plus a spec-blind intent re-check.</span></span></li>
+          <li><span class="idx">03</span><span><b>A uniform, multi-stage review gate.</b> <span class="d">Spec + quality → commit-lite per task, plus a spec-blind intent re-check.</span></span></li>
           <li><span class="idx">04</span><span><b>Parallelism is a feature.</b> <span class="d">Footprint-mapped staging, not the red flag superpowers calls it.</span></span></li>
           <li><span class="idx">05</span><span><b>Native tools, hard gate.</b> <span class="d">No silent fallback when worktree tooling is missing — stop and warn.</span></span></li>
           <li><span class="idx">06</span><span><b>Coherence enforcement.</b> <span class="d">One application engine (<span class="mono">coherent-change</span>) every determined change routes through. The largest divergence.</span></span></li>
@@ -726,7 +726,7 @@
         <thead><tr><th>Skill you know</th><th>in superpowers</th><th>in chris-code</th></tr></thead>
         <tbody>
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
-          <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec → quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
+          <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
           <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Six-step pipeline: Tests → Lints → Design review → Requirements → spec-blind intent re-check → mutation re-check.</td></tr>
           <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
         </tbody>
@@ -776,7 +776,7 @@
         <ol class="steps-list">
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
-          <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec → quality → commit-lite review.</li>
+          <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality → commit-lite review.</li>
           <li><b>Verify before “done.”</b> The six-step gate runs a spec-blind intent re-check against your ledger, then a mutation re-check that proves your tests can detect a change.</li>
           <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
         </ol>
