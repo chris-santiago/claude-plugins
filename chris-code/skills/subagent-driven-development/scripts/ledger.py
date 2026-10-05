@@ -88,6 +88,7 @@ DECISION_LIST_FIELDS = {
 # `diagnosis` is required — the fix must state its cause, not just patch
 # sites. Keys are the slots reviewers verify the fix against.
 DIAGNOSIS_KEYS = ("root_cause", "end_state", "resolves_cluster")
+DIAGNOSIS_STATUSES = STATUS_ENUMS["coder"] - CODER_OPEN_STATUSES  # done, done_with_concerns
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -202,7 +203,9 @@ def validate_record(data: object) -> None:
             raise RecordError(
                 f"cycle: got {cycle!r}, expected a positive integer "
                 "(1 on a first attempt, prior + 1 on a fix)")
-        if cycle >= 2:
+        # Only a coder reporting a finished fix owes a diagnosis: one that
+        # stopped mid-fix (blocked / needs_context) has no cause to state yet.
+        if cycle >= 2 and data["status"] in DIAGNOSIS_STATUSES:
             diagnosis = data.get("diagnosis")
             if not isinstance(diagnosis, dict):
                 raise RecordError(
@@ -547,14 +550,21 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
     CLOSE_ROUND_CAP this raises and appends nothing: the cap is the
     escalation trigger, so a further round must never start silently."""
     started = close_rounds(load_progress_log(store_dir))
-    if expect != started + 1:
-        if expect == 1:
-            raise RecordError(
-                f"expected round 1, but this store already records {started} close "
-                "round(s). If the latest round's note names the work you are "
-                "closing, it is this run's round 1: resume its triage instead, and "
-                "after the remediation start round 2 with --expect 2. Otherwise the "
-                "rounds belong to an earlier, finished run: `clear` the store, then retry.")
+    if expect == 1 and started >= CLOSE_ROUND_CAP:
+        raise RecordError(
+            f"expected round 1, but this store already records {started} close "
+            "rounds. If the latest round's note names the work you are closing, "
+            "this run's close has used both rounds: finish round 2's triage and "
+            "escalate any non-trivial finding to the user. Otherwise the rounds "
+            "belong to an earlier, finished run: `clear` the store, then retry.")
+    if expect == 1 and started >= 1:
+        raise RecordError(
+            f"expected round 1, but this store already records {started} close "
+            "round(s). If the latest round's note names the work you are "
+            "closing, it is this run's round 1: resume its triage instead, and "
+            "after the remediation start round 2 with --expect 2. Otherwise the "
+            "rounds belong to an earlier, finished run: `clear` the store, then retry.")
+    if started < CLOSE_ROUND_CAP and expect != started + 1:
         raise RecordError(
             f"expected round {expect}, but this store records {started} close "
             f"round(s): round {expect} only follows round {expect - 1} of the same run.")

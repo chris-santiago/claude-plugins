@@ -77,7 +77,7 @@ Dispatched before each commit and as a final full-diff pass at plan end.
 | `python-review-lite` | inherit | `.py` | Trimmed idiom checklist + the project linter |
 | `rust-review-lite` | inherit | `.rs` | Trimmed idiom checklist + `cargo clippy -D warnings` |
 
-These are fast, autonomous **regression guardrails**, not refactoring agents. They read `git diff --cached`, apply a diff-level idiom checklist, run the linter on the affected files, and return **clean / block / escalate**. When one blocks, the coder fixes and the agent is re-dispatched at the same record path; it reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — the dispatch carries no cycle counter. At `cycle ≥ 3` with a finding remaining it escalates to break a stuck fix loop.
+These are fast, autonomous **regression guardrails**, not refactoring agents. They read `git diff --cached`, apply a diff-level idiom checklist, run the linter on the affected files, and return **clean / block / escalate**. When one blocks, the coder fixes and the agent is re-dispatched at the same record path; it reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — the dispatch carries no cycle counter. At `cycle ≥ 3` with a block condition remaining (an S3+ finding or a failed linter) it escalates to break a stuck fix loop.
 
 **Typed record (role `review-lite`).** Before returning, the agent writes `status` (`clean | block | escalate`), the self-derived `cycle`, `findings`, `linter` (ran, name, passed), and `verdict_path` (the existing markdown verdict file) to its dispatch-supplied record path, then runs `ledger.py check` against it.
 

@@ -136,7 +136,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `cycle` — `1` on a first review. A re-review points at this same record path: read your own prior record first and write its `cycle` + 1.
 - `recurring` — the fix-failure signal: one entry (`site`, `why`) per finding whose class recurs at the same site as your prior cycle's record — compare against the prior record you read to derive `cycle`. Empty list on a first review or when nothing recurs. A non-empty list tells the orchestrator that patching is failing and the next fix must defend its mechanism; flag recurrence honestly rather than softening a repeat finding.
 
-On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved earns a finding, not an approval.
+On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved earns a finding, not an approval. If the dispatch also supplies a decision doc path, the defended choice in it is settled: judge whether the fix implements it correctly and completely, and raise a finding against the choice itself only when you can show it is wrong (cite the evidence).
 
 ## Rules
 

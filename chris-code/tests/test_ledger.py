@@ -191,6 +191,16 @@ class TestFixLoopFields(LedgerTestCase):
         self.assertIn("diagnosis", str(ctx.exception))
         self.assertIn("cycle 2", str(ctx.exception))
 
+    def test_blocked_or_needs_context_at_cycle_2_needs_no_diagnosis(self):
+        # A coder that stops mid-fix hasn't fixed anything yet, so it has
+        # no cause to state; demanding one forces an invented diagnosis.
+        for status in ("blocked", "needs_context"):
+            ledger.validate_record(_coder(cycle=2, status=status))  # no raise
+
+    def test_done_with_concerns_at_cycle_2_still_needs_a_diagnosis(self):
+        with self.assertRaises(ledger.RecordError):
+            ledger.validate_record(_coder(cycle=2, status="done_with_concerns"))
+
     def test_cycle_2_with_complete_diagnosis_passes(self):
         ledger.validate_record(_coder(cycle=2, diagnosis=self._diagnosis()))
 
@@ -705,6 +715,30 @@ class TestCloseRounds(LedgerTestCase):
         self.assertIn("expected round 1", message)
         self.assertIn("clear", message)
         self.assertEqual(ledger.load_progress_log(self.store), before)
+
+    def _two_rounds(self):
+        for n in (1, 2):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ledger.cmd_close_round(self.store, "plan.md", "abc1234", expect=n)
+
+    def test_expect_one_on_a_capped_store_says_finish_or_escalate_not_resume(self):
+        # "Resume round 1, then --expect 2" would point at a command that
+        # then fails; with both rounds used, the only moves are finishing
+        # round 2's triage and escalating — or clearing an unrelated run.
+        self._two_rounds()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "plan.md", "def5678", expect=1)
+        message = str(ctx.exception)
+        self.assertIn("both rounds", message)
+        self.assertIn("escalate", message)
+        self.assertNotIn("--expect 2", message)
+
+    def test_repeated_expect_two_past_the_cap_gets_the_escalation_message(self):
+        self._two_rounds()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "plan.md", "def5678", expect=2)
+        self.assertIn(f"cap ({ledger.CLOSE_ROUND_CAP})", str(ctx.exception))
+        self.assertIn("escalate", str(ctx.exception))
 
     def test_expect_two_on_an_empty_store_raises(self):
         # Round 2 only follows a round 1 of the same run.

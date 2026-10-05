@@ -127,7 +127,10 @@ Agent tool:
     - `report` — [REPORT_FILE], so the orchestrator can find your reasoning.
     - `cycle` — 1 on a first attempt. A fix re-dispatch points at this same
       record path: read your own prior record first and write its cycle + 1.
-    - `diagnosis` — required from cycle 2 (`check` enforces it): an object
+      Exception: if that prior record's status was needs_context or
+      blocked, keep its cycle (an answered question is not a new fix).
+    - `diagnosis` — required from cycle 2 on a done or done_with_concerns
+      record (`check` enforces it): an object
       with non-empty `root_cause`, `end_state`, and `resolves_cluster`.
       Before patching anything, state the cause behind the findings, the
       end-state your fix serves, and why the fix resolves the findings as a

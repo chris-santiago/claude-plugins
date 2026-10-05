@@ -71,7 +71,7 @@ Each finding records: severity (S1–S5), confidence (high / medium / low), file
 | No S3+ findings, `clippy` passed (or not available) | **clean** |
 | ≥1 S3 finding, OR `cargo clippy -D warnings` failed | **block** |
 | ≥1 S4+ finding | **escalate** |
-| Your derived `cycle` (Workflow step 2) is `>= 3` AND any finding remains | **escalate** (loop-breaker) |
+| Your derived `cycle` (Workflow step 2) is `>= 3` AND a block condition remains (an S3+ finding or a failed linter) | **escalate** (loop-breaker) |
 
 `cycle` is never dispatch-supplied — see Workflow step 2 for how you derive it.
 
