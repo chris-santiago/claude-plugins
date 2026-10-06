@@ -8,6 +8,16 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-06 — Fixes that don't regress
+
+Coder fixes were introducing new issues: a fix ran the build workflow in a cold agent, aimed only at clearing the listed findings, and was self-checked with a narrower list than the reviewer's.
+
+### Changed
+- **Fix mode for coders.** From cycle 2, a finished fix's record must carry `hunk_map` (every changed hunk and the finding or decision-doc choice it implements; unmapped hunks get removed or justified) and `consumers_checked` (every changed symbol's consumers and how each was verified; a consumer the fix breaks is part of the fix). `ledger.py check` enforces both, alongside `diagnosis`.
+- **The fix is self-reviewed against the reviewer's lens.** Every fix dispatch carries the matching quality reviewer's contract, and the coder checks its fix against that checklist rather than only its own S3+ list.
+- **Fixes go back to the original coder.** SDD continues the implementing agent via `SendMessage` while it's reachable, so the fixer keeps its context; a fresh dispatch at the same record path is the fallback.
+- **`introduced_by_fix` on spec and quality reviewer records.** Findings on lines the fix changed that weren't problems before. Like `recurring`, a non-empty list marks a failed fix: those findings are always non-trivial, their decision doc must explain the regression, and they join the cycle-3 escalation briefing. Reviewers also flag unmapped hunks and unchecked consumers.
+
 ## [0.5.0] - 2026-10-04 — Batched, coherent remediation
 
 Review findings stop cascading: SDD's per-task loop and the completion close batch their verdicts, triage once, and route non-trivial fixes through the coherence engine, with the close capped at two rounds.
@@ -123,6 +133,7 @@ The initial chris-code workflow, forked and generalized from superpowers v5.1.0.
 - superpowers-specific language and project-specific ("Ferrum") terms throughout the skills.
 
 [Unreleased]: https://github.com/chris-santiago/claude-plugins/commits/main
+[0.6.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.5.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.4.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.3.0]: https://github.com/chris-santiago/claude-plugins/commits/main

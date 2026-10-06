@@ -41,7 +41,8 @@ Agent tool:
        mirror of it — a hand-built shape the production path never emits
        proves nothing
     3. Verify implementation works
-    4. Self-review against your embedded checklist
+    4. Self-review against your embedded checklist (on a fix, also against the quality
+       reviewer checklist the dispatch supplies)
     5. If you copied ≥5 lines near-verbatim from a sibling site, record the sites
        under `duplication_pending` in your typed record (hoist instead when the
        owning file is already in your task's footprint, and record the hoisted
@@ -99,6 +100,9 @@ Agent tool:
       "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
       "concerns": ["..."],
       "cycle": 1,
+      "diagnosis": {"root_cause": "...", "end_state": "...", "resolves_cluster": "..."},
+      "hunk_map": [{"site": "file:lines", "implements": "<finding or decision-doc choice>"}],
+      "consumers_checked": [{"symbol": "...", "consumers": ["file:line"], "verified": "..."}],
       "report": "[REPORT_FILE]"
     }
 
@@ -140,6 +144,15 @@ Agent tool:
       When the fix dispatch carries a decision doc path, implement the
       defended choices it records, not a mechanism of your own; your
       root_cause restates the doc's.
+    - `hunk_map` — fix records only (cycle >= 2, done): one entry per
+      changed hunk, `site` (file:lines) and `implements` (the finding or
+      decision-doc choice). Remove a hunk you can't map, or say why the
+      fix needs it.
+    - `consumers_checked` — fix records only: per symbol whose signature
+      or behavior the fix changed, `symbol`, `consumers` (file:line list,
+      empty if none), and `verified` (how each was confirmed). Update a
+      consumer the fix breaks and map that hunk. Empty list when the fix
+      changed no symbol's signature or behavior.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
     NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.

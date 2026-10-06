@@ -79,8 +79,8 @@ REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
 # cycle, ...) is informational and unvalidated (spec Sec 7 amendment).
 DECISION_LIST_FIELDS = {
     "coder": ("duplication_pending", "new_shared_symbols"),
-    "spec-reviewer": ("cannot_verify", "recurring"),
-    "quality-reviewer": ("recurring",),
+    "spec-reviewer": ("cannot_verify", "recurring", "introduced_by_fix"),
+    "quality-reviewer": ("recurring", "introduced_by_fix"),
 }
 
 # Fix-loop fields (2026-08-28): a coder re-dispatched to fix findings
@@ -89,6 +89,16 @@ DECISION_LIST_FIELDS = {
 # sites. Keys are the slots reviewers verify the fix against.
 DIAGNOSIS_KEYS = ("root_cause", "end_state", "resolves_cluster")
 DIAGNOSIS_STATUSES = STATUS_ENUMS["coder"] - CODER_OPEN_STATUSES  # done, done_with_concerns
+
+# Fix-mode fields (2026-10-06), required alongside `diagnosis`: a fix maps
+# every hunk to the finding or decision-doc choice it implements, and
+# lists the consumers it verified for each symbol whose signature or
+# behavior it changed. Field -> keys each entry must carry as a non-empty
+# string. consumers_checked entries also carry a `consumers` list.
+FIX_MODE_FIELDS = {
+    "hunk_map": ("site", "implements"),
+    "consumers_checked": ("symbol", "verified"),
+}
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -203,21 +213,50 @@ def validate_record(data: object) -> None:
             raise RecordError(
                 f"cycle: got {cycle!r}, expected a positive integer "
                 "(1 on a first attempt, prior + 1 on a fix)")
-        # Only a coder reporting a finished fix owes a diagnosis: one that
-        # stopped mid-fix (blocked / needs_context) has no cause to state yet.
+        # Only a coder reporting a finished fix owes the fix-mode fields: one
+        # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if cycle >= 2 and data["status"] in DIAGNOSIS_STATUSES:
-            diagnosis = data.get("diagnosis")
-            if not isinstance(diagnosis, dict):
-                raise RecordError(
-                    "diagnosis: required from cycle 2 — a fix must state its "
-                    f"cause, not just patch sites; expected an object with "
-                    f"{', '.join(DIAGNOSIS_KEYS)}, got {diagnosis!r}")
-            for key in DIAGNOSIS_KEYS:
-                entry = diagnosis.get(key)
-                if not isinstance(entry, str) or not entry.strip():
+            _validate_fix(data)
+
+
+def _non_empty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _validate_fix(data: dict) -> None:
+    """A finished fix's record: `diagnosis` (its cause) plus the fix-mode
+    fields (FIX_MODE_FIELDS), each entry carrying its keys as non-empty
+    strings."""
+    diagnosis = data.get("diagnosis")
+    if not isinstance(diagnosis, dict):
+        raise RecordError(
+            "diagnosis: required from cycle 2 — a fix must state its "
+            f"cause, not just patch sites; expected an object with "
+            f"{', '.join(DIAGNOSIS_KEYS)}, got {diagnosis!r}")
+    for key in DIAGNOSIS_KEYS:
+        if not _non_empty_str(diagnosis.get(key)):
+            raise RecordError(
+                f"diagnosis.{key}: got {diagnosis.get(key)!r}, expected a "
+                "non-empty string")
+
+    for field_name, keys in FIX_MODE_FIELDS.items():
+        entries = data.get(field_name)
+        if not isinstance(entries, list):
+            raise RecordError(
+                f"{field_name}: required from cycle 2 on a finished fix; expected "
+                f"a list of objects with {', '.join(keys)}, got {entries!r}")
+        for idx, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise RecordError(f"{field_name}[{idx}]: got {entry!r}, expected an object")
+            for key in keys:
+                if not _non_empty_str(entry.get(key)):
                     raise RecordError(
-                        f"diagnosis.{key}: got {entry!r}, expected a "
-                        "non-empty string")
+                        f"{field_name}[{idx}].{key}: got {entry.get(key)!r}, "
+                        "expected a non-empty string")
+            if field_name == "consumers_checked" and not isinstance(entry.get("consumers"), list):
+                raise RecordError(
+                    f"consumers_checked[{idx}].consumers: got {entry.get('consumers')!r}, "
+                    "expected a list (empty when the symbol has no consumers)")
 
 
 def load_records(store_dir: Path) -> list[Record]:

@@ -144,6 +144,20 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                         f"{path.name}: required field {field_name!r} missing "
                         "from the contract's record example")
 
+    def test_every_coder_contract_shows_the_fix_mode_fields(self):
+        # The fix-mode fields are conditional (cycle >= 2 on a finished fix),
+        # so DECISION_LIST_FIELDS doesn't carry them; a coder that never
+        # sees them in its example writes a fix record `check` rejects.
+        for path in CONTRACT_FILES:
+            data = _load_record_example(path)
+            if data["role"] != "coder":
+                continue
+            with self.subTest(contract=path.name):
+                for field_name in ("diagnosis", *ledger.FIX_MODE_FIELDS):
+                    self.assertIn(field_name, data,
+                                  f"{path.name}: fix-mode field {field_name!r} missing "
+                                  "from the contract's record example")
+
 
 if __name__ == "__main__":
     unittest.main()

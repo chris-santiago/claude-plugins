@@ -43,7 +43,7 @@ def _spec_reviewer(**overrides) -> dict:
     data = {
         "schema": 1, "agent": "spec-reviewer", "role": "spec-reviewer",
         "task": 1, "status": "compliant", "issues": [], "cannot_verify": [],
-        "recurring": [],
+        "recurring": [], "introduced_by_fix": [],
     }
     data.update(overrides)
     return data
@@ -201,8 +201,77 @@ class TestFixLoopFields(LedgerTestCase):
         with self.assertRaises(ledger.RecordError):
             ledger.validate_record(_coder(cycle=2, status="done_with_concerns"))
 
-    def test_cycle_2_with_complete_diagnosis_passes(self):
-        ledger.validate_record(_coder(cycle=2, diagnosis=self._diagnosis()))
+    def _fix(self, **overrides):
+        """A complete cycle-2+ fix record's fix-mode fields."""
+        fields = {
+            "diagnosis": self._diagnosis(),
+            "hunk_map": [{"site": "a.py:10-14", "implements": "quality S3: missing guard"}],
+            "consumers_checked": [{"symbol": "a.build", "consumers": ["b.py:3"],
+                                   "verified": "b.py passes the new arg"}],
+        }
+        fields.update(overrides)
+        return fields
+
+    def test_cycle_2_with_complete_fix_fields_passes(self):
+        ledger.validate_record(_coder(cycle=2, **self._fix()))
+
+    def test_fix_without_hunk_map_raises_naming_it(self):
+        # Every hunk of a fix must name what it implements; an unmapped
+        # hunk is where fix-introduced issues come from.
+        fields = self._fix()
+        del fields["hunk_map"]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **fields))
+        self.assertIn("hunk_map", str(ctx.exception))
+
+    def test_fix_without_consumers_checked_raises_naming_it(self):
+        fields = self._fix()
+        del fields["consumers_checked"]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **fields))
+        self.assertIn("consumers_checked", str(ctx.exception))
+
+    def test_empty_consumers_checked_is_a_real_answer(self):
+        # A fix that changed no symbol's signature or behavior has nothing
+        # to check; an explicit empty list says so.
+        ledger.validate_record(_coder(cycle=2, **self._fix(consumers_checked=[])))
+
+    def test_hunk_map_entry_missing_implements_raises_naming_it(self):
+        bad = [{"site": "a.py:10-14"}]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **self._fix(hunk_map=bad)))
+        self.assertIn("hunk_map[0].implements", str(ctx.exception))
+
+    def test_consumers_checked_consumers_must_be_a_list(self):
+        bad = [{"symbol": "a.build", "consumers": "b.py:3", "verified": "ok"}]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **self._fix(consumers_checked=bad)))
+        self.assertIn("consumers_checked[0].consumers", str(ctx.exception))
+
+    def test_cycle_1_needs_no_fix_fields(self):
+        ledger.validate_record(_coder(cycle=1))  # no raise
+
+    def test_introduced_by_fix_required_on_spec_and_quality_reviewers(self):
+        quality = {"schema": 1, "agent": "python-quality-reviewer",
+                   "role": "quality-reviewer", "task": 1, "status": "approved",
+                   "findings": [], "lossiness": [], "recurring": [],
+                   "introduced_by_fix": []}
+        for record in (_spec_reviewer(), quality):
+            record = dict(record)
+            del record["introduced_by_fix"]
+            with self.assertRaises(ledger.RecordError, msg=record["role"]) as ctx:
+                ledger.validate_record(record)
+            self.assertIn("introduced_by_fix", str(ctx.exception))
+
+    def test_introduced_by_fix_never_becomes_an_open_item(self):
+        # Like recurring, it's a failed-fix signal riding on findings,
+        # not separate work.
+        record = _spec_reviewer(
+            status="issues",
+            introduced_by_fix=[{"site": "a.py:12", "why": "fix dropped the None guard"}])
+        _write(self.store, "task-1-spec-reviewer.json", record)
+        items = ledger.compute_open_items(ledger.load_records(self.store), set())
+        self.assertEqual([i.kind for i in items], ["status"])
 
     def test_diagnosis_missing_a_key_raises_naming_it(self):
         bad = self._diagnosis()
@@ -230,7 +299,7 @@ class TestFixLoopFields(LedgerTestCase):
     def test_recurring_required_on_spec_and_quality_reviewers(self):
         quality = {"schema": 1, "agent": "python-quality-reviewer",
                    "role": "quality-reviewer", "task": 1, "status": "approved",
-                   "findings": [], "lossiness": [], "recurring": []}
+                   "findings": [], "lossiness": [], "recurring": [], "introduced_by_fix": []}
         for record in (_spec_reviewer(), quality):
             record = dict(record)
             del record["recurring"]
@@ -421,11 +490,11 @@ class TestComputeOpenItems(LedgerTestCase):
         _write(self.store, "task-1-python-quality-reviewer.json",
                {"schema": 1, "agent": "python-quality-reviewer", "role": "quality-reviewer",
                 "task": 1, "status": "issues", "findings": [], "lossiness": [],
-                "recurring": []})
+                "recurring": [], "introduced_by_fix": []})
         _write(self.store, "task-1-pytorch-quality-reviewer.json",
                {"schema": 1, "agent": "pytorch-quality-reviewer", "role": "quality-reviewer",
                 "task": 1, "status": "issues", "findings": [], "lossiness": [],
-                "recurring": []})
+                "recurring": [], "introduced_by_fix": []})
         records = ledger.load_records(self.store)
         self.assertEqual(len(records), 2)
         self.assertTrue(all(r.ok for r in records))

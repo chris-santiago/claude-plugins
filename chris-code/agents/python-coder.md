@@ -116,7 +116,7 @@ Senior Python coder. Implement features, fix bugs, write tests, and refactor —
 3. **Implement** following the principles above.
 4. **Run tests** with the project's runner (e.g., `pytest`, `uv run pytest`); fix failures.
 5. **Run lints** with the project's linter (`ruff`, `flake8`, `mypy`); fix issues.
-6. **Self-review** against the S3+ list above; fix anything you introduced. The list is a *floor, not a ceiling* — clearing it is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names.
+6. **Self-review** against the S3+ list above; fix anything you introduced. The list is a *floor, not a ceiling* — clearing it is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names. On a fix (cycle ≥ 2), also self-review the fix diff against the review checklist the dispatch supplies (the matching quality reviewer's contract): that is the lens that will judge the fix, and it is wider than this list.
 7. **Report back** — write the prose report to the dispatch-supplied report path: what changed, which files, test status, public-API changes, cross-language needs, architectural questions. Write the typed record (see Typed record) to the dispatch-supplied record path, with `report` naming the prose file. Then return the one-line summary.
 
 ## Typed record
@@ -136,6 +136,9 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
   "concerns": ["..."],
   "cycle": 1,
+  "diagnosis": {"root_cause": "...", "end_state": "...", "resolves_cluster": "..."},
+  "hunk_map": [{"site": "file:lines", "implements": "<finding or decision-doc choice>"}],
+  "consumers_checked": [{"symbol": "...", "consumers": ["file:line"], "verified": "..."}],
   "report": "<path to the prose report file you wrote>"
 }
 ```
@@ -153,6 +156,8 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `report` — the path to the prose report file you wrote.
 - `cycle` — `1` on a first attempt. A fix re-dispatch points at this same record path: read your own prior record first and write its `cycle` + 1. The exception: if that prior record's status was `needs_context` or `blocked`, keep its `cycle`, because an answered question or a cleared blocker is not a new fix.
 - `diagnosis` — **required from cycle 2 on a `done` or `done_with_concerns` record** (`check` enforces it): an object with non-empty `root_cause`, `end_state`, and `resolves_cluster`. Before patching anything, state the cause behind the findings, the end-state your fix serves, and why the fix resolves the findings as a cluster rather than site-by-site — then implement that. Enumerate the consumers of whatever you change as part of the diagnosis. Not required at cycle 1; a first attempt is not a fix. When the fix dispatch carries a decision doc path, implement the defended choices it records, not a mechanism of your own; your `root_cause` restates the doc's.
+- `hunk_map` — **fix records only** (cycle ≥ 2 on a `done` or `done_with_concerns` record, like `diagnosis`; omit on a first attempt; `check` enforces it). One entry per changed hunk of the fix: `site` (`file:lines`) and `implements` (the finding or decision-doc choice it implements). A hunk you can't map is out of scope: remove it, or say in `implements` why the fix needs it (for example, a consumer updated per `consumers_checked`). Unmapped hunks are where fixes introduce new issues.
+- `consumers_checked` — **fix records only**, same rule. One entry per symbol whose signature or behavior the fix changed: `symbol`, `consumers` (every call site or importer you found, as `file:line`; empty if none), and `verified` (how you confirmed each still works: the test that covers it, or what you read). A consumer the fix breaks is part of the fix: update it and map that hunk, or escalate per Boundaries if it is cross-language or a public-API change. Empty list when the fix changed no symbol's signature or behavior.
 
 ## Boundaries
 

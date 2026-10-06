@@ -119,6 +119,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "findings": [{"severity": 1, "file": "...", "line": 0, "claim": "..."}],
   "lossiness": ["..."],
   "recurring": [{"site": "file:line", "why": "..."}],
+  "introduced_by_fix": [{"site": "file:line", "why": "..."}],
   "cycle": 1
 }
 ```
@@ -132,8 +133,9 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `lossiness` — the typed form of the Lossiness line above: one entry per thing this verdict compresses that the orchestrator should ground (by `claim-checker` dispatch) rather than trust; empty list when "None" applies.
 - `cycle` — `1` on a first review. A re-review points at this same record path: read your own prior record first and write its `cycle` + 1.
 - `recurring` — the fix-failure signal: one entry (`site`, `why`) per finding whose class recurs at the same site as your prior cycle's record — compare against the prior record you read to derive `cycle`. Empty list on a first review or when nothing recurs. A non-empty list tells the orchestrator that patching is failing and the next fix must defend its mechanism; flag recurrence honestly rather than softening a repeat finding.
+- `introduced_by_fix` — the regression signal: one entry (`site`, `why`) per finding on a line the fix changed (per the coder's `hunk_map`) that was not a problem before the fix. Empty list on a first review or when the fix introduced nothing. Like `recurring`, a non-empty list tells the orchestrator the fix failed, so flag it honestly rather than folding it into an ordinary finding.
 
-On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved earns a finding, not an approval. If the dispatch also supplies a decision doc path, the defended choice in it is settled: judge whether the fix implements it correctly and completely, and raise a finding against the choice itself only when you can show it is wrong (cite the evidence).
+On a re-review (the coder's record shows `cycle` ≥ 2), read its `diagnosis` and judge the fix against the stated cause — a fix that closes the listed sites while leaving the stated root cause unresolved earns a finding, not an approval. If the dispatch also supplies a decision doc path, the defended choice in it is settled: judge whether the fix implements it correctly and completely, and raise a finding against the choice itself only when you can show it is wrong (cite the evidence). Also read its `hunk_map` and `consumers_checked`: a changed hunk the map doesn't account for, or a changed symbol with a consumer the coder didn't check, earns a finding.
 
 ## Rules
 
