@@ -144,14 +144,17 @@ Agent tool:
       When the fix dispatch carries a decision doc path, implement the
       defended choices it records, not a mechanism of your own; your
       root_cause restates the doc's.
-    - `hunk_map` — fix records only (cycle >= 2, done): one entry per
-      changed hunk, `site` (file:lines) and `implements` (the finding or
+    - `hunk_map` — fix records only (cycle >= 2, done or done_with_concerns):
+      one entry per changed hunk, read from `ledger.py diff-since <fix
+      baseline>` (cycle-1 work is uncommitted, so plain git diff mixes it in), `site` (file:lines) and `implements` (the finding or
       decision-doc choice). Remove a hunk you can't map, or say why the
       fix needs it.
     - `consumers_checked` — fix records only: per symbol whose signature
       or behavior the fix changed, `symbol`, `consumers` (file:line list,
       empty if none), and `verified` (how each was confirmed). Update a
-      consumer the fix breaks and map that hunk. Empty list when the fix
+      consumer the fix breaks and map that hunk; a cross-language or
+      public-API consumer gets `verified: escalated: <reason>`, a concerns
+      entry, and DONE_WITH_CONCERNS. Empty list when the fix
       changed no symbol's signature or behavior.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |

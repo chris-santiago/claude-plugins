@@ -138,7 +138,8 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
         for path in CONTRACT_FILES:
             with self.subTest(contract=path.name):
                 data = _load_record_example(path)
-                for field_name in ledger.DECISION_LIST_FIELDS.get(data["role"], ()):
+                for field_name in (*ledger.DECISION_LIST_FIELDS.get(data["role"], ()),
+                                   *ledger.OPTIONAL_LIST_FIELDS.get(data["role"], ())):
                     self.assertIn(
                         field_name, data,
                         f"{path.name}: required field {field_name!r} missing "

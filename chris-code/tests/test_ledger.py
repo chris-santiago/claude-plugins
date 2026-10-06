@@ -251,17 +251,24 @@ class TestFixLoopFields(LedgerTestCase):
     def test_cycle_1_needs_no_fix_fields(self):
         ledger.validate_record(_coder(cycle=1))  # no raise
 
-    def test_introduced_by_fix_required_on_spec_and_quality_reviewers(self):
-        quality = {"schema": 1, "agent": "python-quality-reviewer",
-                   "role": "quality-reviewer", "task": 1, "status": "approved",
-                   "findings": [], "lossiness": [], "recurring": [],
-                   "introduced_by_fix": []}
-        for record in (_spec_reviewer(), quality):
-            record = dict(record)
-            del record["introduced_by_fix"]
-            with self.assertRaises(ledger.RecordError, msg=record["role"]) as ctx:
-                ledger.validate_record(record)
+    def test_absent_introduced_by_fix_still_validates(self):
+        # Records written before 0.6.0 lack the field; a mid-run plugin
+        # upgrade must not turn every earlier reviewer record malformed.
+        record = _spec_reviewer()
+        del record["introduced_by_fix"]
+        ledger.validate_record(record)  # no raise
+
+    def test_present_introduced_by_fix_must_be_a_list_of_objects(self):
+        for bad in ("a.py:1", ["a.py:1"]):
+            with self.assertRaises(ledger.RecordError, msg=repr(bad)) as ctx:
+                ledger.validate_record(_spec_reviewer(introduced_by_fix=bad))
             self.assertIn("introduced_by_fix", str(ctx.exception))
+
+    def test_finished_fix_with_empty_hunk_map_raises(self):
+        # A finished fix changed something; an empty map hides every hunk.
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **self._fix(hunk_map=[])))
+        self.assertIn("hunk_map", str(ctx.exception))
 
     def test_introduced_by_fix_never_becomes_an_open_item(self):
         # Like recurring, it's a failed-fix signal riding on findings,
@@ -1143,6 +1150,82 @@ class TestTableConsistency(unittest.TestCase):
         # drifts fails here first.
         self.assertEqual(ledger.VALID_ROLES, frozenset(ledger.STATUS_ENUMS))
         self.assertEqual(ledger.RESOLVABLE_KINDS, frozenset(ledger._FIELD_DESCRIBERS))
+
+
+# --- fix baseline: snapshot / diff-since (2026-10-06) ---
+
+class TestFixBaseline(unittest.TestCase):
+    """Coders never commit before review passes, so a fix's edits land in
+    the same working tree as the uncommitted cycle-1 work. A tree
+    snapshot taken before the fix is the only way to see the fix alone."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.repo = Path(self._tmp.name)
+        for cmd in (["git", "init", "-q"], ["git", "config", "user.email", "t@t"],
+                    ["git", "config", "user.name", "t"]):
+            subprocess.run(cmd, cwd=self.repo, check=True)
+        (self.repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "a.py"], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=self.repo, check=True)
+
+    def _git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.repo, check=True,
+                              capture_output=True, text=True).stdout
+
+    def test_diff_since_shows_only_the_fix_including_new_files(self):
+        # Cycle-1 work: uncommitted edit plus a new untracked file.
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "cycle1.py").write_text("c1 = True\n", encoding="utf-8")
+        baseline = ledger.snapshot_tree(self.repo)
+        # The fix: another edit and a new file of its own.
+        (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
+        (self.repo / "fix.py").write_text("f = True\n", encoding="utf-8")
+
+        diff = ledger.diff_since(self.repo, baseline)
+
+        self.assertIn("-x = 2", diff)
+        self.assertIn("+x = 3", diff)
+        self.assertIn("fix.py", diff)
+        self.assertNotIn("cycle1.py", diff)  # cycle-1 work is in the baseline
+        self.assertNotIn("-x = 1", diff)
+
+    def test_snapshot_leaves_the_real_index_and_tree_untouched(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
+        before = self._git("status", "--porcelain")
+        ledger.snapshot_tree(self.repo)
+        self.assertEqual(self._git("status", "--porcelain"), before)
+        self.assertEqual(self._git("diff", "--cached"), "")
+
+    def test_cli_snapshot_then_diff_since_round_trip(self):
+        (self.repo / "cycle1.py").write_text("c1 = True\n", encoding="utf-8")
+        run = lambda *a: subprocess.run(  # noqa: E731
+            [sys.executable, str(LEDGER_PY), *a], cwd=self.repo,
+            capture_output=True, text=True)
+        snap = run("snapshot", "--task", "3", "--label", "pre-fix c2",
+                   "--store", str(self.repo / ".sdd"))
+        self.assertEqual(snap.returncode, 0, snap.stderr)
+        tree = snap.stdout.strip()
+        (self.repo / "fix.py").write_text("f = True\n", encoding="utf-8")
+        diff = run("diff-since", tree)
+        self.assertEqual(diff.returncode, 0, diff.stderr)
+        self.assertIn("fix.py", diff.stdout)
+        self.assertNotIn("cycle1.py", diff.stdout)
+        bad = run("diff-since", "not-a-tree")
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("ERROR: git", bad.stderr)
+
+    def test_cmd_snapshot_records_a_typed_entry_and_prints_the_tree(self):
+        store = self.repo / ".sdd"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ledger.cmd_snapshot(store, 4, "pre-fix c2", "deadbeef")
+        self.assertEqual(buf.getvalue().strip(), "deadbeef")
+        self.assertEqual(ledger.load_progress_log(store),
+                         [{"type": "snapshot", "task": 4, "label": "pre-fix c2",
+                           "tree": "deadbeef"}])
 
 
 # --- CLI end-to-end (subprocess) ---

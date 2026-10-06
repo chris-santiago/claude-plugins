@@ -24,6 +24,8 @@ Totality ("never crash on any input") is explicitly not a goal.
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
+       python3 ledger.py snapshot --task N --label "..." [--store DIR]
+       python3 ledger.py diff-since <tree>
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -44,8 +46,11 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -79,8 +84,16 @@ REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
 # cycle, ...) is informational and unvalidated (spec Sec 7 amendment).
 DECISION_LIST_FIELDS = {
     "coder": ("duplication_pending", "new_shared_symbols"),
-    "spec-reviewer": ("cannot_verify", "recurring", "introduced_by_fix"),
-    "quality-reviewer": ("recurring", "introduced_by_fix"),
+    "spec-reviewer": ("cannot_verify", "recurring"),
+    "quality-reviewer": ("recurring",),
+}
+
+# Decision-driving list fields validated only when present (2026-10-06).
+# Contracts still tell agents to always write them; absence is tolerated
+# so a mid-run plugin upgrade doesn't turn every earlier record malformed.
+OPTIONAL_LIST_FIELDS = {
+    "spec-reviewer": ("introduced_by_fix",),
+    "quality-reviewer": ("introduced_by_fix",),
 }
 
 # Fix-loop fields (2026-08-28): a coder re-dispatched to fix findings
@@ -193,9 +206,12 @@ def validate_record(data: object) -> None:
         raise RecordError(
             f"status: got {status!r}, allowed set: {sorted(allowed_statuses)}")
 
-    for field_name in DECISION_LIST_FIELDS.get(role, ()):
+    required = DECISION_LIST_FIELDS.get(role, ())
+    for field_name in (*required, *OPTIONAL_LIST_FIELDS.get(role, ())):
         if field_name not in data:
-            raise RecordError(f"missing required field(s): {field_name}")
+            if field_name in required:
+                raise RecordError(f"missing required field(s): {field_name}")
+            continue
         value = data[field_name]
         if not isinstance(value, list):
             raise RecordError(
@@ -245,6 +261,10 @@ def _validate_fix(data: dict) -> None:
             raise RecordError(
                 f"{field_name}: required from cycle 2 on a finished fix; expected "
                 f"a list of objects with {', '.join(keys)}, got {entries!r}")
+        if field_name == "hunk_map" and not entries:
+            raise RecordError(
+                "hunk_map: a finished fix changed something, so it needs at least "
+                "one entry; got an empty list")
         for idx, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 raise RecordError(f"{field_name}[{idx}]: got {entry!r}, expected an object")
@@ -517,6 +537,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             lines.append(f"- task {entry.get('task')} **COMPLETE**: {entry.get('note', '')}")
         elif entry.get("type") == "resolution":
             lines.append(f"- resolves `{entry.get('resolves')}`: {entry.get('note', '')}")
+        elif entry.get("type") == "snapshot":
+            lines.append(f"- task {entry.get('task')} snapshot `{entry.get('tree')}`: "
+                          f"{entry.get('label', '')}")
         elif entry.get("type") == "close_round":
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
@@ -616,6 +639,44 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
     _append_jsonl(store_dir / PROGRESS_FILENAME,
                   {"type": "close_round", "round": started + 1, "head": head, "note": note})
     print(started + 1)
+
+
+def _git(repo: Path, *args: str, env: dict | None = None) -> str:
+    return subprocess.check_output(["git", *args], cwd=repo, env=env,
+                                   stderr=subprocess.PIPE).decode()
+
+
+def snapshot_tree(repo: Path) -> str:
+    """The working tree as a git tree object, untracked files included.
+    Coders never commit before review passes, so a fix's edits share the
+    working tree with the uncommitted cycle-1 work; this tree is the fix's
+    baseline. It goes through a throwaway copy of the index, so the real
+    index and working tree are never touched (only git objects are
+    written)."""
+    top = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
+    real_index = top / _git(top, "rev-parse", "--git-path", "index").strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_index = Path(tmp) / "index"
+        if real_index.is_file():
+            shutil.copyfile(real_index, tmp_index)
+        env = {**os.environ, "GIT_INDEX_FILE": str(tmp_index)}
+        _git(top, "add", "-A", env=env)
+        return _git(top, "write-tree", env=env).strip()
+
+
+def diff_since(repo: Path, base_tree: str) -> str:
+    """What changed in the working tree since `base_tree` (a snapshot_tree
+    result), new untracked files included: exactly the fix's own edits."""
+    return _git(repo, "diff", base_tree, snapshot_tree(repo))
+
+
+def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str) -> None:
+    """Record a fix baseline as a typed progress entry (so it survives
+    compaction) and print the tree id for the dispatch."""
+    ensure_store(store_dir)
+    _append_jsonl(store_dir / PROGRESS_FILENAME,
+                  {"type": "snapshot", "task": task, "label": label, "tree": tree})
+    print(tree)
 
 
 def _git_head() -> str:
@@ -769,6 +830,17 @@ def build_parser() -> argparse.ArgumentParser:
                                "2 on return from a close-gate remediation")
     p_close.add_argument("--note", required=True)
 
+    p_snapshot = sub.add_parser("snapshot", parents=[store_parent],
+                                 help="record the working tree as a fix baseline and "
+                                      "print its tree id (real index untouched)")
+    p_snapshot.add_argument("--task", required=True, type=_task_arg)
+    p_snapshot.add_argument("--label", required=True)
+
+    p_diff = sub.add_parser("diff-since",
+                             help="show what changed since a snapshot tree, new "
+                                  "files included (read-only on the checkout)")
+    p_diff.add_argument("tree")
+
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
                                 help="record a resolution for an open item")
     p_resolve.add_argument("id")
@@ -794,6 +866,9 @@ def main() -> None:
         if args.command == "check":
             cmd_check(args.record_path, args.store)
             return
+        if args.command == "diff-since":
+            print(diff_since(Path.cwd(), args.tree), end="")
+            return
         store_dir = get_store_dir(args.store)
         if args.command == "read":
             cmd_read(store_dir)
@@ -807,6 +882,8 @@ def main() -> None:
             cmd_store_dir(store_dir)
         elif args.command == "append":
             cmd_append(store_dir, args.type, args.task, args.note)
+        elif args.command == "snapshot":
+            cmd_snapshot(store_dir, args.task, args.label, snapshot_tree(Path.cwd()))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":
@@ -819,6 +896,9 @@ def main() -> None:
             raise RuntimeError(f"unhandled command: {args.command}")
     except (RuntimeError, RecordError) as e:
         sys.exit(f"ERROR: {e}")
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode().strip() if e.stderr else ""
+        sys.exit(f"ERROR: git {' '.join(e.cmd[1:])} failed: {stderr}")
 
 
 if __name__ == "__main__":
