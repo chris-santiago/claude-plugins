@@ -66,7 +66,7 @@ One sentence describing the required change.
 
 ### Task 1: [Name]
 - Consumes: <contract> from <spec §N, or built in Task M → `path`> — a pointer, never a restated signature; omit if the task stands alone
-- Cases: <every case the task's rule covers, with its intended behavior: the main case, its siblings, boundary inputs (e.g. `size>0; size=0, size<0, size=None → ValueError; empty data → []`)>, or `n/a — <why the task has no input domain>` (wiring, renames, docs). Required: `task_brief.py` refuses a task without it
+- Cases: <every case the task's rule covers, with its intended behavior: the main case, its siblings, boundary inputs (e.g. `size>0; size=0, size<0, size=None → ValueError; empty data → []`)>, or `n/a — <why the task has no input domain>` (wiring, renames, docs, structural moves). A behavior-preserving refactor lists what it preserves and the existing tests that cover it (`preserves <behavior>; covered by <tests>`). Long lists may go one case per indented sub-bullet. Required: `task_brief.py` refuses a task without it, or with a placeholder (`none`, `TBD`, a bare `n/a`)
 - [ ] Concrete action (reference spec §N for requirements)
 - [ ] Concrete action
 - [ ] Verify: `exact command to run`
@@ -134,6 +134,6 @@ After saving the plan, offer:
 
 **Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in four ways:
 - §2's spec references are the decision doc and the gate report paths.
-- Each task's `Cases:` line starts from the class its gate finding names (the rule and every input or site it covers) and the decision doc's correctness table.
+- Each task's `Cases:` line comes from the decision doc's correctness table (every affected case and its result), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or list the affected sites if the table names them.
 - Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
 - Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.

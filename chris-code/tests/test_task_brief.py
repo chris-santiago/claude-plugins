@@ -453,6 +453,28 @@ class TestValidateCases(unittest.TestCase):
                 task_brief.validate_cases(f"### Task 2: x\n- Cases: {bare}\n")
             self.assertIn("reason", str(ctx.exception))
 
+    def test_na_variants_without_a_real_reason_raise(self):
+        for value in ("n/a.", "n/a:", "n/a ()", "none", "TBD", "todo", "-"):
+            with self.assertRaises(task_brief.BriefValidationError, msg=value):
+                task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_na_with_colon_or_parenthesized_reason_passes(self):
+        for value in ("n/a: wiring only", "n/a (docs only)"):
+            task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_bold_and_unbulleted_cases_lines_count(self):
+        for line in ("- **Cases:** size>0", "Cases: size>0", "**Cases:** size>0"):
+            task_brief.validate_cases(f"### Task 2: x\n{line}\n")
+
+    def test_cases_as_an_indented_sub_list_counts(self):
+        entry = "### Task 2: x\n- Cases:\n  - size>0\n  - size=None → ValueError\n- [ ] do it\n"
+        task_brief.validate_cases(entry)
+
+    def test_empty_cases_header_followed_by_a_sibling_bullet_still_raises(self):
+        entry = "### Task 2: x\n- Cases:\n- [ ] do it\n"
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.validate_cases(entry)
+
     def test_cases_line_inside_a_code_fence_does_not_count(self):
         entry = "### Task 2: x\n```\n- Cases: size>0\n```\n- [ ] do it\n"
         with self.assertRaises(task_brief.BriefValidationError):

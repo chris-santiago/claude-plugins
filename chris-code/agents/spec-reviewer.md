@@ -43,7 +43,7 @@ Read the implementation code and verify:
 - Did they implement everything that was requested?
 - Are there requirements they skipped or missed?
 - Did they claim something works but didn't actually implement it?
-- Does every case on the brief's `Cases:` line have a test that exercises it, with the listed behavior? A listed case with no test, or with a different behavior, is a `missing` issue that names the case.
+- Does every case on the brief's `Cases:` line have a test that exercises it, with the listed behavior? An existing test counts when it covers the case (typical for a behavior-preserving refactor). A listed case with no test is a `missing` issue; a case implemented with a different behavior than listed is `misunderstood`. Either way, name the case.
 
 **Extra/unneeded work:**
 - Did they build things that weren't requested?
@@ -57,7 +57,7 @@ Read the implementation code and verify:
 
 Verify by reading code, not by trusting the report.
 
-For each issue, name the rule and its whole class: the requirement the code fails and every input or site it covers, not only the cited line. The fix is held to the whole class.
+For each issue, name the rule and its whole class: the requirement the code fails and every input or site it covers within the task's changed files, not only the cited line. The fix is held to the whole class. A wider pattern outside those files goes in `cannot_verify`, not this fix.
 
 ## Boundaries
 

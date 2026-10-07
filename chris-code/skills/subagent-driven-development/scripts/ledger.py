@@ -651,23 +651,50 @@ def snapshot_tree(repo: Path) -> str:
     Coders never commit before review passes, so a fix's edits share the
     working tree with the uncommitted cycle-1 work; this tree is the fix's
     baseline. It goes through a throwaway copy of the index, so the real
-    index and working tree are never touched (only git objects are
-    written)."""
+    index and working tree are never touched. It does write git objects,
+    and the repo's clean filters (e.g. Git LFS) run as for any `git add`.
+    Edits inside a submodule are not captured (see submodule_paths)."""
     top = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
     real_index = top / _git(top, "rev-parse", "--git-path", "index").strip()
     with tempfile.TemporaryDirectory() as tmp:
         tmp_index = Path(tmp) / "index"
         if real_index.is_file():
-            shutil.copyfile(real_index, tmp_index)
+            # copy2 keeps the index's mtime: git re-reads "racily clean"
+            # entries (mtime >= the index's) by content, and a fresh mtime on
+            # the copy would make a same-size edit in that second invisible.
+            shutil.copy2(real_index, tmp_index)
         env = {**os.environ, "GIT_INDEX_FILE": str(tmp_index)}
-        _git(top, "add", "-A", env=env)
-        return _git(top, "write-tree", env=env).strip()
+        # Under core.splitIndex=true, any write of the throwaway index would
+        # re-split it and leave an orphan .git/sharedindex.*; every call that
+        # writes it overrides the config.
+        no_split = ("-c", "core.splitIndex=false")
+        _git(top, *no_split, "add", "-A", env=env)
+        return _git(top, *no_split, "write-tree", env=env).strip()
+
+
+def submodule_paths(repo: Path) -> list[str]:
+    """Paths of submodules (gitlink entries). A snapshot records only each
+    submodule's commit, so uncommitted edits inside one are invisible to
+    snapshot and diff-since; the CLI warns when any exist."""
+    return [line.split("\t", 1)[1]
+            for line in _git(repo, "ls-files", "--stage").splitlines()
+            if line.startswith("160000 ")]
 
 
 def diff_since(repo: Path, base_tree: str) -> str:
     """What changed in the working tree since `base_tree` (a snapshot_tree
-    result), new untracked files included: exactly the fix's own edits."""
-    return _git(repo, "diff", base_tree, snapshot_tree(repo))
+    result), new untracked files included: exactly the fix's own edits.
+    Plain output regardless of the user's diff config (color, external
+    diff, textconv), since agents read it."""
+    return _git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+                base_tree, snapshot_tree(repo))
+
+
+def _warn_submodules(repo: Path) -> None:
+    paths = submodule_paths(repo)
+    if paths:
+        print(f"WARNING: edits inside submodule(s) {', '.join(paths)} are not "
+              "captured by snapshot/diff-since; check them by hand.", file=sys.stderr)
 
 
 def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str) -> None:
@@ -838,7 +865,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_diff = sub.add_parser("diff-since",
                              help="show what changed since a snapshot tree, new "
-                                  "files included (read-only on the checkout)")
+                                  "files included (never touches the working tree or "
+                                  "index; writes git objects and runs clean filters)")
     p_diff.add_argument("tree")
 
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
@@ -867,6 +895,7 @@ def main() -> None:
             cmd_check(args.record_path, args.store)
             return
         if args.command == "diff-since":
+            _warn_submodules(Path.cwd())
             print(diff_since(Path.cwd(), args.tree), end="")
             return
         store_dir = get_store_dir(args.store)
@@ -883,6 +912,7 @@ def main() -> None:
         elif args.command == "append":
             cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "snapshot":
+            _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, snapshot_tree(Path.cwd()))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)

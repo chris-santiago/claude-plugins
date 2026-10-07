@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1191,6 +1192,20 @@ class TestFixBaseline(unittest.TestCase):
         self.assertNotIn("cycle1.py", diff)  # cycle-1 work is in the baseline
         self.assertNotIn("-x = 1", diff)
 
+    def test_same_size_edit_in_the_index_write_second_is_captured(self):
+        # Git trusts a cached stat only for files older than the index; a
+        # same-size edit with an mtime equal to the index's is "racily
+        # clean" and must be re-read. A throwaway index copy that takes a
+        # fresh mtime would lose that protection and miss the edit.
+        a = self.repo / "a.py"
+        index = self.repo / ".git" / "index"
+        stamp = a.stat().st_mtime_ns
+        os.utime(index, ns=(stamp, stamp))
+        a.write_text("x = 7\n", encoding="utf-8")  # same size as "x = 1\n"
+        os.utime(a, ns=(stamp, stamp))
+        tree = ledger.snapshot_tree(self.repo)
+        self.assertEqual(self._git("cat-file", "-p", f"{tree}:a.py"), "x = 7\n")
+
     def test_snapshot_leaves_the_real_index_and_tree_untouched(self):
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
@@ -1198,6 +1213,46 @@ class TestFixBaseline(unittest.TestCase):
         ledger.snapshot_tree(self.repo)
         self.assertEqual(self._git("status", "--porcelain"), before)
         self.assertEqual(self._git("diff", "--cached"), "")
+
+    def test_diff_since_ignores_color_and_external_diff_config(self):
+        # Agents read this output; the user's diff config must not leak in.
+        self._git("config", "color.ui", "always")
+        self._git("config", "diff.external", "/usr/bin/false")
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "a.py").write_text("x = 9\n", encoding="utf-8")
+        diff = ledger.diff_since(self.repo, baseline)
+        self.assertIn("+x = 9", diff)
+        self.assertNotIn("\x1b", diff)
+
+    def test_split_index_config_leaves_no_orphan_shared_index(self):
+        self._git("config", "core.splitIndex", "true")
+        self._git("update-index", "--split-index")
+        before = sorted(p.name for p in (self.repo / ".git").glob("sharedindex.*"))
+        (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
+        ledger.snapshot_tree(self.repo)
+        after = sorted(p.name for p in (self.repo / ".git").glob("sharedindex.*"))
+        self.assertEqual(after, before)
+
+    def test_submodule_paths_are_reported(self):
+        # git add -A records only a submodule's commit, so edits inside it
+        # are invisible to the snapshot; callers must be told.
+        head = self._git("rev-parse", "HEAD").strip()
+        self._git("update-index", "--add", "--cacheinfo", f"160000,{head},mod")
+        self.assertEqual(ledger.submodule_paths(self.repo), ["mod"])
+
+    def test_no_submodules_reports_none(self):
+        self.assertEqual(ledger.submodule_paths(self.repo), [])
+
+    def test_cli_warns_about_submodules_on_stderr(self):
+        head = self._git("rev-parse", "HEAD").strip()
+        self._git("update-index", "--add", "--cacheinfo", f"160000,{head},mod")
+        result = subprocess.run(
+            [sys.executable, str(LEDGER_PY), "snapshot", "--task", "1", "--label", "x",
+             "--store", str(self.repo / ".sdd")],
+            cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING", result.stderr)
+        self.assertIn("mod", result.stderr)
 
     def test_cli_snapshot_then_diff_since_round_trip(self):
         (self.repo / "cycle1.py").write_text("c1 = True\n", encoding="utf-8")

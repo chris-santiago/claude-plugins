@@ -62,10 +62,13 @@ EXIT_INVALID = 3
 
 TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+[0-9]+(?:[^0-9]|$)")
 CONSUMES_LINE_RE = re.compile(r"^\s*[-*+]\s*Consumes:\s*(.*)$")
-CASES_LINE_RE = re.compile(r"^\s*[-*+]\s*Cases:\s*(.*)$")
-# "n/a" must carry a reason after a dash: the planner has to decide a task
-# has no input domain, not skip the question.
-CASES_NA_RE = re.compile(r"^n/a\b\s*(?:[—–-]\s*(?P<reason>.*))?$", re.IGNORECASE)
+# A `Cases:` line, bulleted or not, bold or not; group 1 is its indent.
+CASES_LINE_RE = re.compile(r"^(\s*)(?:[-*+]\s+)?(?:\*\*)?Cases:(?:\*\*)?\s*(.*)$")
+SUB_BULLET_RE = re.compile(r"^(\s*)[-*+]\s+\S")
+# "n/a" must carry a real reason: the planner has to decide a task has no
+# input domain, not skip the question. Placeholders count as no answer.
+CASES_NA_RE = re.compile(r"^n/a\b(?P<rest>.*)$", re.IGNORECASE)
+CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "?"})
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
 # A backtick pair unambiguously delimits its content; extracted straight
@@ -440,21 +443,48 @@ def validate_cases(task_entry: str) -> None:
     'n/a — <reason>'. Coders given only the cited behavior patch only it,
     and sibling cases (size=None, size<0) then surface one review cycle at
     a time; the case list is the planner's call, made up front."""
-    values = [m.group(1).strip()
-              for line, in_fence in _iter_fence_aware(task_entry.splitlines())
-              if not in_fence and (m := CASES_LINE_RE.match(line))]
+    values = _cases_values(task_entry)
     if not values:
         raise BriefValidationError(
             "missing 'Cases:' line: list the cases the task's rule covers (the case, "
             "its siblings, boundary inputs), or 'Cases: n/a — <reason>'")
     for value in values:
         if not value:
-            raise BriefValidationError("empty 'Cases:' line: list the cases, or 'n/a — <reason>'")
+            raise BriefValidationError(
+                "empty 'Cases:' line: list the cases inline or as indented sub-bullets, "
+                "or write 'n/a — <reason>'")
+        if value.lower() in CASES_PLACEHOLDERS:
+            raise BriefValidationError(
+                f"'Cases: {value}' is a placeholder: list the cases, or 'n/a — <reason>'")
         na = CASES_NA_RE.match(value)
-        if na and not (na.group("reason") or "").strip():
+        if na and not re.search(r"\w", na.group("rest")):
             raise BriefValidationError(
                 f"'Cases: {value}' needs a reason: write 'Cases: n/a — <why this task "
                 "has no input domain>'")
+
+
+def _cases_values(task_entry: str) -> list[str]:
+    """Each `Cases:` line's value outside code fences. An empty inline
+    value takes the indented sub-bullets that follow it instead, so a
+    long case list can be written one case per line."""
+    lines = list(_iter_fence_aware(task_entry.splitlines()))
+    values = []
+    for i, (line, in_fence) in enumerate(lines):
+        m = None if in_fence else CASES_LINE_RE.match(line)
+        if m is None:
+            continue
+        value = m.group(2).strip()
+        if not value:
+            indent = len(m.group(1))
+            subs = []
+            for nxt, nxt_fence in lines[i + 1:]:
+                sub = SUB_BULLET_RE.match(nxt)
+                if nxt_fence or sub is None or len(sub.group(1)) <= indent:
+                    break
+                subs.append(nxt.strip())
+            value = "; ".join(subs)
+        values.append(value)
+    return values
 
 
 def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],
