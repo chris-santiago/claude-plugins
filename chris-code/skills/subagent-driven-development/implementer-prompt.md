@@ -46,7 +46,8 @@ Agent tool:
     1. Implement exactly what the brief specifies
        (every case on its `Cases:` line, each with a test; on a fix,
        every input and site in each finding's class; report an unlisted
-       case you handle in concerns)
+       case you handle in concerns as `unlisted case: ...`, which alone
+       doesn't make your status DONE_WITH_CONCERNS)
     2. Write tests (following TDD if the brief says to). RED proofs and pinned
        fixtures must be produced by the real path under test, or a documented
        mirror of it — a hand-built shape the production path never emits
@@ -90,8 +91,8 @@ Agent tool:
     path from the report file, supplied by the dispatch; never compute it
     yourself. Every field is required (except the fix-only `diagnosis`,
     `hunk_map`, and `consumers_checked`, which a first attempt omits); an
-    absent field is a contract violation,
-    and an explicit empty value is a real answer, not an omission. No
+    absent field is a contract violation, and an explicit empty value is a
+    real answer, not an omission. No
     agent-written timestamps — file mtime is the only time source. After
     writing it, run `python3 [SCRIPTS_DIR]/ledger.py check [RECORD_FILE]` —
     the dispatch supplies [SCRIPTS_DIR], never compute it yourself — and if it
@@ -151,8 +152,8 @@ Agent tool:
       with non-empty `root_cause`, `end_state`, and `resolves_cluster`.
       Before patching anything, state the cause behind the findings, the
       end-state your fix serves, and why the fix resolves the findings as a
-      cluster rather than site-by-site — then implement that. Enumerate the
-      consumers of whatever you change as part of the diagnosis. Not
+      cluster rather than site-by-site — then implement that. List the
+      consumers of whatever you change in `consumers_checked`. Not
       required at cycle 1; a first attempt is not a fix.
       When the fix dispatch carries a decision doc path, implement the
       defended choices it records, not a mechanism of your own; your

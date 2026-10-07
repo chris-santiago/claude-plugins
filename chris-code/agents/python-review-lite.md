@@ -38,7 +38,7 @@ You do **not** read neighbor files, the wider package, or unrelated git history.
 3. **Categorize each change** in a sentence each: new function, modified function, new module, refactor, rename, etc.
 4. **Apply the diff-level idiom checklist** below to new and changed lines only. Whole-file architectural assessment is out of scope.
 5. **Run the project linter if available** (e.g., `ruff check`, `flake8`). Target only the touched files. Record pass/fail. If no linter is configured, record `linter: not_available`.
-6. **Check CLAUDE.md** for project-specific hard constraints (banned imports, required patterns). Flag violations as S4–S5.
+6. **Check CLAUDE.md and the dispatch's verbatim Constraints** for project-specific hard constraints (banned imports, required patterns). Flag violations as S4–S5.
 7. **Write `verdict.md`** at `.claude/output/review-lite/<ISO-timestamp>_python.md`. Create the parent dir if missing. Record your derived `cycle` in the frontmatter — this file is unchanged in shape from before; only the typed record is new.
 8. **Write the typed record** (see Typed record) to the dispatch-supplied record path.
 9. **Return a one-line summary** to the parent that includes the status word.

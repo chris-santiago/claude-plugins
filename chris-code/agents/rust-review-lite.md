@@ -42,7 +42,7 @@ You do **not** read neighbor files, the wider crate, or unrelated git history. Y
    cargo clippy -p <crate-name> --message-format=short -- -D warnings 2>&1 | tail -40
    ```
    Determine the affected crate from the file paths in the diff. Record pass/fail. If `cargo` is not on `PATH`, record `clippy: not_available` and continue.
-6. **Check CLAUDE.md** for project-specific hard constraints (unsafe rules, determinism requirements, feature-gate rules). Flag violations as S4–S5.
+6. **Check CLAUDE.md and the dispatch's verbatim Constraints** for project-specific hard constraints (unsafe rules, determinism requirements, feature-gate rules). Flag violations as S4–S5.
 7. **Write `verdict.md`** at `.claude/output/review-lite/<ISO-timestamp>_rust.md`. Create the parent dir if missing. Record your derived `cycle` in the frontmatter — this file is unchanged in shape from before; only the typed record is new.
 8. **Write the typed record** (see Typed record) to the dispatch-supplied record path.
 9. **Return a one-line summary** to the parent that includes the status word.
