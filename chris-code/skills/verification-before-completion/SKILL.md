@@ -174,7 +174,7 @@ Two failure modes quietly turn a green gate into a false pass:
 
 ## After Verification Passes
 
-Every finding fixed, logged as a follow-up (separable, or fresh sampling in round 2), or adjudicated by the user → you may claim completion, listing the follow-ups. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+Every finding fixed, logged as a follow-up (separable, or fresh sampling in round 2), or adjudicated by the user → you may claim completion, listing the follow-ups and any `unlisted case:` entries the coders reported, which show where the plan's `Cases:` lines were thin. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
 ## What These Gates Do and Don't Prove
 

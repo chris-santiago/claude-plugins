@@ -27,7 +27,7 @@ For each task:
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
-4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). Give each the plan's task entry, the changed-file list, the plan's Constraints verbatim, a record path at `$STORE/task-N-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). If any returns REVISE: fix issues and re-dispatch at the same record path until all APPROVED.
+4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). Give each the plan's task entry, the changed-file list, the plan's Constraints verbatim, a record path at `$STORE/task-N-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). If any returns REVISE: fix issues and re-dispatch at the same record path until all APPROVED. Note any case you handle that the task's `Cases:` line didn't list; list those when you claim completion, as planning gaps.
 5. Run the Step 3 commit gate for the task. Once it is committed, mark it completed in TodoWrite and append the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`.
 
 ### Step 3: Commit Gate
