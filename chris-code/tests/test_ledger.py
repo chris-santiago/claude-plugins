@@ -265,6 +265,21 @@ class TestFixLoopFields(LedgerTestCase):
         del record["introduced_by_fix"]
         ledger.validate_record(record)  # no raise
 
+    def test_quality_reviewer_introduced_by_fix_is_validated_when_present(self):
+        quality = {"schema": 1, "agent": "python-quality-reviewer",
+                   "role": "quality-reviewer", "task": 1, "status": "approved",
+                   "findings": [], "lossiness": [], "recurring": [],
+                   "introduced_by_fix": ["a.py:1"]}
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(quality)
+        self.assertIn("introduced_by_fix", str(ctx.exception))
+
+    def test_consumers_checked_entry_without_verified_raises(self):
+        bad = [{"symbol": "a.build", "consumers": ["b.py:3"]}]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(_coder(cycle=2, **self._fix(consumers_checked=bad)))
+        self.assertIn("consumers_checked[0].verified", str(ctx.exception))
+
     def test_present_introduced_by_fix_must_be_a_list_of_objects(self):
         for bad in ("a.py:1", ["a.py:1"]):
             with self.assertRaises(ledger.RecordError, msg=repr(bad)) as ctx:
@@ -1300,6 +1315,56 @@ class TestFixBaseline(unittest.TestCase):
 
     def test_no_submodules_reports_none(self):
         self.assertEqual(ledger.submodule_paths(self.repo), [])
+
+    def test_tracked_file_matching_gitignore_stays_in_the_snapshot(self):
+        # add -A skips ignored files; only the copied real index keeps a
+        # tracked-but-now-ignored file in the tree instead of dropping it.
+        (self.repo / "keep.log").write_text("k\n", encoding="utf-8")
+        self._git("add", "keep.log")
+        self._git("commit", "-qm", "track a log")
+        (self.repo / ".gitignore").write_text("*.log\n", encoding="utf-8")
+        tree = ledger.snapshot_tree(self.repo)
+        self.assertIn("keep.log", self._git("ls-tree", "--name-only", tree))
+
+    def test_diff_since_ignores_relative_and_prefix_config(self):
+        self._git("config", "diff.noprefix", "true")
+        self._git("config", "diff.relative", "true")
+        (self.repo / "sub").mkdir()
+        (self.repo / "sub" / "s.py").write_text("s = 1\n", encoding="utf-8")
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "sub" / "s.py").write_text("s = 2\n", encoding="utf-8")
+        diff = ledger.diff_since(self.repo / "sub", baseline)
+        self.assertIn("+++ b/sub/s.py", diff)
+
+    def test_missing_paths_names_a_path_in_neither_tree(self):
+        baseline = ledger.snapshot_tree(self.repo)
+        self.assertEqual(ledger.missing_paths(self.repo, ["a.py", "nope.py"], baseline),
+                         ["nope.py"])
+
+    def test_cli_diff_since_warns_about_a_path_that_matches_nothing(self):
+        tree = ledger.snapshot_tree(self.repo)
+        result = subprocess.run([sys.executable, str(LEDGER_PY), "diff-since", tree, "nope.py"],
+                                cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING", result.stderr)
+        self.assertIn("nope.py", result.stderr)
+
+    def test_cli_diff_since_warns_about_submodules(self):
+        head = self._git("rev-parse", "HEAD").strip()
+        tree = ledger.snapshot_tree(self.repo)
+        self._git("update-index", "--add", "--cacheinfo", f"160000,{head},mod")
+        result = subprocess.run([sys.executable, str(LEDGER_PY), "diff-since", tree],
+                                cwd=self.repo, capture_output=True, text=True)
+        self.assertIn("WARNING", result.stderr)
+        self.assertIn("mod", result.stderr)
+
+    def test_cli_reports_a_missing_git_binary_cleanly(self):
+        env = {**os.environ, "PATH": "/nonexistent"}
+        result = subprocess.run([sys.executable, str(LEDGER_PY), "diff-since", "abc"],
+                                cwd=self.repo, capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ERROR", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_cli_warns_about_submodules_on_stderr(self):
         head = self._git("rev-parse", "HEAD").strip()

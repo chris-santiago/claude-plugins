@@ -134,6 +134,22 @@ class TestExtractTaskEntry(unittest.TestCase):
         self.assertNotIn("Acceptance checks", entry)
         self.assertNotIn("Cases: none", entry)
 
+    def test_stops_at_a_same_level_non_task_heading(self):
+        text = "### Task 1: solo\n- [ ] do it\n### Notes\n- unrelated\n"
+        entry = task_brief.extract_task_entry(text, "1")
+        self.assertIn("do it", entry)
+        self.assertNotIn("unrelated", entry)
+
+    def test_tilde_fence_hides_a_heading_inside_it(self):
+        text = "### Task 1: solo\n~~~\n## not a heading\n~~~\n- Cases: a\n"
+        entry = task_brief.extract_task_entry(text, "1")
+        self.assertIn("- Cases: a", entry)
+
+    def test_indented_backtick_fence_hides_a_heading_inside_it(self):
+        text = "### Task 1: solo\n   ```\n## not a heading\n   ```\n- Cases: a\n"
+        entry = task_brief.extract_task_entry(text, "1")
+        self.assertIn("- Cases: a", entry)
+
     def test_keeps_its_own_deeper_sub_headings(self):
         text = "### Task 1: solo\n#### Notes\n- detail\n### Task 2: next\n- other\n"
         entry = task_brief.extract_task_entry(text, "1")
@@ -507,6 +523,14 @@ class TestValidateCases(unittest.TestCase):
         with self.assertRaises(task_brief.BriefValidationError) as ctx:
             task_brief.validate_cases("### Task 2: x\n- Cases: n/a — refactor only\n")
         self.assertIn("preserves", str(ctx.exception))
+
+    def test_decorated_and_wordless_placeholders_raise(self):
+        for value in ("`none`", "**none**", "--", "...", "…", "n / a", "TBD later"):
+            with self.assertRaises(task_brief.BriefValidationError, msg=value):
+                task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_na_reason_mentioning_a_refactored_name_passes(self):
+        task_brief.validate_cases("### Task 2: x\n- Cases: n/a — config-only (refactored file names)\n")
 
     def test_cases_line_inside_a_code_fence_does_not_count(self):
         entry = "### Task 2: x\n```\n- Cases: size>0\n```\n- [ ] do it\n"

@@ -53,7 +53,7 @@ __all__ = [
     "UsageError", "BriefValidationError",
     "ConsumesPointer", "ConsumesFindings", "BriefRequest",
     "extract_task_entry", "extract_section", "heading_section_numbers",
-    "find_consumes_pointers", "validate_consumes",
+    "find_consumes_pointers", "validate_consumes", "validate_cases",
     "build_brief", "run", "build_parser", "main",
 ]
 
@@ -63,6 +63,7 @@ EXIT_INVALID = 3
 TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+[0-9]+(?:[^0-9]|$)")
 CONSUMES_LINE_RE = re.compile(r"^\s*[-*+]\s*Consumes:\s*(.*)$")
 HEADING_LEVEL_RE = re.compile(r"^(#{1,6})[ \t]")
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 # List markers: "-", "*", "+" (optionally a "[ ]"/"[x]" checkbox) or "1." / "1)".
 _LIST_MARKER = r"(?:[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)"
 # A `Cases:` line, with or without a list marker, bold label or not
@@ -95,7 +96,8 @@ class UsageError(Exception):
 
 
 class BriefValidationError(Exception):
-    """Missing/empty --intent or a stale Consumes: pointer: exit 3."""
+    """Missing/empty --intent, a stale Consumes: pointer, or a missing,
+    empty, or placeholder Cases: line: exit 3."""
 
 
 def _read_text(path: Path, *, error_cls: type[Exception], label: str) -> str:
@@ -145,12 +147,20 @@ def _iter_fence_aware(lines: list[str]):
     """Yield (line, in_fence) pairs. in_fence reflects the state *after*
     toggling on the current line — matching the retired bash task-brief's
     awk ordering (toggle, then match), so a fenced code block's comments
-    (e.g. a Python "# Task 3" line) never pose as a real heading."""
-    infence = False
+    (e.g. a Python "# Task 3" line) never pose as a real heading. Fences
+    follow CommonMark: ``` or ~~~ (three or more), indented up to three
+    spaces, closed only by a fence of the same character at least as
+    long."""
+    fence = ""
     for line in lines:
-        if line.startswith("```"):
-            infence = not infence
-        yield line, infence
+        m = FENCE_RE.match(line)
+        if m is not None:
+            marker = m.group(1)
+            if not fence:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence):
+                fence = ""
+        yield line, bool(fence)
 
 
 def extract_task_entry(plan_text: str, task_n: str) -> str:
@@ -473,24 +483,35 @@ def validate_cases(task_entry: str) -> None:
 
 
 def _normalize(value: str) -> str:
+    """Lowercased, without markdown decoration (backticks, bold), trailing
+    punctuation, or spaces around a slash ("n / a" reads as "n/a")."""
+    value = re.sub(r"\s*/\s*", "/", value.replace("`", "").replace("*", ""))
     return value.strip().rstrip(".!?;,").strip().lower()
+
+
+def _is_placeholder(value: str) -> bool:
+    normalized = _normalize(value)
+    if not re.search(r"\w", normalized):
+        return True  # only punctuation: "--", "...", "…"
+    first_word = normalized.split()[0]
+    return normalized in CASES_PLACEHOLDERS or first_word in {"tbd", "todo"}
 
 
 def _validate_case_item(value: str) -> None:
     """One inline value or one sub-bullet: not a placeholder, and an
     `n/a` carries a real reason that isn't itself a placeholder."""
-    if _normalize(value) in CASES_PLACEHOLDERS:
+    if _is_placeholder(value):
         raise BriefValidationError(
             f"'Cases: {value}' is a placeholder: list the cases, or 'n/a — <reason>'")
     na = CASES_NA_RE.match(value.strip())
     if na is None:
         return
     reason = re.sub(r"^[\s—–:\-(]+", "", na.group("rest")).rstrip(" .)")
-    if not re.search(r"\w", reason) or _normalize(reason) in CASES_PLACEHOLDERS:
+    if _is_placeholder(reason):
         raise BriefValidationError(
             f"'Cases: {value}' needs a reason: write 'Cases: n/a — <why this task "
             "has no input domain>'")
-    if re.search(r"\brefactor", reason, re.IGNORECASE):
+    if re.search(r"\brefactor(ing)?\b", reason, re.IGNORECASE):
         raise BriefValidationError(
             f"'Cases: {value}': a refactor has an input domain; list what it "
             "preserves and the tests that cover it ('preserves <behavior>; covered "
@@ -518,7 +539,7 @@ def _cases_blocks(task_entry: str) -> list[list[str]]:
             if not nxt.strip() and not nxt_fence:
                 continue
             sub = SUB_BULLET_RE.match(nxt)
-            if nxt_fence or sub is None or len(sub.group(1)) <= indent:
+            if sub is None or len(sub.group(1)) <= indent:
                 break
             subs.append(sub.group(2).strip())
         blocks.append(subs)

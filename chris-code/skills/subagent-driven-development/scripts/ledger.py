@@ -25,7 +25,7 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--store DIR]
-       python3 ledger.py diff-since <tree>
+       python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -60,6 +60,7 @@ __all__ = [
     "load_records", "load_progress_log", "resolutions_from_log",
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
     "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
+    "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
 ]
 
 SCHEMA_VERSION = 1
@@ -697,11 +698,28 @@ def diff_since(repo: Path, base_tree: str, paths: list[str] | tuple[str, ...] = 
     stage share the working tree and edit it concurrently. Plain output
     regardless of the user's diff config (color, external diff,
     textconv), since agents read it."""
+    return diff_trees(repo, base_tree, snapshot_tree(repo), paths)
+
+
+def diff_trees(repo: Path, base_tree: str, tree: str,
+               paths: list[str] | tuple[str, ...] = ()) -> str:
+    """The diff between two trees, limited to `paths`, in git's default
+    format whatever the user's diff config says (color, external diff,
+    textconv, relative paths, prefixes)."""
     if base_tree.startswith("-"):
         # Agents pass this argument; it must never reach git as an option.
         raise RecordError(f"tree id must not start with '-': got {base_tree!r}")
     return _git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv",
-                base_tree, snapshot_tree(repo), "--", *paths)
+                "--no-relative", "--src-prefix=a/", "--dst-prefix=b/",
+                base_tree, tree, "--", *paths)
+
+
+def missing_paths(repo: Path, paths: list[str] | tuple[str, ...], *trees: str) -> list[str]:
+    """Paths that match nothing in any of `trees`: a typo in a task's file
+    list would otherwise read as "no changes"."""
+    return [path for path in paths
+            if not any(_git(repo, "ls-tree", "-r", "--name-only", tree, "--", path).strip()
+                       for tree in trees)]
 
 
 def _warn_submodules(repo: Path) -> None:
@@ -911,8 +929,15 @@ def main() -> None:
             cmd_check(args.record_path, args.store)
             return
         if args.command == "diff-since":
-            _warn_submodules(Path.cwd())
-            print(diff_since(Path.cwd(), args.tree, args.paths), end="")
+            repo = Path.cwd()
+            _warn_submodules(repo)
+            now = snapshot_tree(repo)
+            diff = diff_trees(repo, args.tree, now, args.paths)
+            unmatched = missing_paths(repo, args.paths, args.tree, now)
+            if unmatched:
+                print(f"WARNING: path(s) {', '.join(unmatched)} match nothing in either "
+                      "tree; check the task's file list.", file=sys.stderr)
+            print(diff, end="")
             return
         store_dir = get_store_dir(args.store)
         if args.command == "read":
@@ -945,6 +970,8 @@ def main() -> None:
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.decode(errors="replace").strip() if e.stderr else ""
         sys.exit(f"ERROR: git {' '.join(e.cmd[1:])} failed: {stderr}")
+    except FileNotFoundError as e:
+        sys.exit(f"ERROR: {e.filename or 'a required program'} not found: {e.strerror}")
 
 
 if __name__ == "__main__":
