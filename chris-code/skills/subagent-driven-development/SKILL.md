@@ -242,6 +242,8 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 3. If the task is too large, break it into smaller pieces
 4. If the plan itself is wrong, escalate to the human
 
+A fix that was blocked and is re-dispatched (cases 1–2) resumes with its original `Fix baseline` and task file list, not a new snapshot, exactly like a NEEDS_CONTEXT resume.
+
 **Never** ignore an escalation or force the same model to retry without changes. If the implementer said it's stuck, something needs to change.
 
 ## Whole-Change Commit Gate (lite, not the completion gate)
