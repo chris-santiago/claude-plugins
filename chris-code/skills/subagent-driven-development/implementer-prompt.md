@@ -36,6 +36,9 @@ Agent tool:
     ## Your Job
 
     1. Implement exactly what the brief specifies
+       (every case on its `Cases:` line, each with a test; on a fix,
+       every input and site in each finding's class; report an unlisted
+       case you handle in concerns)
     2. Write tests (following TDD if the brief says to). RED proofs and pinned
        fixtures must be produced by the real path under test, or a documented
        mirror of it — a hand-built shape the production path never emits

@@ -43,6 +43,7 @@ Read the implementation code and verify:
 - Did they implement everything that was requested?
 - Are there requirements they skipped or missed?
 - Did they claim something works but didn't actually implement it?
+- Does every case on the brief's `Cases:` line have a test that exercises it, with the listed behavior? A listed case with no test, or with a different behavior, is a `missing` issue that names the case.
 
 **Extra/unneeded work:**
 - Did they build things that weren't requested?
@@ -55,6 +56,8 @@ Read the implementation code and verify:
 - Did they implement the right feature but the wrong way?
 
 Verify by reading code, not by trusting the report.
+
+For each issue, name the rule and its whole class: the requirement the code fails and every input or site it covers, not only the cited line. The fix is held to the whole class.
 
 ## Boundaries
 

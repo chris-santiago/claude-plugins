@@ -37,16 +37,19 @@ PLAN_TEXT = """# Fixture Plan
 ### Task 1: warm-up
 
 - Consumes: nothing
+- Cases: n/a — setup only, no input domain
 - [ ] do the warm-up thing
 
 ### Task 2: the real task
 
 - Consumes: contract from spec §6 → `{consumed_path}`
+- Cases: size>0; size=0, size<0, size=None → ValueError
 - [ ] Concrete action
 - [ ] Verify: something
 
 ### Task 3: cool-down
 
+- Cases: n/a — wrap-up only
 - [ ] wrap up
 
 ## 6. Acceptance checks
@@ -423,6 +426,39 @@ class TestValidateConsumes(TaskBriefTestCase):
 
 # --- extract_section (--constraints-from) ---
 
+class TestValidateCases(unittest.TestCase):
+    """Every task states the cases its rule covers, or says why it has none
+    (2026-10-06): coders patched only the cited line, and siblings like
+    size=None surfaced one review cycle at a time."""
+
+    def test_listed_cases_pass(self):
+        task_brief.validate_cases("### Task 2: x\n- Cases: size>0; size=None → ValueError\n")
+
+    def test_na_with_a_reason_passes(self):
+        for dash in ("—", "-", "–"):
+            task_brief.validate_cases(f"### Task 2: x\n- Cases: n/a {dash} wiring only\n")
+
+    def test_missing_cases_line_raises(self):
+        with self.assertRaises(task_brief.BriefValidationError) as ctx:
+            task_brief.validate_cases("### Task 2: x\n- [ ] do it\n")
+        self.assertIn("Cases:", str(ctx.exception))
+
+    def test_empty_cases_raises(self):
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.validate_cases("### Task 2: x\n- Cases:   \n")
+
+    def test_bare_na_without_a_reason_raises(self):
+        for bare in ("n/a", "N/A", "n/a —"):
+            with self.assertRaises(task_brief.BriefValidationError, msg=bare) as ctx:
+                task_brief.validate_cases(f"### Task 2: x\n- Cases: {bare}\n")
+            self.assertIn("reason", str(ctx.exception))
+
+    def test_cases_line_inside_a_code_fence_does_not_count(self):
+        entry = "### Task 2: x\n```\n- Cases: size>0\n```\n- [ ] do it\n"
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.validate_cases(entry)
+
+
 class TestExtractSection(unittest.TestCase):
     def test_extracts_constraints_stops_at_next_same_level_heading(self):
         section = task_brief.extract_section(PLAN_TEXT, "Constraints")
@@ -504,6 +540,24 @@ class TestRunEndToEnd(TaskBriefTestCase):
         with self.assertRaisesRegex(task_brief.BriefValidationError, "§99"):
             task_brief.run(args)
         self.assertFalse(any(self.store.rglob("*brief*")))
+
+    def test_task_without_cases_line_exits_3_writes_nothing(self):
+        consumed = self.tmp / "consumed.py"
+        consumed.write_text("x = 1\n", encoding="utf-8")
+        plan = _plan_with_pointer(f"contract from spec §6 → `{consumed}`").replace(
+            "- Cases: size>0; size=0, size<0, size=None → ValueError\n", "")
+        self.plan_path.write_text(plan, encoding="utf-8")
+        with self.assertRaisesRegex(task_brief.BriefValidationError, "Cases:"):
+            task_brief.run(self._args(spec=str(self.spec_path)))
+        self.assertFalse(any(self.store.rglob("*brief*")))
+
+    def test_brief_carries_the_cases_line(self):
+        consumed = self.tmp / "consumed.py"
+        consumed.write_text("x = 1\n", encoding="utf-8")
+        self.plan_path.write_text(
+            _plan_with_pointer(f"contract from spec §6 → `{consumed}`"), encoding="utf-8")
+        brief = task_brief.run(self._args(spec=str(self.spec_path))).read_text(encoding="utf-8")
+        self.assertIn("- Cases: size>0; size=0, size<0, size=None → ValueError", brief)
 
     def test_valid_brief_contains_entry_intent_notes_constraints_shapes(self):
         # Acceptance criteria 2 (valid path) and 6 (shapes carry into the brief).

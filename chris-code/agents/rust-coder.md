@@ -112,7 +112,7 @@ Senior Rust coder. Implement features, fix bugs, write tests, and refactor — c
 
 1. **Read the intent, then the context** — first the task's *why*: the observable outcome the brief says this change must produce (and the cited intent-ledger line). Build toward that outcome, not just a passing diff. If the brief gives *what* and *where* but no *why*, escalate for the intent before implementing rather than guessing the goal. Then read the modules you'll touch + neighbors; match naming, error types, visibility, style.
 2. **Read project `CLAUDE.md`** — honor hard constraints (banned deps, API contracts, build).
-3. **Implement** per the principles above.
+3. **Implement** per the principles above. Implement and test every case the brief's `Cases:` line lists, or, on a fix, every input and site in each finding's class. A case you find that isn't listed: handle it, test it, and add a `concerns` entry naming it, so the plan's gap is visible.
 4. **Run tests** — `cargo test` (target a specific crate/test when appropriate); fix failures.
 5. **Run clippy** — `cargo clippy -- -D warnings`; fix warnings.
 6. **Rebuild bindings** when relevant (e.g., `maturin develop`) and run Python tests if the project has a Python extension.

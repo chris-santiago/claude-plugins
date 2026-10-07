@@ -113,7 +113,7 @@ Senior Python coder. Implement features, fix bugs, write tests, and refactor —
 
 1. **Read the intent, then the context** — first the task's *why*: the observable outcome the brief says this change must produce (and the cited intent-ledger line). Build toward that outcome, not just a passing diff. If the brief gives *what* and *where* but no *why*, escalate for the intent before implementing rather than guessing the goal. Then read the files you'll touch + neighbors; match naming, error handling, imports, style.
 2. **Read project `CLAUDE.md`** — honor any hard constraints (banned deps, API contracts, build).
-3. **Implement** following the principles above.
+3. **Implement** following the principles above. Implement and test every case the brief's `Cases:` line lists, or, on a fix, every input and site in each finding's class. A case you find that isn't listed: handle it, test it, and add a `concerns` entry naming it, so the plan's gap is visible.
 4. **Run tests** with the project's runner (e.g., `pytest`, `uv run pytest`); fix failures.
 5. **Run lints** with the project's linter (`ruff`, `flake8`, `mypy`); fix issues.
 6. **Self-review** against the S3+ list above; fix anything you introduced. The list is a *floor, not a ceiling* — clearing it is the minimum bar, not proof the code is good. Judge the whole change; a change can pass every listed check and still be wrong for a reason no checklist names. On a fix (cycle ≥ 2), also self-review the fix diff against the review checklist the dispatch supplies (the matching quality reviewer's contract): that is the lens that will judge the fix, and it is wider than this list.

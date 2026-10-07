@@ -66,6 +66,7 @@ One sentence describing the required change.
 
 ### Task 1: [Name]
 - Consumes: <contract> from <spec §N, or built in Task M → `path`> — a pointer, never a restated signature; omit if the task stands alone
+- Cases: <every case the task's rule covers, with its intended behavior: the main case, its siblings, boundary inputs (e.g. `size>0; size=0, size<0, size=None → ValueError; empty data → []`)>, or `n/a — <why the task has no input domain>` (wiring, renames, docs). Required: `task_brief.py` refuses a task without it
 - [ ] Concrete action (reference spec §N for requirements)
 - [ ] Concrete action
 - [ ] Verify: `exact command to run`
@@ -111,7 +112,8 @@ After writing, check against the spec:
 2. **Bloat scan:** Any prose that restates the spec? Any code blocks an executor would rewrite? Cut them.
 3. **Name consistency:** Do types, signatures, and paths used in later tasks match earlier tasks?
 4. **Verify scope vs. shared contracts:** Does any task change a *shared contract* (a test file several tasks edit, such as a central exclusions list or fixtures module; an enum; an allow/deny list; a public signature consumed elsewhere)? If so, its `Verify:` and its slice of the acceptance checks must run the **full suite, or grep every assertion of that contract**, not just a local `-k` subset scoped to the task's own module. A narrow filter passes green while hiding orphaned failures in sibling files: the assertion a *different* task already wrote against the contract you just flipped. When in doubt, a shared-contract task verifies suite-wide.
-5. **Repeated shapes are contracts:** Do 3+ tasks perform the same operation (the same call pair, construction, or dispatch block)? Name the shared helper as a contract with an owner — one task builds it, every later consumer carries a `Consumes:` pointer to it. A shape left inline in the plan becomes N verbatim copies at execution: coders are scope-disciplined and will not hoist it for you.
+5. **Cases are complete:** For each task that implements a rule, does its `Cases:` line list every case the rule covers, with the intended behavior for each: the main case, its siblings (every parameter or site the same rule governs), and the boundary inputs (`None`, empty, zero, negative, wrong type)? What `None` should do is a design decision. Make it here, because a coder left to guess will patch one case, and the siblings then surface one review cycle at a time. Use `n/a — <reason>` only when the task truly has no input domain.
+6. **Repeated shapes are contracts:** Do 3+ tasks perform the same operation (the same call pair, construction, or dispatch block)? Name the shared helper as a contract with an owner — one task builds it, every later consumer carries a `Consumes:` pointer to it. A shape left inline in the plan becomes N verbatim copies at execution: coders are scope-disciplined and will not hoist it for you.
 
 Fix issues inline, then move on.
 
@@ -130,7 +132,8 @@ After saving the plan, offer:
 - **Subagent-Driven:** REQUIRED SUB-SKILL: `chris-code:subagent-driven-development`
 - **Inline:** REQUIRED SUB-SKILL: `chris-code:executing-plans`
 
-**Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in three ways:
+**Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in four ways:
 - §2's spec references are the decision doc and the gate report paths.
+- Each task's `Cases:` line starts from the class its gate finding names (the rule and every input or site it covers) and the decision doc's correctness table.
 - Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
 - Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.

@@ -20,9 +20,12 @@ extraction is immune to glued punctuation (an arrow, a comma, a §-ref
 with no space) by construction, where token classification needed an
 ever-growing set of punctuation apologies. See find_consumes_pointers.
 
+Every task entry must also carry a `Cases:` line (the cases its rule
+covers, or `n/a — <reason>`); the brief carries it verbatim with the entry.
+
 Exit codes: 2 usage (bad args, missing files, task not found, --spec
-required but absent), 3 missing/empty --intent or a stale Consumes:
-pointer (naming each).
+required but absent), 3 missing/empty --intent, a stale Consumes:
+pointer (naming each), or a missing/empty Cases: line.
 
 Usage: python3 task_brief.py PLAN_FILE TASK_N --intent TEXT
            [--note TEXT]... [--spec PATH] [--constraints-from PLAN]
@@ -59,6 +62,10 @@ EXIT_INVALID = 3
 
 TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+[0-9]+(?:[^0-9]|$)")
 CONSUMES_LINE_RE = re.compile(r"^\s*[-*+]\s*Consumes:\s*(.*)$")
+CASES_LINE_RE = re.compile(r"^\s*[-*+]\s*Cases:\s*(.*)$")
+# "n/a" must carry a reason after a dash: the planner has to decide a task
+# has no input domain, not skip the question.
+CASES_NA_RE = re.compile(r"^n/a\b\s*(?:[—–-]\s*(?P<reason>.*))?$", re.IGNORECASE)
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
 # A backtick pair unambiguously delimits its content; extracted straight
@@ -427,6 +434,29 @@ def validate_consumes(task_entry: str, spec_path: str | None) -> None:
         raise BriefValidationError("; ".join(failures))
 
 
+def validate_cases(task_entry: str) -> None:
+    """Raise BriefValidationError unless the entry carries a 'Cases:'
+    bullet (outside a code fence) listing the cases its rule covers, or
+    'n/a — <reason>'. Coders given only the cited behavior patch only it,
+    and sibling cases (size=None, size<0) then surface one review cycle at
+    a time; the case list is the planner's call, made up front."""
+    values = [m.group(1).strip()
+              for line, in_fence in _iter_fence_aware(task_entry.splitlines())
+              if not in_fence and (m := CASES_LINE_RE.match(line))]
+    if not values:
+        raise BriefValidationError(
+            "missing 'Cases:' line: list the cases the task's rule covers (the case, "
+            "its siblings, boundary inputs), or 'Cases: n/a — <reason>'")
+    for value in values:
+        if not value:
+            raise BriefValidationError("empty 'Cases:' line: list the cases, or 'n/a — <reason>'")
+        na = CASES_NA_RE.match(value)
+        if na and not (na.group("reason") or "").strip():
+            raise BriefValidationError(
+                f"'Cases: {value}' needs a reason: write 'Cases: n/a — <why this task "
+                "has no input domain>'")
+
+
 def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],
                  constraints: str | None, shapes_text: str) -> str:
     """Assemble the brief markdown (spec Sec 4): the task's plan entry,
@@ -469,6 +499,7 @@ def run(request: BriefRequest) -> Path:
     if request.spec is not None:
         _require_existing_file(request.spec, "spec file")
     validate_consumes(task_entry, request.spec)
+    validate_cases(task_entry)
 
     constraints = None
     if request.constraints_from is not None:

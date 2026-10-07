@@ -167,7 +167,7 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 
 1. **Read the intent, then the context** — first the task's *why*: the observable outcome the brief says this change must produce (and the cited intent-ledger line). Build toward that outcome, not just a passing diff. If the brief gives *what* and *where* but no *why*, escalate for the intent before implementing rather than guessing the goal. Then read the model architecture, data pipeline, training setup; match existing patterns.
 2. **Read project `CLAUDE.md`** — framework versions, hardware targets, experiment conventions.
-3. **Implement** per Lightning conventions and principles above.
+3. **Implement** per Lightning conventions and principles above. Implement and test every case the brief's `Cases:` line lists, or, on a fix, every input and site in each finding's class. A case you find that isn't listed: handle it, test it, and add a `concerns` entry naming it, so the plan's gap is visible.
 4. **Run tests** — `pytest` or project runner; fix failures.
 5. **Sanity check** — `Trainer(fast_dev_run=1)` for shape/loop validation when touching training pipeline.
 6. **Run lints** — project linter; fix issues.
