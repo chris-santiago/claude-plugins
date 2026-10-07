@@ -27,8 +27,8 @@ For each task:
 1. Mark as in_progress
 2. Follow each step exactly (plan has bite-sized steps)
 3. Run verifications as specified
-4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). If any returns REVISE: fix issues and re-dispatch until all APPROVED.
-5. Mark as completed in TodoWrite, and append to the ledger the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`
+4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). Give each the plan's task entry, the changed-file list, the plan's Constraints verbatim, a record path at `$STORE/task-N-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). If any returns REVISE: fix issues and re-dispatch at the same record path until all APPROVED.
+5. Run the Step 3 commit gate for the task. Once it is committed, mark it completed in TodoWrite and append the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`.
 
 ### Step 3: Commit Gate
 
@@ -52,6 +52,7 @@ After all tasks complete, review the whole change to catch cross-task idiom drif
 ### Step 5: Complete Development
 
 After final review passes:
+- **REQUIRED SUB-SKILL:** Use chris-code:verification-before-completion first. The final review is a diff-level idiom check; it doesn't exercise behavior or assess design, so the completion close (design, intent, and mutation gates) is still owed, exactly as after subagent-driven-development.
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
 - **REQUIRED SUB-SKILL:** Use chris-code:finishing-a-development-branch
 - Follow that skill to verify tests, present options, execute choice
@@ -88,6 +89,7 @@ After final review passes:
 **Required workflow skills:**
 - **chris-code:using-git-worktrees** - Ensures isolated workspace
 - **chris-code:lean-plan** - Creates the plan this skill executes
+- **chris-code:verification-before-completion** - The completion close, before finishing
 - **chris-code:finishing-a-development-branch** - Complete development after all tasks
 - **`*-quality-reviewer` agents** - Per-task quality + bug review, auto-dispatched by file type
 - **`*-review-lite` agents** - Commit gates + final full-diff review, auto-dispatched by file type

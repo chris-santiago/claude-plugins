@@ -105,7 +105,7 @@ Every other batch keeps the full `lean-spec` route.
 | Excuse | Reality |
 |--------|---------|
 | "The first fix works, ship it" | Working ≠ coherent. A fix that ignores existing patterns is debt the next reader pays. |
-| "There's only one way to fix this" | Usually means stage 2 was skipped. Read the siblings before deciding. |
+| "There's only one way to fix this" | Usually means `coherent-change`'s research stage was skipped. Read the siblings before deciding. |
 | "Defending alternatives is busywork" | The defense *is* the deliverable. It's what makes the fix trustworthy and reviewable. |
 | "It's a small bug, skip the process" | Small bugs with wide fix-spaces are the target. Truly single-fix bugs are out of scope — don't invoke here. |
 | "I'll add the test after the fix" | The before/after check comes first. A test written around a working fix proves nothing about the bug. |
