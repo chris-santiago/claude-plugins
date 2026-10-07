@@ -62,13 +62,18 @@ EXIT_INVALID = 3
 
 TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+[0-9]+(?:[^0-9]|$)")
 CONSUMES_LINE_RE = re.compile(r"^\s*[-*+]\s*Consumes:\s*(.*)$")
-# A `Cases:` line, bulleted or not, bold or not; group 1 is its indent.
-CASES_LINE_RE = re.compile(r"^(\s*)(?:[-*+]\s+)?(?:\*\*)?Cases:(?:\*\*)?\s*(.*)$")
-SUB_BULLET_RE = re.compile(r"^(\s*)[-*+]\s+\S")
+HEADING_LEVEL_RE = re.compile(r"^(#{1,6})[ \t]")
+# List markers: "-", "*", "+" (optionally a "[ ]"/"[x]" checkbox) or "1." / "1)".
+_LIST_MARKER = r"(?:[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)"
+# A `Cases:` line, with or without a list marker, bold label or not
+# ("**Cases:**" or "**Cases**:"); group 1 is its indent, group 2 its value.
+CASES_LINE_RE = re.compile(
+    r"^(\s*)" + _LIST_MARKER + r"?(?:\*\*)?Cases(?:\*\*)?:(?:\*\*)?\s*(.*)$")
+SUB_BULLET_RE = re.compile(r"^(\s*)" + _LIST_MARKER + r"(\S.*)$")
 # "n/a" must carry a real reason: the planner has to decide a task has no
 # input domain, not skip the question. Placeholders count as no answer.
 CASES_NA_RE = re.compile(r"^n/a\b(?P<rest>.*)$", re.IGNORECASE)
-CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "?"})
+CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "—", "–", "?", "na", "n.a", "n/a"})
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
 # A backtick pair unambiguously delimits its content; extracted straight
@@ -150,16 +155,24 @@ def _iter_fence_aware(lines: list[str]):
 
 def extract_task_entry(plan_text: str, task_n: str) -> str:
     """Extract one task's plan entry: from its any-level 'Task N' heading
-    through the next 'Task <number>' heading of any number, fence-aware.
-    Preserves the retired bash task-brief's awk semantics verbatim,
-    including its quirk that only Task-N headings (not other headings,
-    e.g. '## Acceptance checks') close a section."""
+    to the next 'Task <number>' heading, or to any other heading at the
+    same or a higher level (e.g. '## 6. Acceptance checks' after a '###'
+    task), fence-aware. The task's own deeper sub-headings stay in it.
+    (The retired bash task-brief closed a section only at a Task heading,
+    so the last task absorbed the plan's trailing sections, Cases: lines
+    included.)"""
     this_task_re = re.compile(r"^#+[ \t]+Task[ \t]+" + re.escape(task_n) + r"(?:[^0-9]|$)")
     out: list[str] = []
     intask = False
+    task_level = 0
     for line, infence in _iter_fence_aware(plan_text.splitlines(keepends=True)):
         if not infence and TASK_ANY_RE.match(line):
             intask = bool(this_task_re.match(line))
+            task_level = len(line) - len(line.lstrip("#"))
+        elif intask and not infence:
+            heading = HEADING_LEVEL_RE.match(line)
+            if heading is not None and len(heading.group(1)) <= task_level:
+                intask = False
         if intask:
             out.append(line)
     entry = "".join(out)
@@ -438,53 +451,78 @@ def validate_consumes(task_entry: str, spec_path: str | None) -> None:
 
 
 def validate_cases(task_entry: str) -> None:
-    """Raise BriefValidationError unless the entry carries a 'Cases:'
-    bullet (outside a code fence) listing the cases its rule covers, or
-    'n/a — <reason>'. Coders given only the cited behavior patch only it,
+    """Raise BriefValidationError unless the entry carries a 'Cases:' line
+    (outside a code fence; bulleted, numbered, or plain; bold label or not)
+    listing the cases its rule covers, inline or as indented sub-bullets,
+    or 'n/a — <reason>'. Placeholders are refused, and so is an 'n/a' for
+    a refactor, which lists what it preserves instead. Coders given only the cited behavior patch only it,
     and sibling cases (size=None, size<0) then surface one review cycle at
     a time; the case list is the planner's call, made up front."""
-    values = _cases_values(task_entry)
-    if not values:
+    blocks = _cases_blocks(task_entry)
+    if not blocks:
         raise BriefValidationError(
             "missing 'Cases:' line: list the cases the task's rule covers (the case, "
             "its siblings, boundary inputs), or 'Cases: n/a — <reason>'")
-    for value in values:
-        if not value:
+    for items in blocks:
+        if not items:
             raise BriefValidationError(
                 "empty 'Cases:' line: list the cases inline or as indented sub-bullets, "
                 "or write 'n/a — <reason>'")
-        if value.lower() in CASES_PLACEHOLDERS:
-            raise BriefValidationError(
-                f"'Cases: {value}' is a placeholder: list the cases, or 'n/a — <reason>'")
-        na = CASES_NA_RE.match(value)
-        if na and not re.search(r"\w", na.group("rest")):
-            raise BriefValidationError(
-                f"'Cases: {value}' needs a reason: write 'Cases: n/a — <why this task "
-                "has no input domain>'")
+        for item in items:
+            _validate_case_item(item)
 
 
-def _cases_values(task_entry: str) -> list[str]:
-    """Each `Cases:` line's value outside code fences. An empty inline
-    value takes the indented sub-bullets that follow it instead, so a
-    long case list can be written one case per line."""
+def _normalize(value: str) -> str:
+    return value.strip().rstrip(".!?;,").strip().lower()
+
+
+def _validate_case_item(value: str) -> None:
+    """One inline value or one sub-bullet: not a placeholder, and an
+    `n/a` carries a real reason that isn't itself a placeholder."""
+    if _normalize(value) in CASES_PLACEHOLDERS:
+        raise BriefValidationError(
+            f"'Cases: {value}' is a placeholder: list the cases, or 'n/a — <reason>'")
+    na = CASES_NA_RE.match(value.strip())
+    if na is None:
+        return
+    reason = re.sub(r"^[\s—–:\-(]+", "", na.group("rest")).rstrip(" .)")
+    if not re.search(r"\w", reason) or _normalize(reason) in CASES_PLACEHOLDERS:
+        raise BriefValidationError(
+            f"'Cases: {value}' needs a reason: write 'Cases: n/a — <why this task "
+            "has no input domain>'")
+    if re.search(r"\brefactor", reason, re.IGNORECASE):
+        raise BriefValidationError(
+            f"'Cases: {value}': a refactor has an input domain; list what it "
+            "preserves and the tests that cover it ('preserves <behavior>; covered "
+            "by <tests>')")
+
+
+def _cases_blocks(task_entry: str) -> list[list[str]]:
+    """One list per `Cases:` line outside code fences: its inline value,
+    or, when that is empty, each indented sub-bullet that follows (blank
+    lines between them allowed), marker stripped. An empty list means an
+    empty `Cases:` line."""
     lines = list(_iter_fence_aware(task_entry.splitlines()))
-    values = []
+    blocks = []
     for i, (line, in_fence) in enumerate(lines):
         m = None if in_fence else CASES_LINE_RE.match(line)
         if m is None:
             continue
         value = m.group(2).strip()
-        if not value:
-            indent = len(m.group(1))
-            subs = []
-            for nxt, nxt_fence in lines[i + 1:]:
-                sub = SUB_BULLET_RE.match(nxt)
-                if nxt_fence or sub is None or len(sub.group(1)) <= indent:
-                    break
-                subs.append(nxt.strip())
-            value = "; ".join(subs)
-        values.append(value)
-    return values
+        if value:
+            blocks.append([value])
+            continue
+        indent = len(m.group(1))
+        subs = []
+        for nxt, nxt_fence in lines[i + 1:]:
+            if not nxt.strip() and not nxt_fence:
+                continue
+            sub = SUB_BULLET_RE.match(nxt)
+            if nxt_fence or sub is None or len(sub.group(1)) <= indent:
+                break
+            subs.append(sub.group(2).strip())
+        blocks.append(subs)
+    return blocks
 
 
 def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],

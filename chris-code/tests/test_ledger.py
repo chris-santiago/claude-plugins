@@ -34,7 +34,7 @@ def _coder(**overrides) -> dict:
         "schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
         "status": "done", "changed_files": [], "tests": {},
         "new_shared_symbols": [], "duplication_pending": [],
-        "concerns": [], "report": "",
+        "concerns": [], "report": "", "cycle": 1,
     }
     data.update(overrides)
     return data
@@ -183,8 +183,14 @@ class TestFixLoopFields(LedgerTestCase):
     def test_cycle_1_needs_no_diagnosis(self):
         ledger.validate_record(_coder(cycle=1))  # no raise
 
-    def test_absent_cycle_needs_no_diagnosis(self):
-        ledger.validate_record(_coder())  # no raise
+    def test_coder_record_without_cycle_raises(self):
+        # The fix-mode checks key off `cycle`; a record that omitted it
+        # would skip every one of them.
+        record = _coder()
+        del record["cycle"]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(record)
+        self.assertIn("cycle", str(ctx.exception))
 
     def test_cycle_2_without_diagnosis_raises_naming_the_field(self):
         with self.assertRaises(ledger.RecordError) as ctx:
@@ -1193,18 +1199,70 @@ class TestFixBaseline(unittest.TestCase):
         self.assertNotIn("-x = 1", diff)
 
     def test_same_size_edit_in_the_index_write_second_is_captured(self):
-        # Git trusts a cached stat only for files older than the index; a
-        # same-size edit with an mtime equal to the index's is "racily
-        # clean" and must be re-read. A throwaway index copy that takes a
-        # fresh mtime would lose that protection and miss the edit.
+        # Git trusts a cached stat only for entries older than the index
+        # file; an entry whose mtime equals the index's is "racily clean"
+        # and re-read by content. A throwaway index copy that takes a fresh
+        # mtime loses that protection and misses a same-size edit made in
+        # that second. Setup: a real (not size-0 smudged) stat entry, an
+        # index mtime equal to the file's, and stat checks that see only
+        # size and mtime, so content is the only signal left.
+        self._git("config", "core.trustctime", "false")
+        self._git("config", "core.checkStat", "minimal")
         a = self.repo / "a.py"
+        old = a.stat().st_mtime_ns - 10 * 10**9
+        os.utime(a, ns=(old, old))
+        self._git("update-index", "--really-refresh")
         index = self.repo / ".git" / "index"
-        stamp = a.stat().st_mtime_ns
-        os.utime(index, ns=(stamp, stamp))
+        os.utime(index, ns=(old, old))
         a.write_text("x = 7\n", encoding="utf-8")  # same size as "x = 1\n"
-        os.utime(a, ns=(stamp, stamp))
+        os.utime(a, ns=(old, old))
         tree = ledger.snapshot_tree(self.repo)
         self.assertEqual(self._git("cat-file", "-p", f"{tree}:a.py"), "x = 7\n")
+
+    def test_diff_since_limited_to_paths_excludes_a_parallel_tasks_edits(self):
+        # Tasks in one SDD stage share the working tree; a fix's diff must
+        # not show the other task's concurrent work.
+        (self.repo / "mine.py").write_text("m = 1\n", encoding="utf-8")
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "mine.py").write_text("m = 2\n", encoding="utf-8")
+        (self.repo / "theirs.py").write_text("t = 1\n", encoding="utf-8")
+        diff = ledger.diff_since(self.repo, baseline, ["mine.py"])
+        self.assertIn("+m = 2", diff)
+        self.assertNotIn("theirs.py", diff)
+
+    def test_diff_since_rejects_an_option_shaped_tree(self):
+        with self.assertRaises(ledger.RecordError):
+            ledger.diff_since(self.repo, "--output=pwned", [])
+        self.assertFalse((self.repo / "pwned").exists())
+
+    def test_diff_since_survives_non_utf8_content(self):
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "a.py").write_bytes(b"caf\xe9\n")
+        diff = ledger.diff_since(self.repo, baseline)
+        self.assertIn("a.py", diff)
+
+    def test_diff_since_ignores_textconv(self):
+        (self.repo / ".gitattributes").write_text("*.py diff=up\n", encoding="utf-8")
+        self._git("config", "diff.up.textconv", "tr a-z A-Z <")
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "a.py").write_text("x = 5\n", encoding="utf-8")
+        diff = ledger.diff_since(self.repo, baseline)
+        self.assertIn("+x = 5", diff)
+        self.assertNotIn("X = 5", diff)
+
+    def test_submodule_paths_found_from_a_subdirectory(self):
+        head = self._git("rev-parse", "HEAD").strip()
+        self._git("update-index", "--add", "--cacheinfo", f"160000,{head},mod")
+        sub = self.repo / "sub"
+        sub.mkdir()
+        self.assertEqual(ledger.submodule_paths(sub), ["mod"])
+
+    def test_snapshot_entries_render_in_read(self):
+        log = [{"type": "snapshot", "task": 4, "label": "pre-fix c2", "tree": "abc123"}]
+        rendered = ledger.render_store_markdown([], log)
+        line = next(ln for ln in rendered.splitlines() if "abc123" in ln)
+        self.assertIn("pre-fix c2", line)
+        self.assertNotIn("unknown entry", rendered)
 
     def test_snapshot_leaves_the_real_index_and_tree_untouched(self):
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")

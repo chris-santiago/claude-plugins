@@ -125,13 +125,21 @@ class TestExtractTaskEntry(unittest.TestCase):
         self.assertNotIn("warm-up", entry)
         self.assertNotIn("cool-down", entry)
 
-    def test_stops_at_next_task_heading_not_other_headings(self):
-        # Preserves the old awk quirk: only a "Task <number>" heading (not
-        # e.g. "## 6. Acceptance checks") closes a section, so content
-        # between the last task and a following non-task heading is kept.
-        text = "### Task 1: solo\n- [ ] do it\n## Acceptance checks\n- pass\n"
+    def test_stops_at_a_heading_of_the_same_or_higher_level(self):
+        # The last task used to run on into "## 6. Acceptance checks", so a
+        # Cases: line there was read as the task's own (2026-10-07).
+        text = "### Task 1: solo\n- [ ] do it\n## Acceptance checks\n- Cases: none\n"
         entry = task_brief.extract_task_entry(text, "1")
-        self.assertIn("Acceptance checks", entry)
+        self.assertIn("do it", entry)
+        self.assertNotIn("Acceptance checks", entry)
+        self.assertNotIn("Cases: none", entry)
+
+    def test_keeps_its_own_deeper_sub_headings(self):
+        text = "### Task 1: solo\n#### Notes\n- detail\n### Task 2: next\n- other\n"
+        entry = task_brief.extract_task_entry(text, "1")
+        self.assertIn("#### Notes", entry)
+        self.assertIn("detail", entry)
+        self.assertNotIn("other", entry)
 
     def test_fence_aware_ignores_heading_lookalikes_in_code_blocks(self):
         text = (
@@ -475,6 +483,31 @@ class TestValidateCases(unittest.TestCase):
         with self.assertRaises(task_brief.BriefValidationError):
             task_brief.validate_cases(entry)
 
+    def test_sub_bullet_placeholders_raise(self):
+        for sub in ("tbd", "n/a", "none.", "—"):
+            entry = f"### Task 2: x\n- Cases:\n  - size>0\n  - {sub}\n"
+            with self.assertRaises(task_brief.BriefValidationError, msg=sub):
+                task_brief.validate_cases(entry)
+
+    def test_more_markdown_forms_count(self):
+        for line in ("- **Cases**: size>0", "1. Cases: size>0", "- [ ] Cases: size>0",
+                     "- [x] Cases: size>0"):
+            task_brief.validate_cases(f"### Task 2: x\n{line}\n")
+
+    def test_blank_line_before_sub_bullets_still_counts(self):
+        task_brief.validate_cases("### Task 2: x\n- Cases:\n\n  - size>0\n  - size=None → ValueError\n")
+
+    def test_more_placeholders_raise(self):
+        for value in ("—", "–", "none.", "TBD.", "NA", "n.a.", "n/a — tbd", "n/a — none"):
+            with self.assertRaises(task_brief.BriefValidationError, msg=value):
+                task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_na_for_a_refactor_raises(self):
+        # A refactor has an input domain: it lists what it preserves.
+        with self.assertRaises(task_brief.BriefValidationError) as ctx:
+            task_brief.validate_cases("### Task 2: x\n- Cases: n/a — refactor only\n")
+        self.assertIn("preserves", str(ctx.exception))
+
     def test_cases_line_inside_a_code_fence_does_not_count(self):
         entry = "### Task 2: x\n```\n- Cases: size>0\n```\n- [ ] do it\n"
         with self.assertRaises(task_brief.BriefValidationError):
@@ -529,7 +562,7 @@ def _write_shape_record(store: Path) -> None:
         "schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
         "status": "done", "changed_files": [], "tests": {},
         "new_shared_symbols": [{"symbol": "foo", "path": "a.py", "why": "shared"}],
-        "duplication_pending": [], "concerns": [], "report": "",
+        "duplication_pending": [], "concerns": [], "report": "", "cycle": 1,
     }), encoding="utf-8")
 
 
@@ -572,14 +605,6 @@ class TestRunEndToEnd(TaskBriefTestCase):
         with self.assertRaisesRegex(task_brief.BriefValidationError, "Cases:"):
             task_brief.run(self._args(spec=str(self.spec_path)))
         self.assertFalse(any(self.store.rglob("*brief*")))
-
-    def test_brief_carries_the_cases_line(self):
-        consumed = self.tmp / "consumed.py"
-        consumed.write_text("x = 1\n", encoding="utf-8")
-        self.plan_path.write_text(
-            _plan_with_pointer(f"contract from spec §6 → `{consumed}`"), encoding="utf-8")
-        brief = task_brief.run(self._args(spec=str(self.spec_path))).read_text(encoding="utf-8")
-        self.assertIn("- Cases: size>0; size=0, size<0, size=None → ValueError", brief)
 
     def test_valid_brief_contains_entry_intent_notes_constraints_shapes(self):
         # Acceptance criteria 2 (valid path) and 6 (shapes carry into the brief).
@@ -674,6 +699,15 @@ class TestCLI(TaskBriefTestCase):
         # swaps one constant's value for the other's would still pass the
         # constant-based assert but fail this one.
         self.assertEqual(result.returncode, 3)
+        self.assertFalse(any(self.store.rglob("*brief*")))
+
+    def test_missing_cases_line_exits_3(self):
+        plan = PLAN_TEXT.replace("- Cases: size>0; size=0, size<0, size=None → ValueError\n", "")
+        self.plan_path.write_text(plan.replace("§6 → `{consumed_path}`", "nothing"),
+                                  encoding="utf-8")
+        result = self._run("--intent", "x")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("Cases:", result.stderr)
         self.assertFalse(any(self.store.rglob("*brief*")))
 
     def test_bad_plan_file_exits_2(self):

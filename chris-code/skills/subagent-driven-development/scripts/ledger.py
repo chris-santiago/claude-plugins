@@ -222,7 +222,11 @@ def validate_record(data: object) -> None:
                 raise RecordError(
                     f"{field_name}[{idx}]: got {entry!r}, expected an object")
 
-    if role == "coder" and "cycle" in data:
+    if role == "coder":
+        # Required: every fix-mode check keys off `cycle`, so a record that
+        # omitted it would skip them all.
+        if "cycle" not in data:
+            raise RecordError("missing required field(s): cycle")
         cycle = data["cycle"]
         # bool is an int subclass; True would silently read as cycle 1.
         if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
@@ -642,8 +646,13 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
 
 
 def _git(repo: Path, *args: str, env: dict | None = None) -> str:
+    # errors="replace": a diff of a non-UTF-8 file must not crash the CLI.
     return subprocess.check_output(["git", *args], cwd=repo, env=env,
-                                   stderr=subprocess.PIPE).decode()
+                                   stderr=subprocess.PIPE).decode(errors="replace")
+
+
+def _toplevel(repo: Path) -> Path:
+    return Path(_git(repo, "rev-parse", "--show-toplevel").strip())
 
 
 def snapshot_tree(repo: Path) -> str:
@@ -654,7 +663,7 @@ def snapshot_tree(repo: Path) -> str:
     index and working tree are never touched. It does write git objects,
     and the repo's clean filters (e.g. Git LFS) run as for any `git add`.
     Edits inside a submodule are not captured (see submodule_paths)."""
-    top = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
+    top = _toplevel(repo)
     real_index = top / _git(top, "rev-parse", "--git-path", "index").strip()
     with tempfile.TemporaryDirectory() as tmp:
         tmp_index = Path(tmp) / "index"
@@ -677,17 +686,22 @@ def submodule_paths(repo: Path) -> list[str]:
     submodule's commit, so uncommitted edits inside one are invisible to
     snapshot and diff-since; the CLI warns when any exist."""
     return [line.split("\t", 1)[1]
-            for line in _git(repo, "ls-files", "--stage").splitlines()
+            for line in _git(_toplevel(repo), "ls-files", "--stage").splitlines()
             if line.startswith("160000 ")]
 
 
-def diff_since(repo: Path, base_tree: str) -> str:
+def diff_since(repo: Path, base_tree: str, paths: list[str] | tuple[str, ...] = ()) -> str:
     """What changed in the working tree since `base_tree` (a snapshot_tree
     result), new untracked files included: exactly the fix's own edits.
-    Plain output regardless of the user's diff config (color, external
-    diff, textconv), since agents read it."""
+    `paths` limits it to the task's own files, since tasks in one SDD
+    stage share the working tree and edit it concurrently. Plain output
+    regardless of the user's diff config (color, external diff,
+    textconv), since agents read it."""
+    if base_tree.startswith("-"):
+        # Agents pass this argument; it must never reach git as an option.
+        raise RecordError(f"tree id must not start with '-': got {base_tree!r}")
     return _git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv",
-                base_tree, snapshot_tree(repo))
+                base_tree, snapshot_tree(repo), "--", *paths)
 
 
 def _warn_submodules(repo: Path) -> None:
@@ -868,6 +882,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   "files included (never touches the working tree or "
                                   "index; writes git objects and runs clean filters)")
     p_diff.add_argument("tree")
+    p_diff.add_argument("paths", nargs="*",
+                        help="limit the diff to these paths (the task's own files)")
 
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
                                 help="record a resolution for an open item")
@@ -896,7 +912,7 @@ def main() -> None:
             return
         if args.command == "diff-since":
             _warn_submodules(Path.cwd())
-            print(diff_since(Path.cwd(), args.tree), end="")
+            print(diff_since(Path.cwd(), args.tree, args.paths), end="")
             return
         store_dir = get_store_dir(args.store)
         if args.command == "read":
@@ -927,7 +943,7 @@ def main() -> None:
     except (RuntimeError, RecordError) as e:
         sys.exit(f"ERROR: {e}")
     except subprocess.CalledProcessError as e:
-        stderr = e.stderr.decode().strip() if e.stderr else ""
+        stderr = e.stderr.decode(errors="replace").strip() if e.stderr else ""
         sys.exit(f"ERROR: git {' '.join(e.cmd[1:])} failed: {stderr}")
 
 
