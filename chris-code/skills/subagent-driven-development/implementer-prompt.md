@@ -28,6 +28,14 @@ Agent tool:
 
     [GLOBAL_CONSTRAINTS]
 
+    ## On a fix (cycle >= 2 only; omit this section on a first attempt)
+
+    Fix baseline: [FIX_BASELINE]. Task files: [TASK_FILES].
+    Reviewer records: [REVIEWER_RECORDS]. Decision doc: [DECISION_DOC or "none"].
+    Review checklist(s): [REVIEW_CHECKLISTS or "none" for an all-trivial batch].
+    A fix dispatch missing the baseline or task files is malformed: return
+    NEEDS_CONTEXT naming it.
+
     ## Before You Begin
 
     If anything about the requirements, approach, or dependencies is unclear — ask now.
@@ -80,7 +88,9 @@ Agent tool:
 
     Write a JSON record to [RECORD_FILE] before returning — a separate absolute
     path from the report file, supplied by the dispatch; never compute it
-    yourself. Every field is required; an absent field is a contract violation,
+    yourself. Every field is required (except the fix-only `diagnosis`,
+    `hunk_map`, and `consumers_checked`, which a first attempt omits); an
+    absent field is a contract violation,
     and an explicit empty value is a real answer, not an omission. No
     agent-written timestamps — file mtime is the only time source. After
     writing it, run `python3 [SCRIPTS_DIR]/ledger.py check [RECORD_FILE]` —
@@ -148,10 +158,11 @@ Agent tool:
       defended choices it records, not a mechanism of your own; your
       root_cause restates the doc's.
     - `hunk_map` — fix records only (cycle >= 2, done or done_with_concerns):
-      one entry per changed hunk, read from `ledger.py diff-since <fix
-      baseline>` (cycle-1 work is uncommitted, so plain git diff mixes it in), `site` (file:lines) and `implements` (the finding or
-      decision-doc choice). Remove a hunk you can't map, or say why the
-      fix needs it.
+      one entry per changed hunk (at least one), read from
+      `python3 [SCRIPTS_DIR]/ledger.py diff-since [FIX_BASELINE] [TASK_FILES]`
+      (cycle-1 work is uncommitted, so plain git diff mixes it in):
+      `site` (file:lines) and `implements` (the finding or decision-doc
+      choice). Remove a hunk you can't map, or say why the fix needs it.
     - `consumers_checked` — fix records only: per symbol whose signature
       or behavior the fix changed, `symbol`, `consumers` (file:line list,
       empty if none), and `verified` (how each was confirmed). Update a

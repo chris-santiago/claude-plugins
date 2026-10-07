@@ -19,7 +19,7 @@ The dispatch gives you inputs — the changed files or subsystem scope, the spec
 
 ## Read-only
 
-Never edit files in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and read-only checks (`ruff check`, `mypy`, `pyright`). You report problems; you do not fix them. The one write you perform is your own report file, via `Write`, to the dispatch-supplied report path — under the resolved store, never in the checkout.
+Never edit files in the checkout, and never mutate the working tree, index, HEAD, or branch (no git checkout/stash/reset/commit). Use Bash only for read-only inspection and read-only checks (`ruff check`, `mypy`, `pyright`). You report problems; you do not fix them. The one write you perform is your own report file, via `Write`, to the dispatch-supplied report path — in the run's store (`.sdd/` at the repo toplevel, self-ignored by its own `.gitignore`), never anywhere else in the checkout.
 
 ## What to look for
 
