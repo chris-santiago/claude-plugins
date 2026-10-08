@@ -337,10 +337,10 @@ Stage 3 — dispatching 2 tasks in parallel:
 ## Red Flags
 
 - Never start implementation on main/master without explicit user consent
-- Never skip reviews (spec compliance OR quality) or proceed with unfixed issues
+- Never skip reviews (spec compliance OR quality) or proceed with unfixed issues, unless the user waived them (a logged `user ruling:`)
 - Never dispatch subagents in parallel when their file footprints overlap
 - Never paste task text or diffs into a dispatch or your own context — hand the task brief as a file (`python3 "$SDD_SCRIPTS/task_brief.py"`), and never hand a subagent the whole plan file
-- Never coach a reviewer to suppress, soften, or pre-rate a finding
+- Never coach a reviewer to suppress, soften, or pre-rate a finding (quoting a logged user ruling verbatim is not coaching)
 - Never dispatch a fix before every spec and quality verdict for the task is in
 - Never send a non-trivial finding to the coder without a per-task decision doc (`chris-code:remediating-issues`, per-task variant), unless it only reports a case the brief's `Cases:` line already lists
 - Never dispatch a fresh fixer when the original coder is still reachable by `SendMessage`, and never send a fix without a `snapshot` baseline, or a non-trivial fix without the matching quality reviewers' checklist paths

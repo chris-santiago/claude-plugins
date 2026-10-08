@@ -1541,6 +1541,12 @@ class TestProcessLabels(unittest.TestCase):
         diff = _diff("src/m.py", "def f():", '    """', "    Matches 510819e5.", '    """')
         self.assertEqual(self._labels(diff), ["commit-hash"])
 
+    def test_a_line_added_inside_a_docstring_opened_in_context_is_a_comment(self):
+        # Extending an existing docstring is a common way a label leaks in a fix.
+        diff = _diff("src/m.py", "    Handles negatives per cycle 2 review.", start=3,
+                     context=("def f(x):", '    """Return x.', ""))
+        self.assertEqual(self._labels(diff), ["cycle"])
+
     def test_a_dereference_is_code_not_a_comment(self):
         diff = _diff("src/m.rs", "*slot = Some(T1);", '*x = "cycle 2";', " * cycle 2 in a block")
         self.assertEqual(self._labels(diff), ["cycle"])
@@ -1707,6 +1713,11 @@ class TestHistory(LedgerTestCase):
             ledger.cmd_stats(self.store)
         self.assertRegex(out.getvalue(), r"introduced_by_fix: task-2-spec-reviewer c2 \(1\)")
         self.assertRegex(out.getvalue(), r"recurring: task-2-spec-reviewer c2 \(1\)")
+
+    def test_an_undecodable_history_file_raises_record_error(self):
+        (self.store / ledger.HISTORY_FILENAME).write_bytes(b"\xff\xfe not utf-8\n")
+        with self.assertRaises(ledger.RecordError):
+            ledger.load_history(self.store)
 
     def test_a_history_line_that_is_not_an_object_raises_record_error(self):
         (self.store / ledger.HISTORY_FILENAME).write_text("3\n", encoding="utf-8")

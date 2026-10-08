@@ -799,12 +799,19 @@ def find_process_labels(diff: str) -> list[LabelHit]:
                 # Docstring state follows added lines only: a hunk's context
                 # can open mid-docstring, where its quotes would invert it.
                 if path is not None:
-                    may_open = prev is None and line_no == 1 or (prev or "").endswith(":")
+                    may_open = _docstring_may_open(prev, line_no)
                     comment, in_docstring = _comment_text(text, in_docstring, may_open)
                     hits.extend(LabelHit(path, line_no, label, text.strip())
                                 for label in _labels_in(text, comment))
             else:  # context
                 old_left, new_left = old_left - 1, new_left - 1
+                # Track a docstring only from an opening the hunk shows, so a
+                # line added inside it counts as comment text; a closing quote
+                # with no visible opening stays ignored.
+                quotes = text.count('"""') + text.count("'''")
+                may_open = _docstring_may_open(prev, line_no)
+                if quotes % 2 == 1 and (in_docstring or may_open):
+                    in_docstring = not in_docstring
             prev = text.strip() or prev
             line_no += 1
             continue
@@ -818,6 +825,12 @@ def find_process_labels(diff: str) -> list[LabelHit]:
             new_left = int(header.group(3) or 1)
             in_docstring, prev = False, None
     return hits
+
+
+def _docstring_may_open(prev: str | None, line_no: int) -> bool:
+    """Whether a docstring can open here: at the top of the file, or right
+    after a line ending in `:` (a def or class signature)."""
+    return prev is None and line_no == 1 or (prev or "").endswith(":")
 
 
 def _diff_target(target: str) -> str | None:
@@ -1027,8 +1040,12 @@ def load_history(store_dir: Path) -> list[dict]:
     path = store_dir / HISTORY_FILENAME
     if not path.is_file():
         return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise RecordError(f"{path}: unreadable check history: {e}") from e
     latest: dict[tuple, dict] = {}
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         try:
