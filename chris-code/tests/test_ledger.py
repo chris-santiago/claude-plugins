@@ -1564,6 +1564,18 @@ class TestProcessLabels(unittest.TestCase):
         diff = _diff("src/m.py", "def f():", "    # noqa", '    """', "    Per task 3.", '    """')
         self.assertEqual(self._labels(diff), ["task-number"])
 
+    def test_a_multiline_string_assigned_after_a_signature_is_code(self):
+        diff = _diff("src/m.py", "def query():", '    sql = """', "    SELECT * FROM jobs WHERE name = 'task 3'",
+                     '    """')
+        self.assertEqual(self._labels(diff), [])
+
+    def test_prefixed_docstrings_open(self):
+        in_function = _diff("src/m.py", "def f(x):", '    r"""Compute $\\sigma$.', "",
+                            "    Added in cycle 2.", '    """')
+        at_top = _diff("src/m.py", 'R"""Tool.', "", "Added in cycle 2.", '"""')
+        for diff in (in_function, at_top):
+            self.assertEqual(self._labels(diff), ["cycle"])
+
     def test_code_after_a_closed_docstring_is_code(self):
         diff = _diff("src/m.py", "def f():", '    """Build the runner.', "", "    Body.", '    """',
                      "    orchestrator = Orchestrator()")

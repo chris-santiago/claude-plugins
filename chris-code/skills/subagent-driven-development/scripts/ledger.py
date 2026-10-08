@@ -161,6 +161,8 @@ NOT_COMMENT_PREFIXES = ("#[", "#!")
 TRAILING_COMMENT_RE = re.compile(r"\s(?:#|//)")
 # Build files whose suffix would otherwise mark them as prose.
 LABEL_SCANNED_NAMES = ("cmakelists.txt",)
+# A docstring may carry a string prefix: r"""..., rb"""..., u"""...
+DOCSTRING_OPEN_RE = re.compile(r"^[rRbBuUfF]{0,2}(?:\"\"\"|''')")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -869,7 +871,7 @@ def _comment_text(text: str, in_docstring: bool,
     if in_docstring:
         return stripped, quotes % 2 == 0
     if quotes:
-        opens = quotes % 2 == 1 and may_open and stripped.startswith(('"""', "'''"))
+        opens = quotes % 2 == 1 and may_open and bool(DOCSTRING_OPEN_RE.match(stripped))
         return stripped, opens
     if stripped.startswith(COMMENT_PREFIXES) and not stripped.startswith(NOT_COMMENT_PREFIXES):
         return stripped, False
