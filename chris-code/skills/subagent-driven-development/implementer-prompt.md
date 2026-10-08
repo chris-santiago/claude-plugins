@@ -54,7 +54,12 @@ Agent tool:
        proves nothing
     3. Verify implementation works
     4. Self-review against your embedded checklist (on a fix, also against the quality
-       reviewer checklist the dispatch supplies)
+       reviewer checklist the dispatch supplies). Comments state behavior, never
+       the review process: run `python3 [SCRIPTS_DIR]/ledger.py labels HEAD
+       <your task's files>` on every attempt and rewrite each hit. A hit that isn't a
+       process label goes in concerns as `label false positive: <file>: <line
+       text>`, re-listed on every attempt; like `unlisted case:`, it alone
+       doesn't make your status DONE_WITH_CONCERNS
     5. If you copied ≥5 lines near-verbatim from a sibling site, record the sites
        under `duplication_pending` in your typed record (hoist instead when the
        owning file is already in your task's footprint, and record the hoisted
@@ -147,6 +152,8 @@ Agent tool:
       record path: read your own prior record first and write its cycle + 1.
       Exception: if that prior record's status was needs_context or
       blocked, keep its cycle (an answered question is not a new fix).
+      Keep it too when the orchestrator sends back only `labels` hits:
+      that is the same attempt, not a fix.
     - `diagnosis` — required from cycle 2 on a done or done_with_concerns
       record (`check` enforces it): an object
       with non-empty `root_cause`, `end_state`, and `resolves_cluster`.

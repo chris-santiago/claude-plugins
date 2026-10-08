@@ -32,6 +32,7 @@ flowchart TB
         questions{"Coder asks questions?"}
         answer["Answer questions, provide context"]
         implement["Coder implements, tests, self-reviews"]
+        labels{"ledger.py labels HEAD<br/>finds process labels?"}
         reviews["Dispatch spec reviewer + *-quality-reviewer agents together;<br/>wait for every verdict"]
         reviews_ok{"Any finding on any record?<br/>(approved ones included)"}
         triage["Triage the batch once"]
@@ -56,7 +57,9 @@ flowchart TB
     questions -->|yes| answer
     answer --> coder
     questions -->|no| implement
-    implement --> reviews
+    implement --> labels
+    labels -->|"yes: back to the coder, same attempt"| implement
+    labels -->|no| reviews
     reviews --> reviews_ok
     reviews_ok -->|yes| triage
     triage -->|all trivial| fix
@@ -64,7 +67,7 @@ flowchart TB
     cap -->|yes| escalate
     cap -->|no| decision
     decision --> fix
-    fix -->|"every reviewer re-reviews"| reviews
+    fix -->|"labels, then every reviewer re-reviews"| labels
     reviews_ok -->|no| commit_gate
     commit_gate -->|"block, trivial findings only"| lite_fix
     lite_fix --> commit_gate
@@ -179,6 +182,7 @@ Copy the plan's Constraints section verbatim (exact values, formats, and stated 
   - An all-trivial batch goes straight to the coder.
   - A non-trivial finding that only reports a case the brief's `Cases:` line already lists, with its behavior (listed but not implemented or not tested), also goes straight to the coder: the plan already decided what to build.
   - Any other non-trivial finding first goes through `chris-code:remediating-issues`, per-task variant (name it in the dispatch). Dispatch a general-purpose agent to run it over those findings. Give it the reviewer record paths, the coder's record path, the brief path, the task's file list, any earlier decision docs for this task, the previous fix baseline (if a fix already ran), the scripts path (`$SDD_SCRIPTS`, expanded, for `diff-since`), the verbatim Constraints, and the output path `$STORE/task-N-decision-c<cycle>.md`, where `<cycle>` is the coder's upcoming fix cycle. It writes one decision doc there (consolidated research and a defended choice per finding) and returns only the path. The variant has no approval checkpoint, spec, or plan, so execution stays continuous. The fix dispatch then carries the decision doc path alongside the record paths, and the coder implements the defended choices it records.
+- **Check for process labels before review.** Whenever a coder returns `done` or `done_with_concerns` (a first attempt or a fix), run `python3 "$SDD_SCRIPTS/ledger.py" labels HEAD <task files>` before dispatching the reviewers. It lists review-process labels (task, cycle and finding ids, decision-doc and reviewer vocabulary, store paths, commit hashes) on the task's added lines and exits 1 if it finds any. A hit the coder's `concerns` list as a `label false positive` (same file and line text) stands. Send any other hit back to the coder with `SendMessage`, as the same attempt: no snapshot, no cycle bump, no fix fields. Review starts once `labels` is clean, so a leaked label never costs a review cycle.
 - **Record a fix baseline before every fix.** (A fix that paused with `needs_context` or `blocked` and is resuming is the same fix: re-send its original baseline; a new snapshot would absorb its partial edits and hide them from `hunk_map`.) Run `python3 "$SDD_SCRIPTS/ledger.py" snapshot --task N --label "pre-fix c<cycle>" --store "$STORE"`, where `<cycle>` is the upcoming fix cycle; it prints a tree id. The coder's cycle-1 work is still uncommitted, so without this neither the coder nor the reviewers can tell the fix's hunks from the original ones. Pass `Fix baseline: <tree>` and the task's file list to the coder and to every re-reviewer. Each runs `ledger.py diff-since <tree> <task files>` to see the fix alone: the file list matters because the other tasks in the stage edit the same working tree at the same time, on files of their own.
 - **Attach the review checklist to a non-trivial fix.** A fix batch with any non-trivial finding carries the checklist the fix will be judged by: every matching quality reviewer's contract, at `$SDD_SCRIPTS/../../../agents/<name>-quality-reviewer.md` (expanded to absolute; both python and pytorch in a PyTorch project). The coder self-reviews the fix against it as well as its own list. An all-trivial batch skips the checklist.
 - **Route an escalated consumer.** A coder that finds a fix breaks a consumer it can't change itself (another language, or a public-API change) returns `done_with_concerns` naming the consumer. Dispatch that language's coder for the consumer, as part of this task's fix, with the parent task's brief, the coder's concern naming the consumer, the fix baseline and the task's file list (now including the consumer's file), and the scripts path. Give it its own record path (`$STORE/task-N-<agent-name>.json`) and report path (`$STORE/task-N-<agent-name>-report.md`) and starts at cycle 1, so its first record carries no fix fields. Add its quality reviewer to the re-review set, and tell every re-reviewer which files it changed: its hunks are accounted for by its own record, not the original coder's `hunk_map`. A public-API change escalates to the user, as it always has.
@@ -224,15 +228,16 @@ Conversation memory does not survive compaction; a controller that loses its pla
 
 - At start, run `python3 "$SDD_SCRIPTS/ledger.py" read --store "$STORE"` for the full store as markdown, `python3 "$SDD_SCRIPTS/ledger.py" open --store "$STORE"` for what's still unresolved, and `python3 "$SDD_SCRIPTS/ledger.py" completed --store "$STORE"` for which task ids are done. A task id listed by `completed` is DONE — do not re-dispatch it, even if `open` still lists a `duplication_pending` entry for it; the Pattern Ledger deliberately carries that forward as assigned work for a later task, not as evidence this one is unfinished (see Cross-Task Pattern Ledger and Red Flags). Any *other* open item on a completed task — `cannot_verify`, an unresolved status, a malformed record — means the completion was premature; treat it as unfinished and investigate before resuming past it. Resume at the first task id `completed` does not list. If the store belongs to a different branch or a stale run, `python3 "$SDD_SCRIPTS/ledger.py" clear --store "$STORE"` first. A close-gate remediation plan (see `chris-code:verification-before-completion`, *The Close Round*) is the same run, not a stale one: never clear its store, since that would erase the finished tasks and the close-round count. You can recognize one in `ledger.py read`: a `close round 1` entry, then a `close-gate remediation r1: plan <path>, …` note naming **the plan you were handed**, and no `close round 2` yet. Then resume that plan, and when its last task completes, the next steps are the whole-change commit gate (with `final-r2-*` records) and then verification's round 2 (`close-round --expect 2`), followed by the front-end the note names. A store whose close rounds belong to any other plan is a finished run, and so is one that already has round 2. Clear it before starting, or `completed` will skip your new plan's tasks as done. One case is ambiguous: round 1 with no round 2 and no remediation note at all. That can be a close interrupted (say, by compaction) before its note was written, so ask the user before clearing it. A malformed `progress.jsonl` line stops `read`/`open`/`completed` loudly (the error names the file and line): fix that line, or `clear` if the log is disposable — `append`, `shapes`, `store-dir`, and `check` keep working meanwhile.
 - When a task's reviews come back clean, run `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"` alongside marking it done in TodoWrite. TodoWrite is your live view; the store — and `ledger.py completed` specifically — is the durable recovery map, a typed entry rather than a prose substring to pattern-match.
+- Records are overwritten each cycle, so every passing `ledger.py check` also appends a summary line to `history.jsonl` in the store. `python3 "$SDD_SCRIPTS/ledger.py" stats --store "$STORE"` prints each task's verdicts cycle by cycle and lists the records that flagged `introduced_by_fix` or `recurring`. Read it when a task's cycle count climbs, and include it in the completion report.
 - After compaction, re-pin `SDD_SCRIPTS` and re-resolve `$STORE` (see File Handoffs), since neither survives compaction. If the "Base directory for this skill" line is gone from context, reload this skill to get it back. Then rebuild the TodoWrite list from `ledger.py read --store "$STORE"`, `ledger.py open --store "$STORE"`, and `ledger.py completed --store "$STORE"`, and trust them and `git log` over your own recollection — `open` also surfaces anything left unresolved before the compaction hit (a `duplication_pending` entry, a `cannot_verify` item), not just task completion.
 
 ## Handling Implementer Status
 
 Implementer subagents report one of four statuses. Handle each appropriately:
 
-**DONE:** Proceed to the spec + quality review.
+**DONE:** Run `labels` (see *Check for process labels before review*), then the spec + quality review.
 
-**DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. (An `unlisted case:` entry alone is informational: see *Unlisted cases feed forward*.) Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review — these are judgment-shaped (see *Judging from Compressed Reports*): ground the concern by `claim-checker` dispatch rather than acting on the summary. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
+**DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. (An `unlisted case:` or `label false positive:` entry alone is informational: see *Unlisted cases feed forward* and *Check for process labels before review*.) Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review — these are judgment-shaped (see *Judging from Compressed Reports*): ground the concern by `claim-checker` dispatch rather than acting on the summary. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
 
 **NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch. A fix that paused this way resumes with its original `Fix baseline` and task file list, not a new snapshot.
 
@@ -345,7 +350,7 @@ Stage 3 — dispatching 2 tasks in parallel:
 - Never pass a `cycle` value in a `*-review-lite` dispatch — dispatches carry no cycle counter; the agent self-derives `cycle` from its own prior record at the same record path
 - Never let a subagent compute its own record or scripts path — the dispatch supplies both, exactly as it supplies the report path
 - Never move to next task while any review has open issues
-- If reviewers find issues: triage the batch → decision doc for any non-trivial finding → coder fixes the whole batch → every reviewer re-reviews → repeat until approved (a re-review at cycle ≥ 3 with a non-trivial finding still open escalates)
+- If reviewers find issues: triage the batch → decision doc for any non-trivial finding → coder fixes the whole batch → `labels` clean → every reviewer re-reviews → repeat until approved (a re-review at cycle ≥ 3 with a non-trivial finding still open escalates)
 - If a subagent is blocked: provide more context, upgrade model, or break the task apart — never force retry without changes
 
 ## Integration

@@ -8,6 +8,15 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-08 — Comments that state behavior
+
+A wave-8 run on 0.6.0 showed where its fix cycles went. One fix regressed and the 0.6.0 machinery caught and diagnosed it as designed. Most of the extra cycles came from something else: coders copying the run's own vocabulary (task and finding ids, cycle numbers, decision docs, commit hashes) into code comments, which a plan constraint forbade and the coders' own self-check greps kept missing. The run's records also couldn't show any of this directly, since each cycle overwrites the last verdict.
+
+### Added
+- **`ledger.py labels <tree> [paths]`.** Lists review-process labels on the lines added since a tree and exits 1 if any are found. Specific patterns (decision-doc and reviewer vocabulary, `.sdd/` paths, cycle and task numbers, `T1's`) count on any added line. Process words (`cycle 2`, `task 3`, `orchestrator`), short ids like `(A1)` or `#157 F1`, and commit hashes count only in comments and docstrings, since they are ordinary in code. Prose files are skipped, and a path that matches nothing exits 2 so a typo can't pass the gate. On the wave-8 snapshot it found all 28 labels the reviewers had flagged by hand.
+- **The no-process-labels rule.** Coders keep comments to behavior, run `labels` before reporting, and list a false positive in `concerns`. SDD runs `labels` whenever a coder returns, before review, and sends hits back as the same attempt (no fix cycle), so a leaked label never costs a review cycle. `executing-plans` runs it before each commit.
+- **Check history and `ledger.py stats`.** A passing `check` on a record in a store appends a summary line to the store's `history.jsonl`, and `clear` removes it with the rest of the run. `stats` prints each task's verdicts cycle by cycle and the records that flagged `introduced_by_fix` or `recurring`.
+
 ### Fixed
 - **Docs, README, decks and the guide caught up with 0.5.0 and 0.6.0.** They still showed spec review before quality review, the completion gate as six steps that stop the line, and "cycle 3 always escalates". They now describe parallel review with one triage, the close round and its two-round cap, the escalation rule, fix mode, `Cases:` lines, the remediating-issues variants, the full `ledger.py` subcommand list, and all 15 agents including `claim-checker`. The Marp decks' HTML and PDF exports are re-rendered, and three slides that ran off the page now fit.
 
@@ -151,6 +160,7 @@ The initial chris-code workflow, forked and generalized from superpowers v5.1.0.
 - superpowers-specific language and project-specific ("Ferrum") terms throughout the skills.
 
 [Unreleased]: https://github.com/chris-santiago/claude-plugins/commits/main
+[0.7.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.6.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.5.0]: https://github.com/chris-santiago/claude-plugins/commits/main
 [0.4.0]: https://github.com/chris-santiago/claude-plugins/commits/main

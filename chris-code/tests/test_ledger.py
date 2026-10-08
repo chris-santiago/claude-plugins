@@ -1176,10 +1176,8 @@ class TestTableConsistency(unittest.TestCase):
 
 # --- fix baseline: snapshot / diff-since (2026-10-06) ---
 
-class TestFixBaseline(unittest.TestCase):
-    """Coders never commit before review passes, so a fix's edits land in
-    the same working tree as the uncommitted cycle-1 work. A tree
-    snapshot taken before the fix is the only way to see the fix alone."""
+class GitRepoTestCase(unittest.TestCase):
+    """A throwaway repo with one committed file, a.py."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1195,6 +1193,12 @@ class TestFixBaseline(unittest.TestCase):
     def _git(self, *args):
         return subprocess.run(["git", *args], cwd=self.repo, check=True,
                               capture_output=True, text=True).stdout
+
+
+class TestFixBaseline(GitRepoTestCase):
+    """Coders never commit before review passes, so a fix's edits land in
+    the same working tree as the uncommitted cycle-1 work. A tree
+    snapshot taken before the fix is the only way to see the fix alone."""
 
     def test_diff_since_shows_only_the_fix_including_new_files(self):
         # Cycle-1 work: uncommitted edit plus a new untracked file.
@@ -1404,6 +1408,233 @@ class TestFixBaseline(unittest.TestCase):
         self.assertEqual(ledger.load_progress_log(store),
                          [{"type": "snapshot", "task": 4, "label": "pre-fix c2",
                            "tree": "deadbeef"}])
+
+
+# --- process labels (review-process narrative in code) ---
+
+def _diff(path: str, *added: str, start: int = 1, context: tuple[str, ...] = ()) -> str:
+    body = [f" {line}" for line in context] + [f"+{line}" for line in added]
+    return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+            f"@@ -{start},{len(context)} +{start},{len(body)} @@\n" + "\n".join(body) + "\n")
+
+
+class TestProcessLabels(unittest.TestCase):
+    """Coders copy the run's vocabulary (task and finding ids, cycle
+    numbers, decision docs, commit hashes) into comments. A self-check grep
+    written by the label's author shares the author's blind spot, so the
+    check is a script."""
+
+    def _labels(self, diff: str) -> list[str]:
+        return [hit.label for hit in ledger.find_process_labels(diff)]
+
+    def test_observed_label_shapes_are_caught(self):
+        # Shapes from a real run's comments.
+        diff = _diff("src/m.py",
+                     "# T1's refusal text, per the decision doc",
+                     "# keeps the rule (A1) from #157 F1",
+                     "# fixed in this task's cycle 2 at 510819e5",
+                     "# see .sdd/w8/task-5-report.md",
+                     "# the orchestrator reruns this after Task 3")
+        labels = set(self._labels(diff))
+        self.assertTrue({"task-id", "decision-doc", "finding-id", "cycle", "commit-hash",
+                         "sdd-path", "orchestrator", "task-number"} <= labels, labels)
+
+    def test_hits_carry_the_new_file_line_number(self):
+        diff = _diff("src/m.py", "x = 1", "# cycle 2 fix", start=10, context=("a = 0", "b = 0"))
+        [hit] = ledger.find_process_labels(diff)
+        self.assertEqual((hit.path, hit.line, hit.label), ("src/m.py", 13, "cycle"))
+        self.assertIn("cycle 2 fix", hit.text)
+
+    def test_removed_and_context_lines_are_ignored(self):
+        diff = ("diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1,2 +1,1 @@\n"
+                "-# cycle 2 leftover being deleted\n # Task 3 context, not this change\n")
+        self.assertEqual(ledger.find_process_labels(diff), [])
+
+    def test_code_lookalikes_outside_comments_are_not_hits(self):
+        # Short ids and hex runs are ordinary in code; they count only in comments.
+        diff = _diff("src/m.rs", "fn f<T1, T2>(a: T1) -> T2 { g(A1) }",
+                     'let rgba = "1f77b4ff"; let h = 0x1a2b3c4d;',
+                     "# not a hash: #1f77b4ff colour")
+        self.assertEqual(self._labels(diff), [])
+
+    def test_trailing_comment_and_docstring_body_are_comments(self):
+        diff = _diff("src/m.py", "x = 1  # carried from (F2)",
+                     '"""Summary line.', "", "Matches 510819e5 behavior.", '"""')
+        self.assertEqual(sorted(self._labels(diff)), ["commit-hash", "finding-id"])
+
+    def test_prose_files_are_skipped(self):
+        # Docs and changelogs may legitimately discuss the process.
+        diff = _diff("CHANGELOG.md", "- The orchestrator now reruns cycle 2.")
+        self.assertEqual(ledger.find_process_labels(diff), [])
+
+    def test_process_words_in_code_are_not_hits(self):
+        # cycle, task and orchestrator are ordinary domain words in code.
+        diff = _diff("src/m.py", 'cycle_colors("cycle 2")', 'Task("task-1")',
+                     "orchestrator = Orchestrator()")
+        self.assertEqual(self._labels(diff), [])
+
+    def test_quoted_and_tab_terminated_paths_are_scanned(self):
+        # core.quotePath C-quotes non-ASCII names; a name with a space gets a tab.
+        quoted = ('diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
+                  '--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n'
+                  "@@ -0,0 +1 @@\n+# cycle 2 fix\n")
+        spaced = ("diff --git a/sp ace.py b/sp ace.py\n--- a/sp ace.py\t\n+++ b/sp ace.py\t\n"
+                  "@@ -0,0 +1 @@\n+# cycle 2 fix\n")
+        self.assertEqual([h.path for h in ledger.find_process_labels(quoted + spaced)],
+                         ["café.py", "sp ace.py"])
+
+    def test_an_added_line_starting_with_plus_plus_is_not_a_header(self):
+        diff = ("diff --git a/m.c b/m.c\n--- a/m.c\n+++ b/m.c\n@@ -1,0 +1,2 @@\n"
+                "+++ i;\n+// cycle 2 thing\n")
+        self.assertEqual([(h.path, h.line) for h in ledger.find_process_labels(diff)],
+                         [("m.c", 2)])
+
+    def test_a_hunk_opening_inside_a_docstring_does_not_flip_code_to_comment(self):
+        # The closing quotes arrive as context; the added code after them is code.
+        diff = _diff("src/m.py", 'x = "abc1234f"', "foo(T1)", start=5,
+                     context=("    body of an existing docstring", '    """'))
+        self.assertEqual(self._labels(diff), [])
+
+    def test_prose_suffixes_match_case_insensitively(self):
+        for name in ("R.MD", "notes.markdown", "page.mdx"):
+            self.assertEqual(ledger.find_process_labels(_diff(name, "# cycle 2")), [], name)
+
+    def test_ordinary_comments_pass(self):
+        diff = _diff("src/m.py", "# Clamp padding to [0, 1] so band math stays finite.",
+                     "# Warn at the user's call site, not inside the wrapper.")
+        self.assertEqual(ledger.find_process_labels(diff), [])
+
+
+class TestLabelsCLI(GitRepoTestCase):
+    def _run(self, *args):
+        return subprocess.run([sys.executable, str(LEDGER_PY), *args], cwd=self.repo,
+                              capture_output=True, text=True)
+
+    def test_labels_since_head_reports_hits_and_exits_1(self):
+        (self.repo / "a.py").write_text("x = 1  # per the decision doc\n", encoding="utf-8")
+        result = self._run("labels", "HEAD")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("a.py:1", result.stdout)
+        self.assertIn("decision-doc", result.stdout)
+
+    def test_labels_is_silent_and_exits_0_when_clean(self):
+        (self.repo / "a.py").write_text("x = 1  # clamp to the axis range\n", encoding="utf-8")
+        result = self._run("labels", "HEAD", "a.py")
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+
+    def test_labels_ignores_the_users_quotepath_setting(self):
+        # Unquoted output would hand the parser a raw name it can't decode.
+        self._git("config", "core.quotePath", "false")
+        (self.repo / 'café"q.py').write_text("x = 1  # cycle 2\n", encoding="utf-8")
+        result = self._run("labels", "HEAD")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('café"q.py:1: cycle', result.stdout)
+
+    def test_labels_refuses_a_path_that_matches_nothing(self):
+        # A typo in the file list must not turn the gate into a pass.
+        (self.repo / "a.py").write_text("x = 1  # cycle 2\n", encoding="utf-8")
+        result = self._run("labels", "HEAD", "a.pyy")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("a.pyy", result.stderr)
+
+    def test_labels_since_a_baseline_sees_only_the_fix(self):
+        (self.repo / "a.py").write_text("x = 2  # cycle 1 note\n", encoding="utf-8")
+        baseline = ledger.snapshot_tree(self.repo)
+        (self.repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        result = self._run("labels", baseline)
+        self.assertEqual((result.returncode, result.stdout), (0, ""), result.stderr)
+
+
+# --- per-cycle history and stats ---
+
+class TestHistory(LedgerTestCase):
+    """Records are overwritten each cycle, so `check` (which every agent
+    runs after writing) appends a summary line per passing record. That
+    history is what `stats` reads."""
+
+    def setUp(self):
+        super().setUp()
+        ledger.ensure_store(self.store)
+
+    def test_a_record_outside_a_store_writes_no_history(self):
+        with tempfile.TemporaryDirectory() as loose:
+            path = _write(Path(loose), "task-1-python-coder.json", _coder())
+            ledger.cmd_check(str(path))
+            self.assertFalse((Path(loose) / ledger.HISTORY_FILENAME).exists())
+
+    def test_a_directory_with_some_other_gitignore_is_not_a_store(self):
+        with tempfile.TemporaryDirectory() as repo_root:
+            (Path(repo_root) / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+            ledger.cmd_check(str(_write(Path(repo_root), "task-1-python-coder.json", _coder())))
+            self.assertFalse((Path(repo_root) / ledger.HISTORY_FILENAME).exists())
+
+    def test_a_malformed_history_line_raises_naming_file_and_line(self):
+        (self.store / ledger.HISTORY_FILENAME).write_text('{"record": "x"}\nnot json\n')
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.load_history(self.store)
+        self.assertIn(f"{ledger.HISTORY_FILENAME}:2", str(ctx.exception))
+
+    def _history(self) -> list[dict]:
+        path = self.store / ledger.HISTORY_FILENAME
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def test_check_appends_a_summary_per_passing_record(self):
+        path = _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
+            task=2, status="issues", cycle=2,
+            issues=[{"kind": "missing", "file": "a.py", "line": 1, "claim": "x"}],
+            introduced_by_fix=[{"site": "a.py:1", "why": "x"}]))
+        ledger.cmd_check(str(path))
+        self.assertEqual(self._history(), [{
+            "record": "task-2-spec-reviewer", "task": 2, "role": "spec-reviewer",
+            "cycle": 2, "status": "issues", "findings": 1, "recurring": 0,
+            "introduced_by_fix": 1}])
+
+    def test_failed_check_appends_nothing(self):
+        path = _write(self.store, "task-1-python-coder.json", _coder(status="Blocked"))
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(path))
+        self.assertFalse((self.store / ledger.HISTORY_FILENAME).exists())
+
+    def test_clear_removes_the_history(self):
+        ledger.cmd_check(str(_write(self.store, "task-1-python-coder.json", _coder())))
+        ledger.cmd_clear(self.store)
+        self.assertFalse((self.store / ledger.HISTORY_FILENAME).exists())
+
+    def test_stats_keeps_the_last_check_per_record_and_cycle(self):
+        name = "task-5-spec-reviewer.json"
+        issue = {"kind": "missing", "file": "a.py", "line": 1, "claim": "x"}
+        for cycle, status, issues in ((1, "issues", [issue, issue]), (2, "issues", [issue]),
+                                      (2, "compliant", [])):
+            ledger.cmd_check(str(_write(self.store, name, _spec_reviewer(
+                task=5, cycle=cycle, status=status, issues=issues))))
+        ledger.cmd_check(str(_write(self.store, "task-5-python-coder.json",
+                                    _coder(task=5, cycle=1))))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        text = out.getvalue()
+        self.assertIn("task 5", text)
+        self.assertRegex(text, r"spec-reviewer\s+c1\s+issues\s+findings=2")
+        self.assertRegex(text, r"spec-reviewer\s+c2\s+compliant\s+findings=0")
+        self.assertNotRegex(text, r"c2\s+issues")  # superseded by the later check
+
+    def test_stats_lists_fix_regressions_and_recurrence(self):
+        ledger.cmd_check(str(_write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
+            task=2, cycle=2, status="issues",
+            issues=[{"kind": "regression", "file": "a.py", "line": 1, "claim": "x"}],
+            recurring=[{"site": "a.py:1", "why": "x"}],
+            introduced_by_fix=[{"site": "a.py:1", "why": "x"}]))))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        self.assertRegex(out.getvalue(), r"introduced_by_fix: task-2-spec-reviewer c2 \(1\)")
+        self.assertRegex(out.getvalue(), r"recurring: task-2-spec-reviewer c2 \(1\)")
+
+    def test_stats_on_an_empty_store_says_so(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        self.assertIn("No history", out.getvalue())
 
 
 # --- CLI end-to-end (subprocess) ---

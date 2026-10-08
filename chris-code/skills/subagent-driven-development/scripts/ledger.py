@@ -21,11 +21,12 @@ malformed entry, never hides its siblings. Required-ness is scoped to
 decision-driving fields only; informational fields are unvalidated.
 Totality ("never crash on any input") is explicitly not a goal.
 
-Usage: python3 ledger.py read|open|shapes|completed|store-dir|clear [--store DIR]
+Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--store DIR]
        python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
+       python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -47,6 +48,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +63,7 @@ __all__ = [
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
     "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
+    "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
 ]
 
 SCHEMA_VERSION = 1
@@ -116,11 +119,44 @@ FIX_MODE_FIELDS = {
 
 PROGRESS_FILENAME = "progress.jsonl"
 
+# Per-cycle history (2026-10-08): records are overwritten each cycle, so a
+# passing `check` appends one summary line per record here. `stats` reads it.
+HISTORY_FILENAME = "history.jsonl"
+
 # Close-gate rounds (2026-10-04): each run of verification-before-
 # completion's review gates is one round. Round 1 is the first close;
 # round 2 re-checks a batched remediation. Findings after the last round
 # escalate to the user — a further round is refused, not counted.
 CLOSE_ROUND_CAP = 2
+
+# Process labels (2026-10-08): the run's own vocabulary leaking into code
+# comments. ANYWHERE patterns are specific enough to flag on any added line;
+# COMMENT_ONLY patterns (process words, short ids, hex runs) are ordinary in
+# code and count only in comment or docstring text.
+LABEL_PATTERNS_ANYWHERE = {
+    "sdd-path": re.compile(r"\.sdd/"),
+    "decision-doc": re.compile(r"\bdecision[- ]docs?\b", re.I),
+    "reviewer-role": re.compile(r"\b(?:spec|quality)[- ]reviewers?\b|\breview-lite\b", re.I),
+    "record-field": re.compile(r"\b(?:introduced_by_fix|hunk_map|consumers_checked)\b"),
+    "fix-baseline": re.compile(r"\bfix baseline\b", re.I),
+    "task-id": re.compile(r"\bT\d+'s\b"),
+}
+LABEL_PATTERNS_COMMENT_ONLY = {
+    # Ordinary domain words in code (color cycles, schedulers, k8s).
+    "orchestrator": re.compile(r"\borchestrator\b", re.I),
+    "cycle": re.compile(r"\bcycle[- ]\d+\b", re.I),
+    "task-number": re.compile(r"\btask[- ]\d+\b", re.I),
+    "finding-id": re.compile(r"\([A-Z]\d{1,2}\)|#\d+ [A-Z]\d+\b"),
+    # 7-40 hex chars with at least one digit and one letter; a leading `#`
+    # (a color) or word char (0x..., identifiers) rules it out.
+    "commit-hash": re.compile(r"(?<![#\w])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b"),
+}
+# Prose may legitimately discuss the process; only code and tests are scanned.
+LABEL_SKIPPED_SUFFIXES = (".md", ".markdown", ".mdx", ".rst", ".txt", ".adoc")
+COMMENT_PREFIXES = ("#", "//", "/*", "*", "--", '"""', "'''", "<!--")
+NOT_COMMENT_PREFIXES = ("#[", "#!")
+TRAILING_COMMENT_RE = re.compile(r"\s(?:#|//)\s")
+HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 class RecordError(Exception):
@@ -149,6 +185,14 @@ class Shape:
     path: str
     why: str
     source: str  # record stem it came from
+
+
+@dataclass
+class LabelHit:
+    path: str
+    line: int  # line number in the new file
+    label: str
+    text: str
 
 
 def get_store_dir(override: str | None = None) -> Path:
@@ -709,7 +753,8 @@ def diff_trees(repo: Path, base_tree: str, tree: str,
     if base_tree.startswith("-"):
         # Agents pass this argument; it must never reach git as an option.
         raise RecordError(f"tree id must not start with '-': got {base_tree!r}")
-    return _git(repo, "diff", "--no-color", "--no-ext-diff", "--no-textconv",
+    return _git(repo, "-c", "core.quotePath=true", "diff", "--no-color", "--no-ext-diff",
+                "--no-textconv",
                 "--no-relative", "--src-prefix=a/", "--dst-prefix=b/",
                 base_tree, tree, "--", *paths)
 
@@ -720,6 +765,84 @@ def missing_paths(repo: Path, paths: list[str] | tuple[str, ...], *trees: str) -
     return [path for path in paths
             if not any(_git(repo, "ls-tree", "-r", "--name-only", tree, "--", path).strip()
                        for tree in trees)]
+
+
+def find_process_labels(diff: str) -> list[LabelHit]:
+    """Review-process labels on the added lines of a unified diff: task,
+    cycle and finding ids, decision-doc and reviewer vocabulary, store
+    paths, commit hashes. Comments must state behavior, and a grep written
+    by the label's author shares the author's blind spot, so this is a
+    script. Prose files (LABEL_SKIPPED_SUFFIXES) are skipped. Comment
+    detection is a heuristic: comment-marker lines, trailing `#`/`//`
+    comments, and docstring bodies tracked within each hunk."""
+    hits: list[LabelHit] = []
+    path, line_no, in_docstring = None, 0, False
+    old_left = new_left = 0  # lines still owed to the current hunk
+    for raw in diff.splitlines():
+        if old_left > 0 or new_left > 0:
+            tag, text = raw[:1], raw[1:]
+            if tag == "\\":
+                continue  # "\ No newline at end of file"
+            if tag == "-":
+                old_left -= 1
+                continue
+            if tag == "+":
+                new_left -= 1
+                # Docstring state follows added lines only: a hunk's context
+                # can open mid-docstring, where its quotes would invert it.
+                if path is not None:
+                    comment, in_docstring = _comment_text(text, in_docstring)
+                    hits.extend(LabelHit(path, line_no, label, text.strip())
+                                for label in _labels_in(text, comment))
+            else:  # context
+                old_left, new_left = old_left - 1, new_left - 1
+            line_no += 1
+            continue
+        if raw.startswith("+++ "):
+            path = _diff_target(raw[4:])
+            continue
+        header = HUNK_HEADER_RE.match(raw)
+        if header:
+            old_left = int(header.group(1) or 1)
+            line_no = int(header.group(2))
+            new_left = int(header.group(3) or 1)
+            in_docstring = False
+    return hits
+
+
+def _diff_target(target: str) -> str | None:
+    """The new-side path from a `+++ ` line, or None for /dev/null and
+    prose files. Git appends a tab to a name with a space and C-quotes a
+    non-ASCII one under its default core.quotePath."""
+    target = target.rstrip("\t")
+    if target.startswith('"') and target.endswith('"'):
+        target = (target[1:-1].encode("latin-1").decode("unicode_escape")
+                  .encode("latin-1").decode("utf-8"))
+    if not target.startswith("b/") or target.lower().endswith(LABEL_SKIPPED_SUFFIXES):
+        return None
+    return target[2:]
+
+
+def _comment_text(text: str, in_docstring: bool) -> tuple[str | None, bool]:
+    """The comment or docstring part of a line (None if there is none),
+    and whether a docstring is still open after it."""
+    stripped = text.strip()
+    quotes = stripped.count('"""') + stripped.count("'''")
+    still_open = in_docstring != (quotes % 2 == 1)
+    if in_docstring or quotes:
+        return stripped, still_open
+    if stripped.startswith(COMMENT_PREFIXES) and not stripped.startswith(NOT_COMMENT_PREFIXES):
+        return stripped, still_open
+    trailing = TRAILING_COMMENT_RE.search(text)
+    return (text[trailing.end():] if trailing else None), still_open
+
+
+def _labels_in(text: str, comment: str | None) -> list[str]:
+    labels = [name for name, pattern in LABEL_PATTERNS_ANYWHERE.items() if pattern.search(text)]
+    if comment is not None:
+        labels += [name for name, pattern in LABEL_PATTERNS_COMMENT_ONLY.items()
+                   if pattern.search(comment)]
+    return labels
 
 
 def _warn_submodules(repo: Path) -> None:
@@ -800,9 +923,9 @@ def cmd_clear(store_dir: Path) -> None:
         for pattern in HANDOFF_FILE_PATTERNS:
             for path in sorted(store_dir.glob(pattern)):
                 path.unlink()
-    progress_path = store_dir / PROGRESS_FILENAME
-    if progress_path.is_file():
-        progress_path.unlink()
+    for name in (PROGRESS_FILENAME, HISTORY_FILENAME):
+        if (store_dir / name).is_file():
+            (store_dir / name).unlink()
 
 
 def _resolve_check_path(record_path: str, store: str | None) -> Path:
@@ -824,7 +947,9 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
     """Write-time gate: strict parse + validation, then the same
     item-construction path `open` uses (spec Sec 6, amended 2026-08-27) —
     so a record that passes `check` cannot later render as malformed at
-    query time. Silent on success."""
+    query time. Silent on success. A passing record inside a store (a
+    directory ensure_store seeded) is summarized into HISTORY_FILENAME
+    there, since the next cycle overwrites it."""
     path = _resolve_check_path(record_path, store)
     data = _parse_record_file(path)
 
@@ -834,6 +959,70 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
     except Exception as e:
         raise RecordError(
             f"{path}: passes validation but fails to render as an open item: {e}") from e
+    if _is_store(path.parent):
+        _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
+
+
+def _is_store(directory: Path) -> bool:
+    gitignore = directory / ".gitignore"
+    return gitignore.is_file() and gitignore.read_text(encoding="utf-8").strip() == "*"
+
+
+def _history_entry(stem: str, data: dict) -> dict:
+    def count(key: str) -> int:
+        value = data.get(key)
+        return len(value) if isinstance(value, list) else 0
+
+    return {"record": stem, "task": data.get("task"), "role": data.get("role"),
+            "cycle": data.get("cycle"), "status": data.get("status"),
+            "findings": count("issues") + count("findings"),
+            "recurring": count("recurring"), "introduced_by_fix": count("introduced_by_fix")}
+
+
+def load_history(store_dir: Path) -> list[dict]:
+    """The history lines, keeping the last one per (record, cycle): an agent
+    may re-run `check` after fixing its record within one cycle."""
+    path = store_dir / HISTORY_FILENAME
+    if not path.is_file():
+        return []
+    latest: dict[tuple, dict] = {}
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise RecordError(f"{path}:{n}: not a JSON line: {e}") from e
+        latest[(entry.get("record"), entry.get("cycle"))] = entry
+    return list(latest.values())
+
+
+def _task_sort_key(task: object) -> tuple:
+    return (0, task, "") if isinstance(task, int) else (1, 0, str(task))
+
+
+def cmd_stats(store_dir: Path) -> None:
+    """Per-cycle verdicts by task, then the fix-failure signals: records
+    whose reviewers flagged `introduced_by_fix` or `recurring` entries."""
+    history = load_history(store_dir)
+    if not history:
+        print("No history yet: records are logged when `check` passes.")
+        return
+    history.sort(key=lambda e: (_task_sort_key(e.get("task")), e.get("cycle") or 0,
+                                e.get("record") or ""))
+    current = object()
+    for entry in history:
+        if entry.get("task") != current:
+            current = entry.get("task")
+            print(f"task {current}")
+        stem, prefix = entry.get("record") or "", f"task-{current}-"
+        agent = stem[len(prefix):] if stem.startswith(prefix) else stem
+        print(f"  {agent:<26} c{entry.get('cycle') or '?'}  {entry.get('status')}  "
+              f"findings={entry.get('findings', 0)}")
+    for signal in ("introduced_by_fix", "recurring"):
+        flagged = [f"{e.get('record')} c{e.get('cycle') or '?'} ({e[signal]})"
+                   for e in history if e.get(signal)]
+        print(f"{signal}: {', '.join(flagged) if flagged else 'none'}")
 
 
 def _positive_int(value: str) -> int:
@@ -874,6 +1063,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("store-dir", parents=[store_parent],
                     help="create the store if needed (seeding a self-ignoring "
                          ".gitignore) and print its resolved absolute path")
+    sub.add_parser("stats", parents=[store_parent],
+                    help="per-cycle verdicts by task from the check history, plus "
+                         "records flagging introduced_by_fix or recurring")
 
     p_append = sub.add_parser("append", parents=[store_parent], help="append a progress note")
     p_append.add_argument("--type", required=True, choices=["progress", "complete"])
@@ -902,6 +1094,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_diff.add_argument("tree")
     p_diff.add_argument("paths", nargs="*",
                         help="limit the diff to these paths (the task's own files)")
+
+    p_labels = sub.add_parser("labels",
+                               help="list review-process labels (task/cycle/finding ids, "
+                                    "decision-doc vocabulary, hashes) on lines added "
+                                    "since a tree; exit 1 if any")
+    p_labels.add_argument("tree", help="the fix baseline, or HEAD for a first attempt")
+    p_labels.add_argument("paths", nargs="*", help="limit the scan to these paths")
 
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
                                 help="record a resolution for an open item")
@@ -939,6 +1138,22 @@ def main() -> None:
                       "tree; check the task's file list.", file=sys.stderr)
             print(diff, end="")
             return
+        if args.command == "labels":
+            repo = Path.cwd()
+            _warn_submodules(repo)
+            now = snapshot_tree(repo)
+            unmatched = missing_paths(repo, args.paths, args.tree, now)
+            if unmatched:
+                # A typo in the file list must not turn the gate into a pass.
+                print(f"ERROR: path(s) {', '.join(unmatched)} match nothing in either "
+                      "tree; check the task's file list.", file=sys.stderr)
+                sys.exit(2)
+            hits = find_process_labels(diff_trees(repo, args.tree, now, args.paths))
+            for hit in hits:
+                print(f"{hit.path}:{hit.line}: {hit.label}: {hit.text}")
+            if hits:
+                sys.exit(1)
+            return
         store_dir = get_store_dir(args.store)
         if args.command == "read":
             cmd_read(store_dir)
@@ -950,6 +1165,8 @@ def main() -> None:
             cmd_completed(store_dir)
         elif args.command == "store-dir":
             cmd_store_dir(store_dir)
+        elif args.command == "stats":
+            cmd_stats(store_dir)
         elif args.command == "append":
             cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "snapshot":
