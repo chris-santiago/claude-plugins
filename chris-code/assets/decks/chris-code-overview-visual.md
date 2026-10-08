@@ -183,16 +183,16 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 ## Review is a uniform, multi-stage gate
 
 <div class="gates">
-<div class="gate"><span class="gnum">1</span>Spec<br>compliance</div>
+<div class="gate"><span class="gnum">1</span>Spec + quality<br>together</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">2</span>Code<br>quality</div>
+<div class="gate"><span class="gnum">2</span>Triage once<br>→ one fix</div>
 <div class="garrow">→</div>
 <div class="gate"><span class="gnum">3</span>Commit<br>lint gate</div>
 <div class="garrow">→</div>
 <div class="gate"><span class="gnum">4</span>Full-diff<br>pass</div>
 </div>
 
-<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." <b>Do Not Trust the Report</b> — reviewers re-read the code, not the summary. More stages raise <i>recall</i>, not proof: they catch more, they don't certify the rest is clean.</p>
+<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Non-trivial findings get a decision doc before the batched fix, then everyone re-reviews; one still open at cycle 3+ escalates to you. <b>Do Not Trust the Report</b> — reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
 
 ---
 
@@ -215,18 +215,16 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v2">2 · Lints — zero errors / warnings</div>
 <div class="vchev">↓</div>
-<div class="vbar v3">3 · Full review — scope-matched *-design-reviewer agents</div>
+<div class="vbar v3">Close round: 3 Design + 4 Reqs + 5 Intent + 6 Mutation</div>
 <div class="vchev">↓</div>
-<div class="vbar v4">4 · Requirements — every item traced</div>
+<div class="vbar v4">Triage once · non-trivial → close-gate remediation</div>
 <div class="vchev">↓</div>
-<div class="vbar v5">5 · Intent re-check — spec-blind, behavior vs the original ask</div>
-<div class="vchev">↓</div>
-<div class="vbar v6">6 · Mutation re-check — trivial-test gate, isolated worktree</div>
+<div class="vbar v5">Round 2 re-runs what changed · max 2, then you</div>
 <div class="vchev">↓</div>
 <div class="vdone">✓ may claim done</div>
 </div>
 
-<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands. <b>Green means these lenses caught nothing, not that nothing's wrong</b> — the independent axes (deterministic lint, spec-blind intent, mutation probe) carry more than another same-model re-read.</p>
+<p class="cap">No completion claim without fresh evidence. "I'm confident" → run the commands. <b>Green means these lenses caught nothing, not that nothing's wrong.</b></p>
 
 ---
 

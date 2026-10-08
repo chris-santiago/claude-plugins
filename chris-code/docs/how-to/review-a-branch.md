@@ -29,4 +29,4 @@ Use this for an ad-hoc, senior-level review outside the automated per-task gates
 Gotten a senior-level read on the branch, separated real findings from noise, and applied the ones that belong to this change — without waiting for the full completion gate.
 
 !!! note "Routine review is automatic"
-    Inside the pipeline, every task is already reviewed by the spec, quality, and commit-lite gates, and the whole change by the senior `*-design-reviewer` agents at completion. This guide is for review *outside* that flow. See the [Agents reference](../reference/agents.md).
+    Inside the pipeline, every task is already reviewed by the spec, quality, and commit-lite gates, and the whole change at completion by the senior `*-design-reviewer` agents, the spec-blind intent re-check, and the mutation re-check, run together as one close round. This guide is for review *outside* that flow. See the [Agents reference](../reference/agents.md).

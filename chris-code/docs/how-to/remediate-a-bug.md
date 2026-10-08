@@ -18,7 +18,7 @@ Use this when you have a known defect — a GitHub issue, a review finding, or a
 
 4. **Let it close the bug.** Once the fix is built and self-reviewed, the skill runs the bug close in order:
     - `regression-test` — a test for the specific failure mode, proven to fail on the pre-fix code.
-    - `verification-before-completion` — tests, lints, design review, requirements, the spec-blind intent re-check, and the mutation re-check.
+    - `verification-before-completion` — tests and lints, then one [close round](../explanation/execution-mechanics.md#the-close-round): design review, the spec-blind intent re-check, and the mutation re-check run together (requirements traced alongside), and their findings are triaged once. Trivial ones are fixed inline. The non-trivial set comes back to this skill as one close-gate batch (a decision doc for your approval, then a plan and execution, with no separate spec), and a second round re-checks the result.
     - `finishing-a-development-branch` — merge, PR, keep, or discard.
 
 5. **Confirm the origin is recorded.** A GitHub issue is referenced in the commit and closed; a review finding is marked addressed.

@@ -586,7 +586,7 @@ section.lead h1 {
 <h2 id="typed-handoffs--two-chains">Typed handoffs — two chains</h2>
 <p>Nothing passes through the orchestrator as prose. Artifacts move as <strong>files</strong> in a per-run store, on two chains with different consumers.</p>
 <p><img src="assets/two_chains.svg" alt="" style="width:860px;" /></p>
-<p>Records are validated at write time (<code>ledger.py check</code>) — the agent fixes its own record, with its own context, until the check passes. And a failed review recurses with discipline: fixes <strong>diagnose before they patch</strong>, and <strong>recurrence</strong> — not new findings — is what escalates.</p>
+<p>Records are checked at write time (<code>ledger.py check</code>). Failed reviews get <strong>one triage</strong>, a <strong>diagnosis before each fix</strong>, and a <strong>new mechanism</strong> when a finding recurs.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="11" data-paginate="true" data-theme="default" data-style="section {
   font-size: 27px;
@@ -746,7 +746,7 @@ section.lead h1 {
 }
 ;" data-marpit-pagination-total="19">
 <h2 id="the-completion-gate">The completion gate</h2>
-<p><code>verification-before-completion</code> runs six steps in order; a failing step stops the line.</p>
+<p><code>verification-before-completion</code> runs 1–2, then 3–6 as one <strong>close round</strong> (max two).</p>
 <ol>
 <li><strong>Tests</strong> — full suite, zero failures</li>
 <li><strong>Lints</strong> — zero errors or warnings</li>

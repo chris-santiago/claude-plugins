@@ -4,7 +4,7 @@ chris-code runs a lot of review gates. It's tempting to read a green pipeline as
 
 ## The completion gate, concretely
 
-`verification-before-completion` runs six steps in order, and a step that fails stops the line:
+`verification-before-completion` has six steps. Tests and lints run first, and a failure there is fixed before anything else runs. The four review steps then run together as one close round (below the list):
 
 1. **Tests** — the full suite, zero failures. Not a subset, not "the tests I think are relevant."
 2. **Lints** — the project linter, zero errors or warnings.
@@ -12,6 +12,8 @@ chris-code runs a lot of review gates. It's tempting to read a green pipeline as
 4. **Requirements** — every spec/plan requirement traced to the code that implements it and a test that verifies it, with nothing implemented that wasn't asked for.
 5. **Intent re-check** — the spec-blind `intent-reviewer` compares the running system to the frozen intent ledger.
 6. **Mutation re-check** — the `mutation-tester` agent, in an isolated worktree, deliberately breaks the changed code and confirms a test fails, reverting each break. It uses no external mutation-testing tool (it edits the code and runs the project's own tests, so it is language-agnostic) and gates when a test executes changed code but doesn't fail when it's broken — a trivial test that proves nothing. Runs when the change includes testable source.
+
+Steps 3, 5, and 6 are independent read-only reviews of the same committed HEAD, so they are dispatched together as one **close round**, with the Step 4 trace done alongside, and every finding is triaged once. Trivial findings are fixed inline; the non-trivial set goes through `remediating-issues` as one batch, and a second round re-checks only what that remediation could have changed. The cap is two rounds: whatever non-trivial work survives goes to you. [The close round](execution-mechanics.md#the-close-round) has the details.
 
 A **PASS is not "nothing to do."** A gate can pass while carrying findings, and **PASS-with-findings is not clean**: each finding is verified real (via `receiving-code-review` — neither reflexively obeyed nor dismissed), then in-scope findings are fixed *in this change* and only a genuinely separable, larger improvement is deferred. Shipping an in-scope finding as "TODO: later" defeats the gate. The rest of this page is about *what those six steps do and don't prove*.
 

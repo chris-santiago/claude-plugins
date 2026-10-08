@@ -7,7 +7,7 @@ Use this for **design-open** work — a feature or subsystem where *what to buil
 1. **Start with intent:** `/brainstorming`. It's a hard gate — no code until a design is approved. Answer its questions (one at a time), pick an approach, approve the design. It freezes a small **intent ledger** (≤7 acceptance statements in your words) — confirm it.
 2. **Spec, then plan.** `lean-spec` writes a contracts-only design; `lean-plan` writes a what/where execution handoff. Review the spec when prompted.
 3. **Execution.** `subagent-driven-development` dispatches a coder per task — each brief carrying the task's intent — and runs spec + quality → commit-lite gates per task, staged by file footprint.
-4. **Verify.** `verification-before-completion`: tests → lints → design review → requirements → the spec-blind intent re-check → the mutation re-check.
+4. **Verify.** `verification-before-completion`: tests → lints, then one [close round](../explanation/execution-mechanics.md#the-close-round) that runs design review, the spec-blind intent re-check, and the mutation re-check together (requirements traced alongside) and triages their findings once. Non-trivial findings are fixed as one batch and re-checked; after two rounds, anything still open comes to you.
 5. **Finish.** `finishing-a-development-branch`: merge / PR / keep / discard.
 
 ## You have now

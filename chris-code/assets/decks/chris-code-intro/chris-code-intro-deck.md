@@ -141,7 +141,7 @@ Nothing passes through the orchestrator as prose. Artifacts move as **files** in
 
 ![w:860](assets/two_chains.svg)
 
-Records are validated at write time (`ledger.py check`) — the agent fixes its own record, with its own context, until the check passes. And a failed review recurses with discipline: fixes **diagnose before they patch**, and **recurrence** — not new findings — is what escalates.
+Records are checked at write time (`ledger.py check`). Failed reviews get **one triage**, a **diagnosis before each fix**, and a **new mechanism** when a finding recurs.
 
 ---
 
@@ -167,7 +167,7 @@ chris-code runs many review gates, and is **deliberately honest that green ≠ c
 
 ## The completion gate
 
-`verification-before-completion` runs six steps in order; a failing step stops the line.
+`verification-before-completion` runs 1–2, then 3–6 as one **close round** (max two).
 
 1. **Tests** — full suite, zero failures
 2. **Lints** — zero errors or warnings

@@ -8,6 +8,9 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+### Fixed
+- **Docs, README, decks and the guide caught up with 0.5.0 and 0.6.0.** They still showed spec review before quality review, the completion gate as six steps that stop the line, and "cycle 3 always escalates". They now describe parallel review with one triage, the close round and its two-round cap, the escalation rule, fix mode, `Cases:` lines, the remediating-issues variants, the full `ledger.py` subcommand list, and all 15 agents including `claim-checker`. The Marp decks' HTML and PDF exports are re-rendered, and three slides that ran off the page now fit.
+
 ## [0.6.0] - 2026-10-07 — Fixes that don't regress
 
 Coder fixes were introducing new issues: a fix ran the build workflow in a cold agent, aimed only at clearing the listed findings, and was self-checked with a narrower list than the reviewer's. And coders fixed only the cited case, so sibling cases (`size=None`, negative sizes) surfaced one review cycle at a time.

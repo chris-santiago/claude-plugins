@@ -484,7 +484,7 @@
 
     <div class="two" style="margin-bottom:34px">
       <div class="usecard">
-        <h4>The completion gate — six steps, in order</h4>
+        <h4>The completion gate — 1–2 first, then one close round</h4>
         <div class="bands" style="gap:8px">
           <div class="band amber" style="padding:11px 14px"><span class="num">1</span><div><h4>Tests</h4><p>full suite, zero failures.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">2</span><div><h4>Lints</h4><p>project linter, zero warnings.</p></div></div>
@@ -493,6 +493,7 @@
           <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">6</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change.</p></div></div>
         </div>
+        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you.</p>
       </div>
       <div class="usecard">
         <h4>Why more passes ≠ more proof</h4>
@@ -596,7 +597,7 @@
     </div>
     <div class="agent-cols reveal">
       <div class="arole build"><div class="r-top"><h3>Coders</h3><span class="tag build">build · 3</span></div><p>One writes the change per task; the rest verify it.</p><div class="chips"><span class="chip build">python-coder</span><span class="chip build">pytorch-coder</span><span class="chip build">rust-coder</span></div></div>
-      <div class="arole"><div class="r-top"><h3>Quality reviewers</h3><span class="tag assure">assure · 3</span></div><p>Post-spec review of principle adherence and bugs.</p><div class="chips"><span class="chip assure">python-quality-reviewer</span><span class="chip assure">pytorch-quality-reviewer</span><span class="chip assure">rust-quality-reviewer</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Quality reviewers</h3><span class="tag assure">assure · 3</span></div><p>Dispatched alongside the spec reviewer: principle adherence and bugs.</p><div class="chips"><span class="chip assure">python-quality-reviewer</span><span class="chip assure">pytorch-quality-reviewer</span><span class="chip assure">rust-quality-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Commit-lite gates</h3><span class="tag assure">assure · 2</span></div><p>Fast pre-commit idiom + lint: clean / block / escalate.</p><div class="chips"><span class="chip assure">python-review-lite</span><span class="chip assure">rust-review-lite</span></div></div>
       <div class="arole"><div class="r-top"><h3>Design reviewers</h3><span class="tag assure">assure · 2</span></div><p>Senior read-only cohesion / API review at the final gate.</p><div class="chips"><span class="chip assure">python-design-reviewer</span><span class="chip assure">rust-design-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
@@ -649,7 +650,7 @@
     <div class="ledger" style="margin-top:30px">
       <p class="lbl">The fix loop — tuned on a measured 25-round wave</p>
       <h4>Failed reviews recurse with discipline, not ping-pong.</h4>
-      <p>Verdicts <b>accumulate</b> before any fix is dispatched. From cycle 2 a fix must carry a <b>diagnosis</b> — root cause, end-state, why the findings resolve as a cluster (<span class="mono">ledger.py check</span> enforces it) — and re-reviewers judge the fix against that stated cause. The failure signal is <b>recurrence</b> (same finding class, same site, across cycles — <em>not</em> merely new findings, which are often healthy discovery); when it fires, the next fix must defend its mechanism against an alternative. Cycle 3 always escalates to you — briefed with a researched <span class="mono">coherent-change</span> defended choice when the mechanism itself keeps failing.</p>
+      <p>Spec and quality verdicts <b>accumulate</b> before any fix is dispatched, then the whole batch is <b>triaged once</b>: trivial findings go straight to the coder; non-trivial ones first get a per-task <b>decision doc</b> (<span class="mono">remediating-issues</span>, per-task variant) unless the task's <span class="mono">Cases:</span> line already settles them. One batched fix follows, sent to the original coder via <span class="mono">SendMessage</span> when it's reachable, against a <b>fix baseline</b> (<span class="mono">ledger.py snapshot</span> / <span class="mono">diff-since</span>) so re-reviewers see the fix's hunks alone. From cycle 2 it must carry a <b>diagnosis</b> (root cause, end-state, why the findings resolve as a cluster) plus a <span class="mono">hunk_map</span> and <span class="mono">consumers_checked</span>, all enforced by <span class="mono">ledger.py check</span>. Reviewers flag <b>recurrence</b> (same finding class, same site, across cycles; <em>not</em> merely new findings, which are often healthy discovery) and <span class="mono">introduced_by_fix</span>; recurrence forces a decision doc that picks a different mechanism. A re-review at cycle ≥ 3 with a non-trivial finding still open escalates to you, briefed with the decision docs; trivial-only leftovers never escalate.</p>
     </div>
   </div>
 </section>
@@ -727,7 +728,7 @@
         <tbody>
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
           <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
-          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Six-step pipeline: Tests → Lints → Design review → Requirements → spec-blind intent re-check → mutation re-check.</td></tr>
+          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Tests → Lints first, then Design review, Requirements, spec-blind intent re-check, and mutation re-check together as one close round, triaged once (two rounds max).</td></tr>
           <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
         </tbody>
       </table>
@@ -777,7 +778,7 @@
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
           <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality → commit-lite review.</li>
-          <li><b>Verify before “done.”</b> The six-step gate runs a spec-blind intent re-check against your ledger, then a mutation re-check that proves your tests can detect a change.</li>
+          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once.</li>
           <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
         </ol>
       </div>

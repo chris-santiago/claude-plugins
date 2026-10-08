@@ -2,7 +2,7 @@
 
 Personal Claude Code plugin — workflow skills, coding agents, review gates, and quality campaigns.
 
-chris-code turns Claude Code into an opinionated software-engineering workflow rather than a free-form chat assistant. Once installed, it routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run two-stage review (spec compliance, then code quality), and gate every commit with a lint-aware idiom check. And every *determined* change — a fix, a refactor, a finding from a review — runs through a single engine that enforces coherence: it discovers and defends the implementation that best fits the existing code, rather than letting changes get patched in place. Use it when you want Claude to design before it codes, keep the main context window clean by offloading work to focused subagents, and catch agent-generated drift before it reaches `main`. Drop into any repo, type `/brainstorming` (or just describe a feature), and the workflow takes over from there.
+chris-code turns Claude Code into an opinionated software-engineering workflow rather than a free-form chat assistant. Once installed, it routes any non-trivial change through a fixed pipeline — brainstorm intent, write a lean spec, hand off a thin plan, dispatch a coder subagent per task, run spec-compliance and code-quality review together with one triage of their findings, and gate every commit with a lint-aware idiom check. And every *determined* change — a fix, a refactor, a finding from a review — runs through a single engine that enforces coherence: it discovers and defends the implementation that best fits the existing code, rather than letting changes get patched in place. Use it when you want Claude to design before it codes, keep the main context window clean by offloading work to focused subagents, and catch agent-generated drift before it reaches `main`. Drop into any repo, type `/brainstorming` (or just describe a feature), and the workflow takes over from there.
 
 ## Documentation
 
@@ -35,7 +35,7 @@ Day to day, three things feel different:
 
 1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts, plans capture *what and where*, and the code gets written against the real codebase, not the plan.
 2. **Coding and review run through dedicated agents, not generic subagents.** chris-code ships named `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents that auto-dispatch by file type. You rarely pick one by hand.
-3. **Every task passes the same review gates.** Spec compliance, then code quality, then a pre-commit idiom/lint gate. No task is "small enough to skip."
+3. **Every task passes the same review gates.** Spec compliance and code quality, reviewed together and triaged once, then a pre-commit idiom/lint gate. No task is "small enough to skip."
 
 Everything below is the reasoning behind those, then the specifics.
 
@@ -97,7 +97,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`) → Mutation re-check (`mutation-tester` in an isolated worktree). |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step gate, run as a close round:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree) dispatched together, with the Requirements check alongside. Findings are triaged once; non-trivial ones go to remediation as one batch, capped at two rounds. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -120,17 +120,18 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `code-archaeology` | Surface dead code, stubs, and spec-vs-impl gaps before a milestone. |
 | `release` | Version bump + changelog + GitHub release in one flow. |
 
-### New agents (14) — the layer superpowers doesn't have
+### New agents (15) — the layer superpowers doesn't have
 
 | Agents | Role |
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
-| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive post-spec quality review; all matching fire. |
+| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive quality review, dispatched alongside the spec reviewer; all matching fire. |
 | `python-review-lite`, `rust-review-lite` | Fast pre-commit idiom/lint gate returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
 | `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes, and runs advisory on-demand. |
+| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can ground a judgment-shaped finding without reading the code; forms no verdict. |
 
 ---
 
@@ -159,13 +160,14 @@ flowchart TB
 
     subgraph Execution Phase
         worktree["using-git-worktrees<br/>(EnterWorktree)"]
-        execute["subagent-driven-development<br/>or executing-plans"]
+        execute["subagent-driven-development"]
     end
 
     subgraph Per Task
         coder["*-coder agent<br/>(python-coder, rust-coder)"]:::agent
         spec_review["spec-reviewer<br/>(opus, agent)"]:::reviewer
         quality["*-quality-reviewer agent<br/>(python-quality-reviewer,<br/>rust-quality-reviewer)"]:::reviewer
+        triage{"triage once"}
         commit_gate["*-review-lite agent<br/>(python-review-lite,<br/>rust-review-lite)"]:::gate
     end
 
@@ -180,9 +182,12 @@ flowchart TB
     plan --> worktree
     worktree --> execute
     execute -->|dispatch by scope| coder
-    coder --> spec_review
-    spec_review -->|dispatch by scope| quality
-    quality -->|dispatch by scope| commit_gate
+    coder -->|together| spec_review
+    coder -->|together<br/>dispatch by scope| quality
+    spec_review --> triage
+    quality --> triage
+    triage -.->|fix batch| coder
+    triage -->|clean<br/>dispatch by scope| commit_gate
     commit_gate -.->|next task<br/>staged parallelism| execute
     execute -->|all tasks done| verify
     verify --> finish
@@ -256,13 +261,13 @@ flowchart TB
 | `lean-plan` | Write thin execution handoff (what & where, no code) | brainstorming (step 10) |
 | `using-git-worktrees` | Isolated workspace via EnterWorktree | executing-plans / subagent-driven-dev |
 | `subagent-driven-development` | Execute plan per task: file-handoff dispatch, staged parallelism, durable progress ledger | lean-plan handoff |
-| `executing-plans` | Execute plan inline (no subagents) | lean-plan handoff (alternative) |
+| `executing-plans` | Execute plan inline (no coder subagents; reviewers still dispatched) | lean-plan handoff (alternative) |
 | `dispatching-parallel-agents` | Dispatch 2+ independent tasks concurrently | Any skill needing parallelism |
 | `test-driven-development` | RED-GREEN-REFACTOR cycle | Coder agents during implementation |
 | `systematic-debugging` | Four-phase root cause investigation | When bugs arise |
 | `remediating-issues` | Remediate a known bug/issue: diagnose → build → close | User, or a review/audit finding |
 | `coherent-change` | Build a *determined* change to fit the codebase: research → defend → implement → lite-review | `remediating-issues` / `systematic-debugging` / `lean-spec` / direct |
-| `verification-before-completion` | Tests + lints + full review + requirements + spec-blind intent re-check | Before claiming done |
+| `verification-before-completion` | Tests + lints, then one close round: full review + requirements + spec-blind intent re-check + mutation re-check | Before claiming done |
 | `finishing-a-development-branch` | Merge / PR / keep / discard + worktree cleanup | After verification passes |
 | `requesting-code-review` | Ad-hoc review (fresh perspective, pre-refactor) | User-triggered |
 | `receiving-code-review` | Handle review feedback with technical rigor | When review feedback received |
@@ -285,7 +290,7 @@ flowchart TB
 
 ### Coding Agents (exclusive — most specific wins)
 
-One coder per task. Dispatched by `subagent-driven-development` and `executing-plans`. When multiple match the same extension, `scope.require_dependencies` picks the most specific (e.g., `pytorch-coder` over `python-coder` when the project depends on torch).
+One coder per task. Dispatched by `subagent-driven-development` (`executing-plans` runs tasks inline). When multiple match the same extension, `scope.require_dependencies` picks the most specific (e.g., `pytorch-coder` over `python-coder` when the project depends on torch).
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|
@@ -329,10 +334,18 @@ Not scope-matched — these review conformance and behavior, not language idioms
 
 | Agent | Model | Reference axis | Role |
 |-------|-------|----------------|------|
-| `spec-reviewer` | opus | the spec/brief | Per-task code↔spec conformance in `subagent-driven-development` (before quality review); "Do Not Trust the Report" |
-| `intent-reviewer` | opus | the intent ledger | **Spec-blind** behavior↔intent re-check, final step of `verification-before-completion`; reads the frozen ledger + the running system, never the spec |
+| `spec-reviewer` | opus | the spec/brief | Per-task code↔spec conformance in `subagent-driven-development` (dispatched alongside quality review); "Do Not Trust the Report" |
+| `intent-reviewer` | opus | the intent ledger | **Spec-blind** behavior↔intent re-check, Step 5 of `verification-before-completion` (dispatched with the design and mutation gates); reads the frozen ledger + the running system, never the spec |
 
 Together these are the *conformance pair*: `spec-reviewer` catches code that drifted from the spec, `intent-reviewer` catches a spec that drifted from the original ask.
+
+### Grounding Agent
+
+Language-agnostic, dispatched by name from `subagent-driven-development`. Read-only; forms no judgment and issues no verdict.
+
+| Agent | Model | Scope | Role |
+|-------|-------|-------|------|
+| `claim-checker` | haiku | one claim per dispatch | Settles one decidable factual claim about code (holds / does-not-hold / not-decidable-by-reading) with verbatim quoted lines, grounding a judgment-shaped finding or a spec-reviewer `cannot_verify` item without the orchestrator reading the code |
 
 ### Campaign Agent
 
@@ -363,6 +376,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
 | `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
 | `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 6), in an isolated worktree |
+| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to ground a judgment-shaped finding or a `cannot_verify` item |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 

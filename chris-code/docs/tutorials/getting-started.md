@@ -34,8 +34,8 @@ Read the spec when prompted. It should be short; if it reads like a coding walkt
 `subagent-driven-development` takes the plan and, per task:
 
 1. dispatches the matching **coder agent** (`python-coder` / `rust-coder` / `pytorch-coder`) with a brief that carries the task's *why*,
-2. runs **spec review** (did it build what was asked?),
-3. runs **quality review** (is the code sound?),
+2. runs **spec review** (did it build what was asked?) and **quality review** (is the code sound?) together,
+3. triages their findings once and, if there are any, sends the coder one batched fix,
 4. runs the **commit-lite gate** (idioms + linter) before each commit.
 
 You'll see each dispatch announced with its model and agent. Independent tasks run in parallel; tasks that touch the same files are serialized automatically.
@@ -50,6 +50,8 @@ When all tasks are in, `verification-before-completion` runs a six-step gate:
 4. Requirements — every spec item traced
 5. **Intent re-check** — a spec-blind `intent-reviewer` compares the shipped behavior to your frozen intent ledger
 6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change
+
+Tests and lints run first. Steps 3, 5, and 6 then run together as one **close round**, with the requirements trace done alongside, and their findings are triaged once: small ones are fixed on the spot, bigger ones that belong in this change are fixed as one batch and re-checked in a second round, and separable improvements are logged as follow-ups. If something is still open after two rounds, it comes to you.
 
 A green run is not "nothing to do" — read any findings it surfaces.
 

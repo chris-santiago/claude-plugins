@@ -10,7 +10,7 @@ Day to day, three things feel different:
 
 1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts, plans capture *what and where*, and the code gets written against the real codebase, not the plan.
 2. **Coding and review run through dedicated agents, not generic subagents.** chris-code ships named `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents that auto-dispatch by file type. You rarely pick one by hand.
-3. **Every task passes the same review gates.** Spec compliance, then code quality, then a pre-commit idiom/lint gate. No task is "small enough to skip."
+3. **Every task passes the same review gates.** Spec compliance and code quality, reviewed together and triaged once, then a pre-commit idiom/lint gate. No task is "small enough to skip."
 
 Everything below is the reasoning behind those, then the specifics.
 
@@ -78,7 +78,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step hard pipeline:** Tests → Lints → Full Review (scope-matched `*-design-reviewer` agents) → Requirements → Intent re-check (spec-blind `intent-reviewer`) → Mutation re-check (`mutation-tester` in an isolated worktree). |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step gate, run as a close round:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree) dispatched together, with the Requirements check alongside. Findings are triaged once; non-trivial ones go to remediation as one batch, capped at two rounds. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -101,17 +101,18 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `code-archaeology` | Surface dead code, stubs, and spec-vs-impl gaps before a milestone. |
 | `release` | Version bump + changelog + GitHub release in one flow. |
 
-### New agents (14) — the layer superpowers doesn't have
+### New agents (15) — the layer superpowers doesn't have
 
 | Agents | Role |
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
-| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive post-spec quality review; all matching fire. |
+| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive quality review, dispatched alongside the spec reviewer; all matching fire. |
 | `python-review-lite`, `rust-review-lite` | Fast pre-commit idiom/lint gate returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
 | `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes, and runs advisory on-demand. |
+| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can ground a judgment-shaped finding without reading the code; forms no verdict. |
 
 ---
 
@@ -135,7 +136,7 @@ Verified against two agreeing sources: the local plugin catalog cache (superpowe
 | | superpowers | chris-code |
 |---|---|---|
 | Skills | 14 | 25 |
-| Agents | 0 | 13 |
+| Agents | 0 | 15 |
 | Commands | 0 | 0 |
 | Hooks | 1 | 0 |
 
