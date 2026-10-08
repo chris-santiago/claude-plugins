@@ -17,6 +17,10 @@ A wave-8 run on 0.6.0 showed where its fix cycles went. One fix regressed and th
 - **The no-process-labels rule.** Coders keep comments to behavior, run `labels` before reporting, and list a false positive in `concerns`. SDD runs `labels` whenever a coder returns, before review, and sends hits back as the same attempt (no fix cycle), so a leaked label never costs a review cycle. `executing-plans` runs it before each commit.
 - **Check history and `ledger.py stats`.** A passing `check` on a record in a store appends a summary line to the store's `history.jsonl`, and `clear` removes it with the rest of the run. `stats` prints each task's verdicts cycle by cycle and the records that flagged `introduced_by_fix` or `recurring`.
 
+### Changed
+- **Escalation counts the coder's fix cycle.** SDD counted cycle 3 by the reviewers' own `cycle`, which a reviewer re-dispatched within one cycle advances. Wave 8 had a spec reviewer at cycle 3 after one fix. The count is now the highest `cycle` among the task's coder records, which moves only when a fix is dispatched.
+- **A finding closes only by re-review or by the user.** An orchestrator in wave 8 accepted code untested by its own ruling after a reviewer asked for a test. Evidence that a finding can't be fixed as asked now goes in the decision doc for the reviewers to re-review, and waiving a requested test is the user's call.
+
 ### Fixed
 - **Docs, README, decks and the guide caught up with 0.5.0 and 0.6.0.** They still showed spec review before quality review, the completion gate as six steps that stop the line, and "cycle 3 always escalates". They now describe parallel review with one triage, the close round and its two-round cap, the escalation rule, fix mode, `Cases:` lines, the remediating-issues variants, the full `ledger.py` subcommand list, and all 15 agents including `claim-checker`. The Marp decks' HTML and PDF exports are re-rendered, and three slides that ran off the page now fit.
 
