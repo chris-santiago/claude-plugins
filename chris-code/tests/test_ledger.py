@@ -1494,8 +1494,8 @@ class TestProcessLabels(unittest.TestCase):
         self.assertEqual(self._labels(diff), [])
 
     def test_trailing_comment_and_docstring_body_are_comments(self):
-        diff = _diff("src/m.py", "x = 1  # carried from (F2)",
-                     '"""Summary line.', "", "Matches 510819e5 behavior.", '"""')
+        diff = _diff("src/m.py", "x = 1  # carried from (F2)", "def f():",
+                     '    """Summary line.', "", "    Matches 510819e5 behavior.", '    """')
         self.assertEqual(sorted(self._labels(diff)), ["commit-hash", "finding-id"])
 
     def test_prose_files_are_skipped(self):
@@ -1546,6 +1546,23 @@ class TestProcessLabels(unittest.TestCase):
         diff = _diff("src/m.py", "    Handles negatives per cycle 2 review.", start=3,
                      context=("def f(x):", '    """Return x.', ""))
         self.assertEqual(self._labels(diff), ["cycle"])
+
+    def test_text_then_closing_quotes_does_not_open_a_docstring(self):
+        # Closes a docstring the hunk never showed opening; the code after is code,
+        # and a real docstring later in the hunk is still scanned.
+        diff = _diff("src/m.py", '    new text."""', "    self.orchestrator = Orchestrator(cycle-2)",
+                     "def g():", '    """', "    Retries the task 3 path.", '    """',
+                     start=9, context=("    existing docstring body",))
+        self.assertEqual(self._labels(diff), ["task-number"])
+
+    def test_code_after_a_closed_docstring_is_code(self):
+        diff = _diff("src/m.py", "def f():", '    """Build the runner.', "", "    Body.", '    """',
+                     "    orchestrator = Orchestrator()")
+        self.assertEqual(self._labels(diff), [])
+
+    def test_a_signature_with_a_trailing_comment_can_open_a_docstring(self):
+        diff = _diff("src/m.py", "def f():  # noqa", '    """', "    Retries the task 3 path.", '    """')
+        self.assertEqual(self._labels(diff), ["task-number"])
 
     def test_a_dereference_is_code_not_a_comment(self):
         diff = _diff("src/m.rs", "*slot = Some(T1);", '*x = "cycle 2";', " * cycle 2 in a block")

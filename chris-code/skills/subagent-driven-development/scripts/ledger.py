@@ -829,8 +829,11 @@ def find_process_labels(diff: str) -> list[LabelHit]:
 
 def _docstring_may_open(prev: str | None, line_no: int) -> bool:
     """Whether a docstring can open here: at the top of the file, or right
-    after a line ending in `:` (a def or class signature)."""
-    return prev is None and line_no == 1 or (prev or "").endswith(":")
+    after a line ending in `:` (a def or class signature), ignoring a
+    trailing comment such as `# noqa`."""
+    if prev is None:
+        return line_no == 1
+    return TRAILING_COMMENT_RE.split(prev, 1)[0].rstrip().endswith(":")
 
 
 def _diff_target(target: str) -> str | None:
@@ -852,21 +855,21 @@ def _diff_target(target: str) -> str | None:
 def _comment_text(text: str, in_docstring: bool,
                   may_open: bool = True) -> tuple[str | None, bool]:
     """The comment or docstring part of a line (None if there is none),
-    and whether a docstring is still open after it. A line of bare quotes
-    opens a docstring only where one can start (`may_open`: after a line
-    ending in `:`, or at the top of the file); elsewhere it closes one
-    whose opening the diff didn't show."""
+    and whether a docstring is still open after it. An odd count of
+    triple quotes opens a docstring only when the line starts with them
+    where one can start (`may_open`); otherwise it closes one whose
+    opening the diff didn't show, and the state stays closed."""
     stripped = text.strip()
     quotes = stripped.count('"""') + stripped.count("'''")
-    still_open = in_docstring != (quotes % 2 == 1)
-    if stripped in ('"""', "'''") and not in_docstring and not may_open:
-        still_open = False
-    if in_docstring or quotes:
-        return stripped, still_open
+    if in_docstring:
+        return stripped, quotes % 2 == 0
+    if quotes:
+        opens = quotes % 2 == 1 and may_open and stripped.startswith(('"""', "'''"))
+        return stripped, opens
     if stripped.startswith(COMMENT_PREFIXES) and not stripped.startswith(NOT_COMMENT_PREFIXES):
-        return stripped, still_open
+        return stripped, False
     trailing = TRAILING_COMMENT_RE.search(text)
-    return (text[trailing.end():] if trailing else None), still_open
+    return (text[trailing.end():] if trailing else None), False
 
 
 def _labels_in(text: str, comment: str | None) -> list[str]:
