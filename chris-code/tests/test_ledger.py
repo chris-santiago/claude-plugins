@@ -1708,6 +1708,12 @@ class TestHistory(LedgerTestCase):
         self.assertRegex(out.getvalue(), r"introduced_by_fix: task-2-spec-reviewer c2 \(1\)")
         self.assertRegex(out.getvalue(), r"recurring: task-2-spec-reviewer c2 \(1\)")
 
+    def test_a_history_line_that_is_not_an_object_raises_record_error(self):
+        (self.store / ledger.HISTORY_FILENAME).write_text("3\n", encoding="utf-8")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.load_history(self.store)
+        self.assertIn(f"{ledger.HISTORY_FILENAME}:1", str(ctx.exception))
+
     def test_a_non_integer_cycle_is_logged_as_unknown(self):
         # Reviewer cycle isn't validated by check; stats must still sort.
         for name, cycle in (("task-1-spec-reviewer.json", "2"),

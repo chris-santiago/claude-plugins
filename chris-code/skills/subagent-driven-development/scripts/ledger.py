@@ -952,7 +952,8 @@ HANDOFF_FILE_PATTERNS = ("task-*-*.md", "design-review-*.md", "intent-recheck.md
 def cmd_clear(store_dir: Path) -> None:
     """Delete files whose stem matches the record naming convention
     (task-*-* or final-*), the handoff files the run wrote
-    (HANDOFF_FILE_PATTERNS), and the progress log — content validity is
+    (HANDOFF_FILE_PATTERNS), the progress log and the check history —
+    content validity is
     irrelevant: a malformed record-attempt is clearable, an unrelated
     notes.json is not."""
     if store_dir.is_dir():
@@ -1034,6 +1035,8 @@ def load_history(store_dir: Path) -> list[dict]:
             entry = json.loads(line)
         except json.JSONDecodeError as e:
             raise RecordError(f"{path}:{n}: not a JSON line: {e}") from e
+        if not isinstance(entry, dict):
+            raise RecordError(f"{path}:{n}: expected a JSON object, got {type(entry).__name__}")
         latest[(entry.get("record"), entry.get("cycle"))] = entry
     return list(latest.values())
 
