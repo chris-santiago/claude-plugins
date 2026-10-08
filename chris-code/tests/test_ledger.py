@@ -1399,6 +1399,28 @@ class TestFixBaseline(GitRepoTestCase):
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("ERROR: git", bad.stderr)
 
+    def test_fix_count_counts_only_non_trivial_snapshots_for_the_task(self):
+        # The escalation cap is two non-trivial fix attempts; trivial fixes,
+        # labels bounces and reviewer re-dispatches take no flagged snapshot.
+        store = self.repo / ".sdd"
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(store, 4, "pre-fix c2", "t1", non_trivial=True)
+            ledger.cmd_snapshot(store, 4, "pre-fix c3", "t2")
+            ledger.cmd_snapshot(store, 5, "pre-fix c2", "t3", non_trivial=True)
+            ledger.cmd_snapshot(store, 4, "pre-fix c4", "t4", non_trivial=True)
+        log = ledger.load_progress_log(store)
+        self.assertEqual(ledger.non_trivial_fix_count(log, 4), 2)
+        self.assertEqual(ledger.non_trivial_fix_count(log, 6), 0)
+
+    def test_cli_fix_count_prints_the_count(self):
+        run = lambda *a: subprocess.run(  # noqa: E731
+            [sys.executable, str(LEDGER_PY), *a, "--store", str(self.repo / ".sdd")],
+            cwd=self.repo, capture_output=True, text=True)
+        snap = run("snapshot", "--task", "2", "--label", "pre-fix c2", "--non-trivial")
+        self.assertEqual(snap.returncode, 0, snap.stderr)
+        count = run("fix-count", "--task", "2")
+        self.assertEqual((count.returncode, count.stdout.strip()), (0, "1"), count.stderr)
+
     def test_cmd_snapshot_records_a_typed_entry_and_prints_the_tree(self):
         store = self.repo / ".sdd"
         buf = io.StringIO()
@@ -1495,6 +1517,26 @@ class TestProcessLabels(unittest.TestCase):
                      context=("    body of an existing docstring", '    """'))
         self.assertEqual(self._labels(diff), [])
 
+    def test_a_lone_closing_quote_does_not_open_a_docstring(self):
+        # The docstring opened on an unseen line; its lone closing quotes are added.
+        diff = _diff("src/m.py", '    """', 'name = "worker-task-1"', 'h = "cafe1234"',
+                     start=8, context=("    more docstring text",))
+        self.assertEqual(self._labels(diff), [])
+
+    def test_a_lone_opening_quote_after_a_signature_opens_a_docstring(self):
+        diff = _diff("src/m.py", "def f():", '    """', "    Matches 510819e5.", '    """')
+        self.assertEqual(self._labels(diff), ["commit-hash"])
+
+    def test_a_dereference_is_code_not_a_comment(self):
+        diff = _diff("src/m.rs", "*slot = Some(T1);", '*x = "cycle 2";', " * cycle 2 in a block")
+        self.assertEqual(self._labels(diff), ["cycle"])
+
+    def test_a_trailing_comment_without_a_space_is_scanned(self):
+        self.assertEqual(self._labels(_diff("src/m.py", "x = 1  #cycle 2")), ["cycle"])
+
+    def test_cmakelists_is_code_not_prose(self):
+        self.assertEqual(self._labels(_diff("CMakeLists.txt", "# cycle 2 note")), ["cycle"])
+
     def test_prose_suffixes_match_case_insensitively(self):
         for name in ("R.MD", "notes.markdown", "page.mdx"):
             self.assertEqual(ledger.find_process_labels(_diff(name, "# cycle 2")), [], name)
@@ -1529,6 +1571,16 @@ class TestLabelsCLI(GitRepoTestCase):
         result = self._run("labels", "HEAD")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('café"q.py:1: cycle', result.stdout)
+
+    def test_labels_errors_exit_2_not_the_hits_code(self):
+        # Exit 1 means "labels found"; a bad tree must not look like that.
+        result = self._run("labels", "nosuchtree")
+        self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_labels_rejects_an_option_shaped_tree_before_touching_paths(self):
+        result = self._run("labels", "--", "--output=/dev/null", "a.py")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("must not start with '-'", result.stderr)
 
     def test_labels_refuses_a_path_that_matches_nothing(self):
         # A typo in the file list must not turn the gate into a pass.

@@ -192,7 +192,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="gate"><span class="gnum">4</span>Full-diff<br>pass</div>
 </div>
 
-<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Non-trivial findings get a decision doc before the batched fix, then everyone re-reviews; one still open at cycle 3+ escalates to you. <b>Do Not Trust the Report</b> — reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
+<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Non-trivial findings get a decision doc before the batched fix, then everyone re-reviews; one still open after two fixes escalates to you. <b>Do Not Trust the Report</b> — reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
 
 ---
 

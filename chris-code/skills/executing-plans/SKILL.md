@@ -34,7 +34,7 @@ For each task:
 
 Before each commit (end of plan or mid-plan commit points):
 
-1. **Check for process labels:** run `python3 "$SDD_SCRIPTS/ledger.py" labels HEAD <the commit's files>`. It lists plan, task and cycle labels, decision-doc vocabulary and commit hashes on the added lines and exits 1 if it finds any. Rewrite each comment it lists to state the behavior instead.
+1. **Check for process labels:** run `python3 "$SDD_SCRIPTS/ledger.py" labels HEAD <the commit's files>`. It lists task, cycle and finding ids, decision-doc vocabulary and commit hashes on the added lines and exits 1 if it finds any (2 on an error). Rewrite each comment it lists to state the behavior instead. A hit that isn't a process label (an F1 score written `(F1)`, say) stands; note it in the task's progress entry.
 2. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
 3. **Dispatch** all matching agents against the staged diff, supplying each a record path (`$STORE/task-<N>-<agent-name>.json`, per subagent-driven-development's File Handoffs). Never pass a `cycle` value: the agent reads its own prior record at that path and self-derives `cycle` as prior + 1 (else 1), escalating at `cycle >= 3` when a block condition (an S3+ finding or a failed linter) remains — the backstop fires on its own as long as the record path stays stable across re-dispatches.
 4. If any agent returns **block**: fix the issue and re-dispatch at the same record path before committing

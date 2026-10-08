@@ -24,7 +24,8 @@ Totality ("never crash on any input") is explicitly not a goal.
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
-       python3 ledger.py snapshot --task N --label "..." [--store DIR]
+       python3 ledger.py snapshot --task N --label "..." [--non-trivial] [--store DIR]
+       python3 ledger.py fix-count --task N [--store DIR]
        python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
@@ -64,6 +65,7 @@ __all__ = [
     "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
+    "non_trivial_fix_count",
 ]
 
 SCHEMA_VERSION = 1
@@ -153,9 +155,12 @@ LABEL_PATTERNS_COMMENT_ONLY = {
 }
 # Prose may legitimately discuss the process; only code and tests are scanned.
 LABEL_SKIPPED_SUFFIXES = (".md", ".markdown", ".mdx", ".rst", ".txt", ".adoc")
-COMMENT_PREFIXES = ("#", "//", "/*", "*", "--", '"""', "'''", "<!--")
+# "* " and "*/" continue a block comment; a bare "*" starts a dereference.
+COMMENT_PREFIXES = ("#", "//", "/*", "* ", "*/", "--", '"""', "'''", "<!--")
 NOT_COMMENT_PREFIXES = ("#[", "#!")
-TRAILING_COMMENT_RE = re.compile(r"\s(?:#|//)\s")
+TRAILING_COMMENT_RE = re.compile(r"\s(?:#|//)")
+# Build files whose suffix would otherwise mark them as prose.
+LABEL_SCANNED_NAMES = ("cmakelists.txt",)
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -778,6 +783,7 @@ def find_process_labels(diff: str) -> list[LabelHit]:
     hits: list[LabelHit] = []
     path, line_no, in_docstring = None, 0, False
     old_left = new_left = 0  # lines still owed to the current hunk
+    prev = None  # the hunk's last non-blank line, context or added
     for raw in diff.splitlines():
         if old_left > 0 or new_left > 0:
             tag, text = raw[:1], raw[1:]
@@ -791,11 +797,13 @@ def find_process_labels(diff: str) -> list[LabelHit]:
                 # Docstring state follows added lines only: a hunk's context
                 # can open mid-docstring, where its quotes would invert it.
                 if path is not None:
-                    comment, in_docstring = _comment_text(text, in_docstring)
+                    may_open = prev is None and line_no == 1 or (prev or "").endswith(":")
+                    comment, in_docstring = _comment_text(text, in_docstring, may_open)
                     hits.extend(LabelHit(path, line_no, label, text.strip())
                                 for label in _labels_in(text, comment))
             else:  # context
                 old_left, new_left = old_left - 1, new_left - 1
+            prev = text.strip() or prev
             line_no += 1
             continue
         if raw.startswith("+++ "):
@@ -806,7 +814,7 @@ def find_process_labels(diff: str) -> list[LabelHit]:
             old_left = int(header.group(1) or 1)
             line_no = int(header.group(2))
             new_left = int(header.group(3) or 1)
-            in_docstring = False
+            in_docstring, prev = False, None
     return hits
 
 
@@ -818,17 +826,26 @@ def _diff_target(target: str) -> str | None:
     if target.startswith('"') and target.endswith('"'):
         target = (target[1:-1].encode("latin-1").decode("unicode_escape")
                   .encode("latin-1").decode("utf-8"))
-    if not target.startswith("b/") or target.lower().endswith(LABEL_SKIPPED_SUFFIXES):
+    if not target.startswith("b/"):
+        return None
+    name = target.rsplit("/", 1)[-1].lower()
+    if name.endswith(LABEL_SKIPPED_SUFFIXES) and name not in LABEL_SCANNED_NAMES:
         return None
     return target[2:]
 
 
-def _comment_text(text: str, in_docstring: bool) -> tuple[str | None, bool]:
+def _comment_text(text: str, in_docstring: bool,
+                  may_open: bool = True) -> tuple[str | None, bool]:
     """The comment or docstring part of a line (None if there is none),
-    and whether a docstring is still open after it."""
+    and whether a docstring is still open after it. A line of bare quotes
+    opens a docstring only where one can start (`may_open`: after a line
+    ending in `:`, or at the top of the file); elsewhere it closes one
+    whose opening the diff didn't show."""
     stripped = text.strip()
     quotes = stripped.count('"""') + stripped.count("'''")
     still_open = in_docstring != (quotes % 2 == 1)
+    if stripped in ('"""', "'''") and not in_docstring and not may_open:
+        still_open = False
     if in_docstring or quotes:
         return stripped, still_open
     if stripped.startswith(COMMENT_PREFIXES) and not stripped.startswith(NOT_COMMENT_PREFIXES):
@@ -852,13 +869,27 @@ def _warn_submodules(repo: Path) -> None:
               "captured by snapshot/diff-since; check them by hand.", file=sys.stderr)
 
 
-def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str) -> None:
+def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str,
+                 non_trivial: bool = False) -> None:
     """Record a fix baseline as a typed progress entry (so it survives
-    compaction) and print the tree id for the dispatch."""
+    compaction) and print the tree id for the dispatch. `non_trivial`
+    marks a fix whose batch has a non-trivial finding: those are what the
+    escalation cap counts (see non_trivial_fix_count)."""
     ensure_store(store_dir)
-    _append_jsonl(store_dir / PROGRESS_FILENAME,
-                  {"type": "snapshot", "task": task, "label": label, "tree": tree})
+    entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
+    if non_trivial:
+        entry["non_trivial"] = True
+    _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
     print(tree)
+
+
+def non_trivial_fix_count(log: list[dict], task: int | str) -> int:
+    """Non-trivial fix attempts dispatched for `task`: one flagged snapshot
+    each. A resumed paused fix reuses its baseline, and trivial fixes,
+    labels bounces and reviewer re-dispatches take no flagged snapshot,
+    so none of them counts."""
+    return sum(1 for e in log if e.get("type") == "snapshot"
+               and e.get("task") == task and e.get("non_trivial"))
 
 
 def _git_head() -> str:
@@ -1086,6 +1117,13 @@ def build_parser() -> argparse.ArgumentParser:
                                       "print its tree id (real index untouched)")
     p_snapshot.add_argument("--task", required=True, type=_task_arg)
     p_snapshot.add_argument("--label", required=True)
+    p_snapshot.add_argument("--non-trivial", action="store_true",
+                            help="the fix batch has a non-trivial finding; counted by fix-count")
+
+    p_count = sub.add_parser("fix-count", parents=[store_parent],
+                              help="print how many non-trivial fixes the task has had "
+                                   "(snapshots taken with --non-trivial)")
+    p_count.add_argument("--task", required=True, type=_task_arg)
 
     p_diff = sub.add_parser("diff-since",
                              help="show what changed since a snapshot tree, new "
@@ -1098,7 +1136,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_labels = sub.add_parser("labels",
                                help="list review-process labels (task/cycle/finding ids, "
                                     "decision-doc vocabulary, hashes) on lines added "
-                                    "since a tree; exit 1 if any")
+                                    "since a tree; exit 1 if any, 2 on an error or a "
+                                    "path that matches nothing")
     p_labels.add_argument("tree", help="the fix baseline, or HEAD for a first attempt")
     p_labels.add_argument("paths", nargs="*", help="limit the scan to these paths")
 
@@ -1141,6 +1180,8 @@ def main() -> None:
         if args.command == "labels":
             repo = Path.cwd()
             _warn_submodules(repo)
+            if args.tree.startswith("-"):
+                raise RecordError(f"tree id must not start with '-': got {args.tree!r}")
             now = snapshot_tree(repo)
             unmatched = missing_paths(repo, args.paths, args.tree, now)
             if unmatched:
@@ -1171,7 +1212,10 @@ def main() -> None:
             cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
-            cmd_snapshot(store_dir, args.task, args.label, snapshot_tree(Path.cwd()))
+            cmd_snapshot(store_dir, args.task, args.label, snapshot_tree(Path.cwd()),
+                         args.non_trivial)
+        elif args.command == "fix-count":
+            print(non_trivial_fix_count(load_progress_log(store_dir), args.task))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":
@@ -1183,12 +1227,19 @@ def main() -> None:
             # must not exit 0 having done nothing.
             raise RuntimeError(f"unhandled command: {args.command}")
     except (RuntimeError, RecordError) as e:
-        sys.exit(f"ERROR: {e}")
+        _fail(args.command, f"ERROR: {e}")
     except subprocess.CalledProcessError as e:
         stderr = e.stderr.decode(errors="replace").strip() if e.stderr else ""
-        sys.exit(f"ERROR: git {' '.join(e.cmd[1:])} failed: {stderr}")
+        _fail(args.command, f"ERROR: git {' '.join(e.cmd[1:])} failed: {stderr}")
     except FileNotFoundError as e:
-        sys.exit(f"ERROR: {e.filename or 'a required program'} not found: {e.strerror}")
+        _fail(args.command, f"ERROR: {e.filename or 'a required program'} not found: {e.strerror}")
+
+
+def _fail(command: str, message: str) -> None:
+    """Exit with `message`. `labels` uses 1 for "labels found", so its
+    errors exit 2; every other command exits 1."""
+    print(message, file=sys.stderr)
+    sys.exit(2 if command == "labels" else 1)
 
 
 if __name__ == "__main__":
