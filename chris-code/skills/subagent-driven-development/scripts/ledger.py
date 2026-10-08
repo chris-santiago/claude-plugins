@@ -783,7 +783,8 @@ def find_process_labels(diff: str) -> list[LabelHit]:
     hits: list[LabelHit] = []
     path, line_no, in_docstring = None, 0, False
     old_left = new_left = 0  # lines still owed to the current hunk
-    prev = None  # the hunk's last non-blank line, context or added
+    prev = None  # the hunk's last code line (not blank, not a # comment)
+    hunk_start = 0  # new-file line the current hunk starts at
     # Split on \n only: str.splitlines() also breaks on form feeds and
     # Unicode line separators inside a line, which would shift the hunk counts.
     for raw in (line.removesuffix("\r") for line in diff.split("\n")):
@@ -799,7 +800,7 @@ def find_process_labels(diff: str) -> list[LabelHit]:
                 # Docstring state follows added lines only: a hunk's context
                 # can open mid-docstring, where its quotes would invert it.
                 if path is not None:
-                    may_open = _docstring_may_open(prev, line_no)
+                    may_open = _docstring_may_open(prev, hunk_start)
                     comment, in_docstring = _comment_text(text, in_docstring, may_open)
                     hits.extend(LabelHit(path, line_no, label, text.strip())
                                 for label in _labels_in(text, comment))
@@ -809,10 +810,13 @@ def find_process_labels(diff: str) -> list[LabelHit]:
                 # line added inside it counts as comment text; a closing quote
                 # with no visible opening stays ignored.
                 quotes = text.count('"""') + text.count("'''")
-                may_open = _docstring_may_open(prev, line_no)
+                may_open = _docstring_may_open(prev, hunk_start)
                 if quotes % 2 == 1 and (in_docstring or may_open):
                     in_docstring = not in_docstring
-            prev = text.strip() or prev
+            # A comment between a signature (or the file's top) and its
+            # docstring doesn't change where the docstring may open.
+            if text.strip() and not text.strip().startswith("#"):
+                prev = text.strip()
             line_no += 1
             continue
         if raw.startswith("+++ "):
@@ -823,16 +827,17 @@ def find_process_labels(diff: str) -> list[LabelHit]:
             old_left = int(header.group(1) or 1)
             line_no = int(header.group(2))
             new_left = int(header.group(3) or 1)
-            in_docstring, prev = False, None
+            in_docstring, prev, hunk_start = False, None, line_no
     return hits
 
 
-def _docstring_may_open(prev: str | None, line_no: int) -> bool:
-    """Whether a docstring can open here: at the top of the file, or right
-    after a line ending in `:` (a def or class signature), ignoring a
-    trailing comment such as `# noqa`."""
+def _docstring_may_open(prev: str | None, hunk_start: int) -> bool:
+    """Whether a docstring can open here: at the top of the file (no code
+    yet in a hunk that starts at line 1; a shebang or license comment
+    doesn't count as code), or right after a line ending in `:` (a def or
+    class signature), ignoring a trailing comment such as `# noqa`."""
     if prev is None:
-        return line_no == 1
+        return hunk_start == 1
     return TRAILING_COMMENT_RE.split(prev, 1)[0].rstrip().endswith(":")
 
 

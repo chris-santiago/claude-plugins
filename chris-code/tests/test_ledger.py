@@ -1555,6 +1555,15 @@ class TestProcessLabels(unittest.TestCase):
                      start=9, context=("    existing docstring body",))
         self.assertEqual(self._labels(diff), ["task-number"])
 
+    def test_a_module_docstring_after_leading_comments_is_scanned(self):
+        for header in (("#!/usr/bin/env python3",), ("# Copyright 2026", "# License: MIT", "")):
+            diff = _diff("src/m.py", *header, '"""Tool.', "", "Added in task 3.", '"""')
+            self.assertEqual(self._labels(diff), ["task-number"], header)
+
+    def test_a_comment_between_signature_and_docstring_still_opens_it(self):
+        diff = _diff("src/m.py", "def f():", "    # noqa", '    """', "    Per task 3.", '    """')
+        self.assertEqual(self._labels(diff), ["task-number"])
+
     def test_code_after_a_closed_docstring_is_code(self):
         diff = _diff("src/m.py", "def f():", '    """Build the runner.', "", "    Body.", '    """',
                      "    orchestrator = Orchestrator()")
