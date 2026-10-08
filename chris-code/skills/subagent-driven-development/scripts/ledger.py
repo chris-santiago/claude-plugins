@@ -784,7 +784,9 @@ def find_process_labels(diff: str) -> list[LabelHit]:
     path, line_no, in_docstring = None, 0, False
     old_left = new_left = 0  # lines still owed to the current hunk
     prev = None  # the hunk's last non-blank line, context or added
-    for raw in diff.splitlines():
+    # Split on \n only: str.splitlines() also breaks on form feeds and
+    # Unicode line separators inside a line, which would shift the hunk counts.
+    for raw in (line.removesuffix("\r") for line in diff.split("\n")):
         if old_left > 0 or new_left > 0:
             tag, text = raw[:1], raw[1:]
             if tag == "\\":
@@ -825,7 +827,7 @@ def _diff_target(target: str) -> str | None:
     target = target.rstrip("\t")
     if target.startswith('"') and target.endswith('"'):
         target = (target[1:-1].encode("latin-1").decode("unicode_escape")
-                  .encode("latin-1").decode("utf-8"))
+                  .encode("latin-1").decode("utf-8", errors="replace"))
     if not target.startswith("b/"):
         return None
     name = target.rsplit("/", 1)[-1].lower()
@@ -887,7 +889,13 @@ def non_trivial_fix_count(log: list[dict], task: int | str) -> int:
     """Non-trivial fix attempts dispatched for `task`: one flagged snapshot
     each. A resumed paused fix reuses its baseline, and trivial fixes,
     labels bounces and reviewer re-dispatches take no flagged snapshot,
-    so none of them counts."""
+    so none of them counts. For "final" (the whole-change gate), only
+    snapshots after the last close round count."""
+    if task == "final":
+        # A close-gate remediation run reuses the store, and its whole-change
+        # gate (final-r2-* records) starts fresh, so count from the last round.
+        starts = [i for i, e in enumerate(log) if e.get("type") == "close_round"]
+        log = log[starts[-1] + 1:] if starts else log
     return sum(1 for e in log if e.get("type") == "snapshot"
                and e.get("task") == task and e.get("non_trivial"))
 
@@ -1005,7 +1013,9 @@ def _history_entry(stem: str, data: dict) -> dict:
         return len(value) if isinstance(value, list) else 0
 
     return {"record": stem, "task": data.get("task"), "role": data.get("role"),
-            "cycle": data.get("cycle"), "status": data.get("status"),
+            # Reviewer cycle isn't validated; keep only an int so stats can sort.
+            "cycle": data["cycle"] if type(data.get("cycle")) is int else None,
+            "status": data.get("status"),
             "findings": count("issues") + count("findings"),
             "recurring": count("recurring"), "introduced_by_fix": count("introduced_by_fix")}
 

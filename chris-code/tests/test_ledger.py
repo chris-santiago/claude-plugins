@@ -1412,6 +1412,20 @@ class TestFixBaseline(GitRepoTestCase):
         self.assertEqual(ledger.non_trivial_fix_count(log, 4), 2)
         self.assertEqual(ledger.non_trivial_fix_count(log, 6), 0)
 
+    def test_fix_count_for_final_restarts_after_a_close_round(self):
+        # Round 2's whole-change gate (final-r2-* records) must not inherit
+        # round 1's non-trivial fixes, just as its records don't.
+        store = self.repo / ".sdd"
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t1", non_trivial=True)
+            ledger.cmd_snapshot(store, "final", "pre-fix c3", "t2", non_trivial=True)
+            ledger.cmd_close_round(store, "round 1", "abc", 1)
+            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t3", non_trivial=True)
+            ledger.cmd_snapshot(store, 7, "pre-fix c2", "t4", non_trivial=True)
+        log = ledger.load_progress_log(store)
+        self.assertEqual(ledger.non_trivial_fix_count(log, "final"), 1)
+        self.assertEqual(ledger.non_trivial_fix_count(log, 7), 1)
+
     def test_cli_fix_count_prints_the_count(self):
         run = lambda *a: subprocess.run(  # noqa: E731
             [sys.executable, str(LEDGER_PY), *a, "--store", str(self.repo / ".sdd")],
@@ -1533,6 +1547,18 @@ class TestProcessLabels(unittest.TestCase):
 
     def test_a_trailing_comment_without_a_space_is_scanned(self):
         self.assertEqual(self._labels(_diff("src/m.py", "x = 1  #cycle 2")), ["cycle"])
+
+    def test_form_feed_and_line_separators_do_not_end_the_hunk_early(self):
+        # str.splitlines() splits on these too, which would shift the hunk counts.
+        for odd in ("\f", "x = ' '", "\r"):
+            diff = _diff("src/m.py", odd, "a = 1", "# see task 3")
+            self.assertEqual(self._labels(diff), ["task-number"], repr(odd))
+
+    def test_a_non_utf8_quoted_path_does_not_crash(self):
+        diff = ('diff --git "a/bad\\377.py" "b/bad\\377.py"\n--- "a/bad\\377.py"\n'
+                '+++ "b/bad\\377.py"\n@@ -0,0 +1 @@\n+# cycle 2\n')
+        [hit] = ledger.find_process_labels(diff)
+        self.assertTrue(hit.path.startswith("bad"))
 
     def test_cmakelists_is_code_not_prose(self):
         self.assertEqual(self._labels(_diff("CMakeLists.txt", "# cycle 2 note")), ["cycle"])
@@ -1681,6 +1707,18 @@ class TestHistory(LedgerTestCase):
             ledger.cmd_stats(self.store)
         self.assertRegex(out.getvalue(), r"introduced_by_fix: task-2-spec-reviewer c2 \(1\)")
         self.assertRegex(out.getvalue(), r"recurring: task-2-spec-reviewer c2 \(1\)")
+
+    def test_a_non_integer_cycle_is_logged_as_unknown(self):
+        # Reviewer cycle isn't validated by check; stats must still sort.
+        for name, cycle in (("task-1-spec-reviewer.json", "2"),
+                            ("task-1-python-quality-reviewer.json", [2])):
+            ledger.cmd_check(str(_write(self.store, name, _spec_reviewer(cycle=cycle))))
+        ledger.cmd_check(str(_write(self.store, "task-1-python-coder.json", _coder())))
+        self.assertEqual({e["record"]: e["cycle"] for e in self._history()},
+                         {"task-1-spec-reviewer": None, "task-1-python-quality-reviewer": None,
+                          "task-1-python-coder": 1})
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_stats(self.store)  # no TypeError
 
     def test_stats_on_an_empty_store_says_so(self):
         out = io.StringIO()
