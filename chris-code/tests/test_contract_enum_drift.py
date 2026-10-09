@@ -28,6 +28,8 @@ import ledger  # noqa: E402
 AGENTS_DIR = CHRIS_CODE_DIR / "agents"
 IMPLEMENTER_PROMPT = (CHRIS_CODE_DIR / "skills" / "subagent-driven-development"
                        / "implementer-prompt.md")
+# The per-task decision record is written by a skill, not an agent.
+REMEDIATING_ISSUES = CHRIS_CODE_DIR / "skills" / "remediating-issues" / "SKILL.md"
 
 _SCHEMA_START_RE = re.compile(r'\{\s*"schema":\s*1,')
 _TASK_PLACEHOLDER_RE = re.compile(r'"task":\s*N,')
@@ -46,7 +48,7 @@ def _discover_contract_files() -> list[Path]:
     -O` can't silence it) if fewer than MIN_CONTRACT_FILES are found: an
     empty or shrunken glob (e.g. AGENTS_DIR relocated or renamed) proves
     nothing and must fail loudly, not silently pass with a smaller guard."""
-    candidates = sorted(AGENTS_DIR.glob("*.md")) + [IMPLEMENTER_PROMPT]
+    candidates = sorted(AGENTS_DIR.glob("*.md")) + [IMPLEMENTER_PROMPT, REMEDIATING_ISSUES]
     contract_files = [
         path for path in candidates
         if _SCHEMA_START_RE.search(path.read_text(encoding="utf-8"))
@@ -158,6 +160,13 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                     self.assertIn(field_name, data,
                                   f"{path.name}: fix-mode field {field_name!r} missing "
                                   "from the contract's record example")
+
+    def test_the_decision_contract_example_is_a_valid_record(self):
+        # Its status lists both alternatives; with one picked, the example
+        # an agent copies must pass the shape check `check` runs.
+        data = _load_record_example(REMEDIATING_ISSUES)
+        self.assertEqual(data["role"], "decision")
+        ledger.validate_record({**data, "status": "escalated"})
 
 
 if __name__ == "__main__":

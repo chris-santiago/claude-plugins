@@ -35,6 +35,13 @@ Agent tool:
     Review checklist(s): [REVIEW_CHECKLISTS or "none" for an all-trivial batch].
     A fix dispatch missing the baseline or task files is malformed: return
     NEEDS_CONTEXT naming it.
+    Before changing anything, run
+    `python3 [SCRIPTS_DIR]/ledger.py baseline [FIX_BASELINE] --task <your task> --store <your record's directory>`.
+    `decision: <path>` must be the decision doc above; implement its choices.
+    `settled-by: cases` means every non-trivial finding only reports a case
+    the brief's Cases: line lists; `settled-by: ruling` means this dispatch
+    quotes the user's ruling. `trivial` and `unrecorded` need nothing more.
+    If it errors or doesn't match this dispatch, return NEEDS_CONTEXT quoting it.
 
     ## Before You Begin
 

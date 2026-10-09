@@ -24,12 +24,22 @@ Totality ("never crash on any input") is explicitly not a goal.
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
-       python3 ledger.py snapshot --task N --label "..." [--non-trivial] [--store DIR]
+       python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
+       python3 ledger.py baseline <tree> --task N [--store DIR]
+       python3 ledger.py findings --task N [--store DIR]
        python3 ledger.py fix-count --task N [--store DIR]
        python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
+
+A per-task decision is itself a record (role "decision", written by
+remediating-issues' per-task variant). Beyond its own shape, `check`
+verifies it against the store and the repo: it accounts for every
+finding on every reviewer record for its task, reconciles with every
+other decision in the store, and cites precedents that exist. A
+non-trivial `snapshot` takes one (or names why none is owed), so a fix
+cannot start from a decision nobody researched.
 
 Importable API: see __all__ below — the module's public query/validate/
 render surface (data classes, `get_store_dir`, the `load_*`/`compute_*`/
@@ -54,6 +64,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,7 +76,7 @@ __all__ = [
     "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
-    "non_trivial_fix_count",
+    "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
 ]
 
 SCHEMA_VERSION = 1
@@ -76,6 +87,8 @@ STATUS_ENUMS = {
     "spec-reviewer": {"compliant", "issues"},
     "quality-reviewer": {"approved", "issues"},
     "review-lite": {"clean", "block", "escalate"},
+    # A per-task decision: `escalated` when any finding goes to the user.
+    "decision": {"decided", "escalated"},
 }
 # Derived, never restated: a role added to STATUS_ENUMS alone (or vice
 # versa) would turn `check`'s corrective RecordError into a raw KeyError
@@ -83,6 +96,9 @@ STATUS_ENUMS = {
 VALID_ROLES = frozenset(STATUS_ENUMS)
 CODER_OPEN_STATUSES = {"blocked", "needs_context"}
 REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
+REVIEWER_ROLES = VALID_ROLES - {"coder", "decision"}
+# Roles whose records carry a validated `cycle`.
+CYCLE_ROLES = ("coder", "decision")
 
 # Decision-driving list fields beyond `status`, by role: required present,
 # must be a list, and each entry must be an object. Everything else
@@ -98,8 +114,9 @@ DECISION_LIST_FIELDS = {
 # Contracts still tell agents to always write them; absence is tolerated
 # so a mid-run plugin upgrade doesn't turn every earlier record malformed.
 OPTIONAL_LIST_FIELDS = {
-    "spec-reviewer": ("introduced_by_fix",),
-    "quality-reviewer": ("introduced_by_fix",),
+    "spec-reviewer": ("introduced_by_fix", "issues"),
+    "quality-reviewer": ("introduced_by_fix", "findings"),
+    "review-lite": ("findings",),
 }
 
 # Fix-loop fields (2026-08-28): a coder re-dispatched to fix findings
@@ -118,6 +135,26 @@ FIX_MODE_FIELDS = {
     "hunk_map": ("site", "implements"),
     "consumers_checked": ("symbol", "verified"),
 }
+
+# Decision records (2026-10-09). A reviewer finding is an `issues` or
+# `findings` entry, and a decision must account for every one: a choice
+# or an exclusion with its reason. `cannot_verify` entries may be decided
+# too, but aren't required. Each fix choice weighs at least two
+# candidates, each citing the code it mirrors as path:line or
+# path:start-end (relative to the repo toplevel).
+FINDING_FIELDS = ("issues", "findings")
+OPTIONAL_FINDING_FIELDS = ("cannot_verify",)
+CHOICE_KEYS = {"fix": ("reframe", "choice", "completeness"), "escalate": ("why", "evidence")}
+CANDIDATE_KEYS = ("name", "precedent", "why")
+CASE_KEYS = ("case", "today", "under_fix", "result")
+MIN_CANDIDATES = 2
+# A decision's file name carries its task and cycle, so `clear`, `findings`
+# and reconciliation all see it as one of the run's records.
+DECISION_STEM_RE = re.compile(r"^(?:task-(?P<task>\d+)|final)-decision-c(?P<cycle>\d+)$")
+PRECEDENT_RE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
+# Why a non-trivial fix owes no decision record: the brief's Cases: line
+# already settles it, or the user ruled on it.
+SETTLED_BY = ("cases", "ruling")
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -242,6 +279,9 @@ def validate_record(data: object) -> None:
         raise RecordError(f"missing required field(s): {', '.join(missing)}")
     if data["schema"] != SCHEMA_VERSION:
         raise RecordError(f"schema: got {data['schema']!r}, expected {SCHEMA_VERSION}")
+    # Records are matched to tasks by value: a "1" would hide from task 1.
+    if data["task"] != "final" and not _positive_int_value(data["task"]):
+        raise RecordError(f"task: got {data['task']!r}, expected a positive integer or 'final'")
 
     role = data["role"]
     # isinstance guard, not a type table: role/status must be hashable
@@ -274,25 +314,114 @@ def validate_record(data: object) -> None:
                 raise RecordError(
                     f"{field_name}[{idx}]: got {entry!r}, expected an object")
 
-    if role == "coder":
+    if role in CYCLE_ROLES:
         # Required: every fix-mode check keys off `cycle`, so a record that
         # omitted it would skip them all.
         if "cycle" not in data:
             raise RecordError("missing required field(s): cycle")
         cycle = data["cycle"]
-        # bool is an int subclass; True would silently read as cycle 1.
-        if not isinstance(cycle, int) or isinstance(cycle, bool) or cycle < 1:
-            raise RecordError(
-                f"cycle: got {cycle!r}, expected a positive integer "
-                "(1 on a first attempt, prior + 1 on a fix)")
+        if not _positive_int_value(cycle):
+            hint = ("1 on a first attempt, prior + 1 on a fix" if role == "coder"
+                    else "the coder's upcoming fix cycle")
+            raise RecordError(f"cycle: got {cycle!r}, expected a positive integer ({hint})")
+    if role == "coder":
         # Only a coder reporting a finished fix owes the fix-mode fields: one
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
-        if cycle >= 2 and data["status"] in DIAGNOSIS_STATUSES:
+        if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
             _validate_fix(data)
+    elif role == "decision":
+        _validate_decision(data)
 
 
 def _non_empty_str(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _positive_int_value(value: object) -> bool:
+    # bool is an int subclass; True would silently read as 1.
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _require_strs(entry: dict, keys: tuple[str, ...], where: str) -> None:
+    for key in keys:
+        if not _non_empty_str(entry.get(key)):
+            raise RecordError(f"{where}.{key}: got {entry.get(key)!r}, expected a non-empty string")
+
+
+def _require_objects(data: dict, field_name: str, min_len: int = 0) -> list[dict]:
+    value = data.get(field_name)
+    if not isinstance(value, list):
+        raise RecordError(f"{field_name}: got {value!r}, expected a list")
+    if len(value) < min_len:
+        raise RecordError(f"{field_name}: got {len(value)} entries, expected at least {min_len}")
+    for idx, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            raise RecordError(f"{field_name}[{idx}]: got {entry!r}, expected an object")
+    return value
+
+
+def _validate_decision(data: dict) -> None:
+    """A decision record's own shape: the reviewer records it answers, a
+    defended choice (or an escalation) per finding cluster, exclusions
+    with reasons, and its reconciliation with the run's other decisions.
+    What it must cover in the store is checked by `check_record`."""
+    stems = data.get("reviewer_records")
+    if not isinstance(stems, list) or not stems or not all(map(_non_empty_str, stems)):
+        raise RecordError(f"reviewer_records: got {stems!r}, expected a non-empty list of "
+                          "record names (e.g. task-3-spec-reviewer)")
+    affects = data.get("affects", [])
+    if not isinstance(affects, list) or not all(map(_positive_int_value, affects)):
+        raise RecordError(f"affects: got {affects!r}, expected a list of task numbers")
+    seen: set[str] = set()
+    escalated = False
+    for idx, choice in enumerate(_require_objects(data, "choices", min_len=1)):
+        where = f"choices[{idx}]"
+        kind = choice.get("kind")
+        if not isinstance(kind, str) or kind not in CHOICE_KEYS:
+            raise RecordError(f"{where}.kind: got {kind!r}, allowed set: {sorted(CHOICE_KEYS)}")
+        findings = choice.get("findings")
+        if not isinstance(findings, list) or not findings or not all(map(_non_empty_str, findings)):
+            raise RecordError(f"{where}.findings: got {findings!r}, expected a non-empty list "
+                              "of finding ids (from `ledger.py findings`)")
+        _claim_findings(findings, seen, where)
+        _require_strs(choice, CHOICE_KEYS[kind], where)
+        if kind == "escalate":
+            escalated = True
+        else:
+            _validate_candidates(choice, where)
+            for c_idx, case in enumerate(_require_objects(choice, "cases", min_len=1)):
+                _require_strs(case, CASE_KEYS, f"{where}.cases[{c_idx}]")
+    for idx, entry in enumerate(_require_objects(data, "excluded")):
+        _require_strs(entry, ("finding", "reason"), f"excluded[{idx}]")
+        _claim_findings([entry["finding"]], seen, f"excluded[{idx}]")
+    for idx, entry in enumerate(_require_objects(data, "reconciled")):
+        _require_strs(entry, ("decision", "relation"), f"reconciled[{idx}]")
+    expected = "escalated" if escalated else "decided"
+    if data["status"] != expected:
+        raise RecordError(f"status: got {data['status']!r}, expected {expected!r} "
+                          "(escalated exactly when a choice has kind 'escalate')")
+
+
+def _claim_findings(findings: list[str], seen: set[str], where: str) -> None:
+    for finding in findings:
+        if finding in seen:
+            raise RecordError(f"{where}: {finding!r} is accounted for twice")
+        seen.add(finding)
+
+
+def _validate_candidates(choice: dict, where: str) -> None:
+    """At least MIN_CANDIDATES, each with a precedent, exactly one chosen."""
+    candidates = _require_objects(choice, "candidates", min_len=MIN_CANDIDATES)
+    for idx, candidate in enumerate(candidates):
+        _require_strs(candidate, CANDIDATE_KEYS, f"{where}.candidates[{idx}]")
+        if not PRECEDENT_RE.match(candidate["precedent"]):
+            raise RecordError(f"{where}.candidates[{idx}].precedent: got "
+                              f"{candidate['precedent']!r}, expected path:line or "
+                              "path:start-end citing the code this candidate mirrors")
+    chosen = [c for c in candidates if c.get("chosen") is True]
+    if len(chosen) != 1:
+        raise RecordError(f"{where}.candidates: {len(chosen)} marked \"chosen\": true, "
+                          "expected exactly one")
 
 
 def _validate_fix(data: dict) -> None:
@@ -469,6 +598,11 @@ def _entry_digest(entry: dict) -> str:
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:8]
 
 
+def _item_id(stem: str, field_name: str, entry: dict) -> str:
+    """An entry-level id: the record, the field, and the entry's digest."""
+    return f"{stem}#{field_name}[{_entry_digest(entry)}]"
+
+
 def _describe_duplication(entry: dict) -> str:
     sites = ", ".join(entry.get("sites", []))
     return (f"sites=[{sites}] wants_owner={entry.get('wants_owner', '')} "
@@ -518,8 +652,7 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
         if describe is None:  # shape-producing field (new_shared_symbols), not an open item
             continue
         for entry in rec.data.get(field_name, []):
-            digest = _entry_digest(entry)
-            item_id = f"{rec.stem}#{field_name}[{digest}]"
+            item_id = _item_id(rec.stem, field_name, entry)
             if item_id in seen_ids:
                 # Two entries with identical content hash to the same id
                 # (spec Sec 6: ids are content-derived) — they're one
@@ -595,7 +728,7 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             lines.append(f"- resolves `{entry.get('resolves')}`: {entry.get('note', '')}")
         elif entry.get("type") == "snapshot":
             lines.append(f"- task {entry.get('task')} snapshot `{entry.get('tree')}`: "
-                          f"{entry.get('label', '')}")
+                          f"{entry.get('label', '')} ({_route_text(entry)})")
         elif entry.get("type") == "close_round":
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
@@ -894,18 +1027,106 @@ def _warn_submodules(repo: Path) -> None:
               "captured by snapshot/diff-since; check them by hand.", file=sys.stderr)
 
 
-def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str,
-                 non_trivial: bool = False) -> None:
+def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Callable[[], str],
+                 non_trivial: bool = False, decision: str | None = None,
+                 settled_by: str | None = None) -> None:
     """Record a fix baseline as a typed progress entry (so it survives
     compaction) and print the tree id for the dispatch. `non_trivial`
     marks a fix whose batch has a non-trivial finding: those are what the
-    escalation cap counts (see non_trivial_fix_count)."""
+    escalation cap counts (see non_trivial_fix_count). Such a fix names
+    its route: a decision record for this task that passes `check`, or
+    why none is owed (`settled_by`). `tree` may be a callable, so a
+    refused route writes no git objects."""
+    route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
+    tree = tree() if callable(tree) else tree
     ensure_store(store_dir)
     entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
     if non_trivial:
         entry["non_trivial"] = True
+        entry.update(route)
     _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
     print(tree)
+
+
+def _fix_route(store_dir: Path, task: int | str, non_trivial: bool,
+               decision: str | None, settled_by: str | None) -> dict:
+    if not non_trivial:
+        if decision or settled_by:
+            raise RecordError("--decision and --settled-by route a non-trivial fix; "
+                              "add --non-trivial")
+        return {}
+    if bool(decision) == bool(settled_by):
+        raise RecordError("a non-trivial fix needs exactly one of --decision <record> "
+                          f"or --settled-by {'|'.join(SETTLED_BY)}")
+    if settled_by:
+        if settled_by not in SETTLED_BY:
+            raise RecordError(f"--settled-by: got {settled_by!r}, allowed set: {list(SETTLED_BY)}")
+        return {"settled_by": settled_by}
+    path = _resolve_check_path(decision, str(store_dir))
+    if path.parent.resolve() != store_dir.resolve():
+        raise RecordError(f"{path}: a decision record must be in the store it answers "
+                          f"({store_dir})")
+    data = check_record(path)
+    if data["role"] != "decision":
+        raise RecordError(f"{path}: role {data['role']!r} is not a decision record")
+    if task != data["task"] and task not in data.get("affects", []):
+        raise RecordError(f"{path}: decides task {data['task']!r} (affects "
+                          f"{data.get('affects', [])}), not task {task!r}")
+    if not any(c["kind"] == "fix" for c in data["choices"]):
+        raise RecordError(f"{path}: every choice escalates; there is nothing to fix")
+    routed = [e.get("label") for e in load_progress_log(store_dir) if e.get("type") == "snapshot"
+              and e.get("task") == task and e.get("decision") == path.stem]
+    if routed:
+        raise RecordError(f"{path}: already routed task {task!r}'s fix {routed[0]!r}; a "
+                          "further fix needs a new decision")
+    return {"decision": path.stem, "decision_sha256": _file_sha256(path)}
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def find_baseline(log: list[dict], tree: str, task: int | str) -> dict:
+    """The last snapshot entry recording `tree` for `task`."""
+    matches = [e for e in log if e.get("type") == "snapshot"
+               and e.get("tree") == tree and e.get("task") == task]
+    if not matches:
+        raise RecordError(f"no snapshot of tree {tree!r} for task {task!r}: a fix "
+                          "baseline comes only from `ledger.py snapshot`")
+    return matches[-1]
+
+
+def cmd_baseline(store_dir: Path, tree: str, task: int | str) -> None:
+    """Print how a fix baseline was routed: `decision: <path>`,
+    `settled-by: cases|ruling`, `trivial`, or `unrecorded` (a non-trivial
+    snapshot from before routes existed). A decision must be byte-for-byte
+    the one `snapshot` checked; its coverage was checked then, and later
+    records (another task's decision, a re-review) don't reopen it."""
+    entry = find_baseline(load_progress_log(store_dir), tree, task)
+    kind, value = _route(entry)
+    if kind == "decision":
+        path = store_dir / f"{value}.json"
+        if not path.is_file() or _file_sha256(path) != entry.get("decision_sha256"):
+            raise RecordError(f"{path}: missing or changed since the snapshot checked it; "
+                              "a changed decision needs `check` and a new snapshot")
+        value = str(path)
+    print(f"{kind}: {value}" if value else kind)
+
+
+def _route(entry: dict) -> tuple[str, str]:
+    """A snapshot's route as (kind, value): decision, settled-by, trivial,
+    or unrecorded (non-trivial, from before routes were logged)."""
+    if not entry.get("non_trivial"):
+        return "trivial", ""
+    if entry.get("decision"):
+        return "decision", entry["decision"]
+    if entry.get("settled_by"):
+        return "settled-by", entry["settled_by"]
+    return "unrecorded", ""
+
+
+def _route_text(entry: dict) -> str:
+    return " ".join(part for part in _route(entry) if part)
 
 
 def non_trivial_fix_count(log: list[dict], task: int | str) -> int:
@@ -964,8 +1185,8 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
                   {"type": "resolution", "resolves": resolve_id, "note": note})
 
 
-# Store-managed handoff files beyond the JSON records: briefs, reports,
-# per-task decision docs, gate reports, and review packages. Gate
+# Store-managed handoff files beyond the JSON records (decision docs are
+# records): briefs, reports, gate reports, and review packages. Gate
 # reviewers read their own report path as their prior verdict, so these
 # must not outlive the run that wrote them.
 HANDOFF_FILE_PATTERNS = ("task-*-*.md", "design-review-*.md", "intent-recheck.md",
@@ -1007,23 +1228,168 @@ def _resolve_check_path(record_path: str, store: str | None) -> Path:
 
 
 def cmd_check(record_path: str, store: str | None = None) -> None:
-    """Write-time gate: strict parse + validation, then the same
-    item-construction path `open` uses (spec Sec 6, amended 2026-08-27) —
-    so a record that passes `check` cannot later render as malformed at
-    query time. Silent on success. A passing record inside a store (a
-    directory ensure_store seeded) is summarized into HISTORY_FILENAME
-    there, since the next cycle overwrites it."""
+    """Write-time gate (`check_record`). Silent on success. A passing
+    record inside a store (a directory ensure_store seeded) is summarized
+    into HISTORY_FILENAME there, since the next cycle overwrites it."""
     path = _resolve_check_path(record_path, store)
-    data = _parse_record_file(path)
+    data = check_record(path)
+    if _is_store(path.parent):
+        _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
 
+
+def check_record(path: Path) -> dict:
+    """Strict parse + validation, then the same item-construction path
+    `open` uses (spec Sec 6, amended 2026-08-27), so a record that passes
+    cannot later render as malformed at query time. A decision record is
+    also checked against its store and repo (`_check_decision_context`)."""
+    data = _parse_record_file(path)
     rec = Record(stem=path.stem, ok=True, data=data)
     try:
         _build_open_items(rec)
     except Exception as e:
         raise RecordError(
             f"{path}: passes validation but fails to render as an open item: {e}") from e
-    if _is_store(path.parent):
-        _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
+    if data["role"] == "decision":
+        _check_decision_context(path, data)
+    return data
+
+
+def finding_ids(rec: Record, fields: tuple[str, ...] = FINDING_FIELDS) -> dict[str, dict]:
+    """Content-derived ids (as `open` derives them) for a reviewer record's
+    entries in `fields`, mapped to the entry."""
+    ids = {}
+    for field_name in fields:
+        entries = rec.data.get(field_name)
+        for entry in entries if isinstance(entries, list) else []:
+            if isinstance(entry, dict):
+                ids[_item_id(rec.stem, field_name, entry)] = entry
+    return ids
+
+
+@dataclass
+class TaskRecords:
+    reviewers: list[Record]  # well-formed reviewer records for the tasks
+    malformed: list[Record]  # malformed records named for the tasks
+    decisions: list[Record]  # every well-formed decision record in the store
+
+
+def _task_records(store_dir: Path, tasks: list[int | str]) -> TaskRecords:
+    records = load_records(store_dir)
+    prefixes = tuple("final-" if t == "final" else f"task-{t}-" for t in tasks)
+    ok = [r for r in records if r.ok]
+    return TaskRecords(
+        reviewers=[r for r in ok if r.data["role"] in REVIEWER_ROLES and r.data["task"] in tasks],
+        malformed=[r for r in records if not r.ok and r.stem.startswith(prefixes)],
+        decisions=[r for r in ok if r.data["role"] == "decision"])
+
+
+def _check_decision_context(path: Path, data: dict) -> None:
+    """A decision, named for its task and cycle, answers every reviewer
+    record for its task and the tasks it `affects`, accounts for every
+    finding on them, reconciles with every decision written before it,
+    and cites precedents that exist in the repo. Coverage holds when the
+    decision is written; a fix's `snapshot` pins it by digest."""
+    _check_decision_name(path, data)
+    tasks = [data["task"], *data.get("affects", [])]
+    found = _task_records(path.parent, tasks)
+    if found.malformed:
+        raise RecordError("malformed record(s) for this decision's tasks hide their findings; "
+                          "fix them first: " + "; ".join(f"{r.stem}: {r.error}" for r in found.malformed))
+    reviewers = found.reviewers
+    _require_same_set("reviewer_records", set(data["reviewer_records"]),
+                      {r.stem for r in reviewers},
+                      f"well-formed reviewer records for task(s) {tasks} in the store")
+    required = {i for r in reviewers for i in finding_ids(r)}
+    known = required | {i for r in reviewers for i in finding_ids(r, OPTIONAL_FINDING_FIELDS)}
+    accounted = {f for c in data["choices"] for f in c["findings"]}
+    accounted |= {e["finding"] for e in data["excluded"]}
+    unknown = sorted(accounted - known)
+    if unknown:
+        raise RecordError(f"no such finding on the reviewer records: {unknown} "
+                          "(copy ids from `ledger.py findings`; a stale id means a "
+                          "reviewer record changed)")
+    missing = sorted(required - accounted)
+    if missing:
+        raise RecordError(f"findings not accounted for: {missing}; each needs a choice "
+                          "or an `excluded` entry with its reason")
+    _check_reconciled(path, data, found.decisions)
+    _check_precedents(path.parent, data["choices"])
+
+
+def _check_decision_name(path: Path, data: dict) -> None:
+    match = DECISION_STEM_RE.match(path.stem)
+    expected = f"{'final' if data['task'] == 'final' else f'task-{data['task']}'}-decision-c{data['cycle']}.json"
+    if (path.suffix != ".json" or not match or (match["task"] or "final") != str(data["task"])
+            or int(match["cycle"]) != data["cycle"]):
+        raise RecordError(f"{path.name}: a decision for task {data['task']!r} at cycle "
+                          f"{data['cycle']} is named {expected}")
+
+
+def _check_reconciled(path: Path, data: dict, decisions: list[Record]) -> None:
+    """Every decision written before this one is reconciled; a later one
+    may be, but can't be required, or the record would go stale."""
+    others = {r.stem for r in decisions if r.stem != path.stem}
+    listed = {e["decision"] for e in data["reconciled"]}
+    if listed - others:
+        raise RecordError(f"reconciled: {sorted(listed - others)} not among the other "
+                          f"decision records in the store: {sorted(others)}")
+    written = path.stat().st_mtime_ns
+    earlier = {s for s in others if (path.parent / f"{s}.json").stat().st_mtime_ns < written}
+    if earlier - listed:
+        raise RecordError(f"reconciled: missing {sorted(earlier - listed)}; list every "
+                          "decision written before this one")
+
+
+def _require_same_set(field_name: str, listed: set[str], present: set[str], what: str) -> None:
+    if listed - present:
+        raise RecordError(f"{field_name}: {sorted(listed - present)} not among the {what}: "
+                          f"{sorted(present)}")
+    if present - listed:
+        raise RecordError(f"{field_name}: missing {sorted(present - listed)}; list every "
+                          f"one of the {what}")
+
+
+def _check_precedents(store_dir: Path, choices: list[dict]) -> None:
+    """Each cited path:line names a real file and lines inside it."""
+    try:
+        repo = _toplevel(store_dir).resolve()
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise RecordError(f"{store_dir}: precedents resolve against the repo toplevel, "
+                          "but the store is not inside a git repository") from e
+    for idx, choice in enumerate(choices):
+        for c_idx, candidate in enumerate(choice.get("candidates", [])):
+            where = f"choices[{idx}].candidates[{c_idx}].precedent"
+            match = PRECEDENT_RE.match(candidate["precedent"])
+            target = (repo / match["path"]).resolve()
+            if not target.is_relative_to(repo) or not target.is_file():
+                raise RecordError(f"{where}: {match['path']!r} is not a file in the repo")
+            if target.is_relative_to(store_dir.resolve()):
+                raise RecordError(f"{where}: {match['path']!r} is in the store; cite the code")
+            start, end = int(match["start"]), int(match["end"] or match["start"])
+            n_lines = len(target.read_bytes().splitlines())
+            if not 1 <= start <= end <= n_lines:
+                raise RecordError(f"{where}: lines {start}-{end} are outside "
+                                  f"{match['path']} ({n_lines} lines)")
+
+
+def cmd_findings(store_dir: Path, task: int | str) -> None:
+    """What a decision for `task` must account for: each finding id with a
+    one-line summary, the optional cannot_verify ids, and the decisions to
+    reconcile with."""
+    found = _task_records(store_dir, [task])
+    reviewers, decisions = found.reviewers, found.decisions
+    print(f"reviewer records: {', '.join(r.stem for r in reviewers) or '(none)'}")
+    for rec in found.malformed:
+        print(f"MALFORMED (a decision can't pass until it's fixed): {rec.stem}: {rec.error}")
+    for title, fields in (("findings (each needs a choice or an exclusion)", FINDING_FIELDS),
+                          ("cannot_verify (optional)", OPTIONAL_FINDING_FIELDS)):
+        print(f"{title}:")
+        for rec in reviewers:
+            for finding_id, entry in finding_ids(rec, fields).items():
+                site = f"{entry.get('file', '')}:{entry.get('line', '')}".strip(":")
+                claim = str(entry.get("claim") or entry.get("requirement") or "")
+                print(f"  [{finding_id}] {site} {claim[:160]}".rstrip())
+    print(f"decisions to reconcile: {', '.join(r.stem for r in decisions) or '(none)'}")
 
 
 def _is_store(directory: Path) -> bool:
@@ -1078,6 +1444,8 @@ def cmd_stats(store_dir: Path) -> None:
     history = load_history(store_dir)
     if not history:
         print("No history yet: records are logged when `check` passes.")
+    _print_fix_routes(load_progress_log(store_dir))
+    if not history:
         return
     history.sort(key=lambda e: (_task_sort_key(e.get("task")), e.get("cycle") or 0,
                                 e.get("record") or ""))
@@ -1094,6 +1462,16 @@ def cmd_stats(store_dir: Path) -> None:
         flagged = [f"{e.get('record')} c{e.get('cycle') or '?'} ({e[signal]})"
                    for e in history if e.get(signal)]
         print(f"{signal}: {', '.join(flagged) if flagged else 'none'}")
+
+
+def _print_fix_routes(log: list[dict]) -> None:
+    """Each fix baseline and its route, so a non-trivial fix that skipped
+    the decision step shows up without reading the transcript."""
+    snapshots = [e for e in log if e.get("type") == "snapshot"]
+    if snapshots:
+        print("fixes:")
+    for entry in snapshots:
+        print(f"  task {entry.get('task')} {entry.get('label', '')}: {_route_text(entry)}")
 
 
 def _positive_int(value: str) -> int:
@@ -1158,7 +1536,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_snapshot.add_argument("--task", required=True, type=_task_arg)
     p_snapshot.add_argument("--label", required=True)
     p_snapshot.add_argument("--non-trivial", action="store_true",
-                            help="the fix batch has a non-trivial finding; counted by fix-count")
+                            help="the fix batch has a non-trivial finding; counted by "
+                                 "fix-count, and needs --decision or --settled-by")
+    route = p_snapshot.add_mutually_exclusive_group()
+    route.add_argument("--decision", metavar="RECORD",
+                       help="the decision record the fix implements; must pass check")
+    route.add_argument("--settled-by", choices=SETTLED_BY,
+                       help="why no decision record is owed: the brief's Cases: line "
+                            "settles the batch, or the user ruled on it")
+
+    p_baseline = sub.add_parser("baseline", parents=[store_parent],
+                                 help="print how a fix baseline was routed (decision "
+                                      "record path, settled-by, trivial), re-checking "
+                                      "its decision record")
+    p_baseline.add_argument("tree")
+    p_baseline.add_argument("--task", required=True, type=_task_arg)
+
+    p_findings = sub.add_parser("findings", parents=[store_parent],
+                                 help="list the finding ids a decision for a task must "
+                                      "account for, and the decisions to reconcile with")
+    p_findings.add_argument("--task", required=True, type=_task_arg)
 
     p_count = sub.add_parser("fix-count", parents=[store_parent],
                               help="print how many non-trivial fixes the task has had "
@@ -1252,8 +1649,12 @@ def main() -> None:
             cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
-            cmd_snapshot(store_dir, args.task, args.label, snapshot_tree(Path.cwd()),
-                         args.non_trivial)
+            cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()),
+                         args.non_trivial, args.decision, args.settled_by)
+        elif args.command == "baseline":
+            cmd_baseline(store_dir, args.tree, args.task)
+        elif args.command == "findings":
+            cmd_findings(store_dir, args.task)
         elif args.command == "fix-count":
             print(non_trivial_fix_count(load_progress_log(store_dir), args.task))
         elif args.command == "close-round":

@@ -8,6 +8,24 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-09 — Decisions that were researched
+
+In ferrum's wave 8, every per-task decision doc was written by the orchestrator itself, in a heredoc, about a minute after the reviews came back: one grep of research, no `remediating-issues` dispatch, rejected options in one line each, and two questions left to the coder ("if Rust publishes it", "or equivalent"). SDD's instruction to dispatch the research agent was already explicit. Nothing enforced it, so this release moves the check out of the orchestrator's own prompt and into a script and a second agent.
+
+### Added
+- **Decision docs are typed records (role `decision`).** The `remediating-issues` per-task variant writes `task-N-decision-c<cycle>.json` and runs `ledger.py check` on it. Beyond its shape (each fix choice has a reframe, a cases table, a completeness line, and at least two candidates with exactly one chosen), `check` verifies it against the store and the repo:
+  - it accounts for every finding on every reviewer record for its task (and every task in `affects`), with a choice or an exclusion and its reason;
+  - it reconciles with every decision doc written before it;
+  - each candidate cites a `path:line` that exists in the repo, outside the store;
+  - its file name matches its `task` and `cycle`, and a malformed record for its task blocks it.
+- **`ledger.py findings --task N`** lists the finding ids a decision must account for, any malformed record hiding findings, and the decision docs to reconcile with.
+- **`ledger.py baseline <tree> --task N`** prints how a fix baseline was routed. Coders run it before fixing and return `needs_context` when it errors or doesn't match the dispatch.
+
+### Changed
+- **A non-trivial fix names its route.** `snapshot --non-trivial` now takes `--decision <record>` (which must pass `check` for this task, have a fix choice, and not have routed a fix already) or `--settled-by cases|ruling`. It logs the decision's digest, so `baseline` confirms the doc is the one that passed without re-deriving coverage that later records would make stale. `stats` lists every fix's route.
+- **SDD tells the orchestrator to dispatch the research agent and never write the decision doc itself**, with a matching red flag. The dispatch has the agent invoke the skill with the Skill tool.
+- **Record envelopes validate `task`** (a positive integer or `"final"`), and reviewer `issues`/`findings` lists are validated when present, so a malformed finding can't drop out of a decision's coverage.
+
 ## [0.7.0] - 2026-10-08 — Comments that state behavior
 
 A wave-8 run on 0.6.0 showed where its fix cycles went. One fix regressed and the 0.6.0 machinery caught and diagnosed it as designed. Most of the extra cycles came from something else: coders copying the run's own vocabulary (task and finding ids, cycle numbers, decision docs, commit hashes) into code comments, which a plan constraint forbade and the coders' own self-check greps kept missing. The run's records also couldn't show any of this directly, since each cycle overwrites the last verdict.

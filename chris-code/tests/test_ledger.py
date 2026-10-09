@@ -1404,10 +1404,10 @@ class TestFixBaseline(GitRepoTestCase):
         # labels bounces and reviewer re-dispatches take no flagged snapshot.
         store = self.repo / ".sdd"
         with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(store, 4, "pre-fix c2", "t1", non_trivial=True)
+            ledger.cmd_snapshot(store, 4, "pre-fix c2", "t1", True, settled_by="cases")
             ledger.cmd_snapshot(store, 4, "pre-fix c3", "t2")
-            ledger.cmd_snapshot(store, 5, "pre-fix c2", "t3", non_trivial=True)
-            ledger.cmd_snapshot(store, 4, "pre-fix c4", "t4", non_trivial=True)
+            ledger.cmd_snapshot(store, 5, "pre-fix c2", "t3", True, settled_by="cases")
+            ledger.cmd_snapshot(store, 4, "pre-fix c4", "t4", True, settled_by="ruling")
         log = ledger.load_progress_log(store)
         self.assertEqual(ledger.non_trivial_fix_count(log, 4), 2)
         self.assertEqual(ledger.non_trivial_fix_count(log, 6), 0)
@@ -1417,11 +1417,11 @@ class TestFixBaseline(GitRepoTestCase):
         # round 1's non-trivial fixes, just as its records don't.
         store = self.repo / ".sdd"
         with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t1", non_trivial=True)
-            ledger.cmd_snapshot(store, "final", "pre-fix c3", "t2", non_trivial=True)
+            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t1", True, settled_by="cases")
+            ledger.cmd_snapshot(store, "final", "pre-fix c3", "t2", True, settled_by="cases")
             ledger.cmd_close_round(store, "round 1", "abc", 1)
-            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t3", non_trivial=True)
-            ledger.cmd_snapshot(store, 7, "pre-fix c2", "t4", non_trivial=True)
+            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t3", True, settled_by="cases")
+            ledger.cmd_snapshot(store, 7, "pre-fix c2", "t4", True, settled_by="cases")
         log = ledger.load_progress_log(store)
         self.assertEqual(ledger.non_trivial_fix_count(log, "final"), 1)
         self.assertEqual(ledger.non_trivial_fix_count(log, 7), 1)
@@ -1430,7 +1430,8 @@ class TestFixBaseline(GitRepoTestCase):
         run = lambda *a: subprocess.run(  # noqa: E731
             [sys.executable, str(LEDGER_PY), *a, "--store", str(self.repo / ".sdd")],
             cwd=self.repo, capture_output=True, text=True)
-        snap = run("snapshot", "--task", "2", "--label", "pre-fix c2", "--non-trivial")
+        snap = run("snapshot", "--task", "2", "--label", "pre-fix c2", "--non-trivial",
+                   "--settled-by", "cases")
         self.assertEqual(snap.returncode, 0, snap.stderr)
         count = run("fix-count", "--task", "2")
         self.assertEqual((count.returncode, count.stdout.strip()), (0, "1"), count.stderr)
@@ -1444,6 +1445,455 @@ class TestFixBaseline(GitRepoTestCase):
         self.assertEqual(ledger.load_progress_log(store),
                          [{"type": "snapshot", "task": 4, "label": "pre-fix c2",
                            "tree": "deadbeef"}])
+
+
+# --- decision records (2026-10-09) ---
+
+_SPEC_ISSUE = {"kind": "missing", "file": "a.py", "line": 1, "claim": "bad value carried"}
+_QUALITY_FINDING = {"severity": 2, "file": "a.py", "line": 1, "claim": "too broad"}
+_NOTE = {"severity": 1, "file": "a.py", "line": 1, "claim": "a note"}
+
+
+def _candidate(name: str, chosen: bool = False, precedent: str = "a.py:1") -> dict:
+    return {"name": name, "precedent": precedent, "why": f"why {name}", "chosen": chosen}
+
+
+def _fix_choice(findings: list[str], **overrides) -> dict:
+    choice = {"kind": "fix", "findings": findings, "reframe": "r", "choice": "c",
+              "completeness": "searched callers of x",
+              "candidates": [_candidate("A", chosen=True), _candidate("B")],
+              "cases": [{"case": "k", "today": "t", "under_fix": "u", "result": "fixed"}]}
+    choice.update(overrides)
+    return choice
+
+
+def _decision(findings: list[str], **overrides) -> dict:
+    data = {"schema": 1, "agent": "remediating-issues", "role": "decision", "task": 1,
+            "status": "decided", "cycle": 2, "reviewer_records": ["task-1-spec-reviewer"],
+            "choices": [_fix_choice(findings)], "excluded": [], "reconciled": []}
+    data.update(overrides)
+    return data
+
+
+class TestDecisionShape(unittest.TestCase):
+    """validate_record on a decision's own shape (no store or repo needed)."""
+
+    def assertRejects(self, data: dict, fragment: str):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(data)
+        self.assertIn(fragment, str(ctx.exception))
+
+    def test_a_complete_decision_is_valid(self):
+        ledger.validate_record(_decision(["x#issues[1]"]))
+
+    def test_one_candidate_is_not_a_defense(self):
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(
+            ["x"], candidates=[_candidate("A", chosen=True)])]), "expected at least 2")
+
+    def test_exactly_one_candidate_is_chosen(self):
+        for flags in ((False, False), (True, True)):
+            candidates = [_candidate("A", chosen=flags[0]), _candidate("B", chosen=flags[1])]
+            self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], candidates=candidates)]),
+                               "expected exactly one")
+
+    def test_a_precedent_needs_a_line(self):
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(
+            ["x"], candidates=[_candidate("A", chosen=True, precedent="a.py"), _candidate("B")])]),
+            "precedent")
+
+    def test_a_fix_needs_completeness_and_cases(self):
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], completeness=" ")]),
+                           "completeness")
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], cases=[])]),
+                           "cases: got 0 entries")
+
+    def test_a_finding_is_accounted_for_once(self):
+        self.assertRejects(_decision(["x"], excluded=[{"finding": "x", "reason": "trivial"}]),
+                           "accounted for twice")
+
+    def test_status_follows_escalation(self):
+        escalate = {"kind": "escalate", "findings": ["y"], "why": "no fixture", "evidence": "e"}
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"]), escalate]),
+                           "expected 'escalated'")
+        ledger.validate_record(_decision(["x"], status="escalated",
+                                         choices=[_fix_choice(["x"]), escalate]))
+        self.assertRejects(_decision(["x"], status="escalated"), "expected 'decided'")
+
+    def test_cycle_is_required(self):
+        data = _decision(["x"])
+        del data["cycle"]
+        self.assertRejects(data, "cycle")
+
+    def test_a_non_string_kind_is_a_record_error(self):
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], kind=["fix"])]), "kind")
+
+    def test_task_is_a_positive_integer_or_final(self):
+        for task in ("1", 0, True, "Final"):
+            with self.subTest(task=task):
+                self.assertRejects(_spec_reviewer(task=task), "task")
+        ledger.validate_record(_spec_reviewer(task="final"))
+
+    def test_reviewer_finding_lists_hold_objects(self):
+        self.assertRejects(_spec_reviewer(issues="none"), "issues")
+        self.assertRejects(_review_lite(findings=["x"]), "findings[0]")
+
+
+class DecisionStoreTestCase(GitRepoTestCase):
+    """A store inside the repo with one spec and one quality reviewer record
+    for task 1; a.py (one line) is the only precedent target."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = ledger.ensure_store(self.repo / ".sdd")
+        spec = _spec_reviewer(status="issues", issues=[_SPEC_ISSUE],
+                              cannot_verify=[{"requirement": "r", "why": "w", "should_check": "s"}])
+        quality = {**_spec_reviewer(agent="python-quality-reviewer", role="quality-reviewer",
+                                    status="approved"), "findings": [_QUALITY_FINDING, _NOTE]}
+        del quality["issues"], quality["cannot_verify"]
+        _write(self.store, "task-1-spec-reviewer.json", spec)
+        _write(self.store, "task-1-python-quality-reviewer.json", quality)
+        self.spec_id = _entry_id("task-1-spec-reviewer", "issues", _SPEC_ISSUE)
+        self.quality_id = _entry_id("task-1-python-quality-reviewer", "findings", _QUALITY_FINDING)
+        self.note_id = _entry_id("task-1-python-quality-reviewer", "findings", _NOTE)
+
+    def _complete(self, **overrides) -> dict:
+        data = _decision([self.spec_id, self.quality_id],
+                         reviewer_records=["task-1-spec-reviewer", "task-1-python-quality-reviewer"],
+                         excluded=[{"finding": self.note_id, "reason": "severity-1 note"}])
+        data.update(overrides)
+        return data
+
+    def _check(self, data: dict, name: str = "task-1-decision-c2.json") -> None:
+        ledger.check_record(_write(self.store, name, data))
+
+    def assertCheckFails(self, data: dict, fragment: str, name: str = "task-1-decision-c2.json"):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(data, name)
+        self.assertIn(fragment, str(ctx.exception))
+
+
+class TestDecisionContext(DecisionStoreTestCase):
+
+    def test_a_decision_accounting_for_every_finding_passes(self):
+        self._check(self._complete())
+
+    def test_an_unaccounted_finding_is_named(self):
+        self.assertCheckFails(self._complete(excluded=[]), self.note_id)
+
+    def test_an_unknown_or_stale_id_is_refused(self):
+        self.assertCheckFails(
+            self._complete(excluded=[{"finding": "task-1-spec-reviewer#issues[00000000]",
+                                      "reason": "x"}]), "no such finding")
+
+    def test_cannot_verify_may_be_decided_but_is_not_required(self):
+        cv = _entry_id("task-1-spec-reviewer", "cannot_verify",
+                       {"requirement": "r", "why": "w", "should_check": "s"})
+        self._check(self._complete(choices=[_fix_choice([self.spec_id, self.quality_id, cv])]))
+
+    def test_every_reviewer_record_for_the_task_is_listed(self):
+        self.assertCheckFails(self._complete(reviewer_records=["task-1-spec-reviewer"]),
+                              "task-1-python-quality-reviewer")
+
+    def test_another_tasks_reviewers_are_not_required(self):
+        _write(self.store, "task-2-spec-reviewer.json",
+               _spec_reviewer(task=2, status="issues", issues=[_SPEC_ISSUE]))
+        self._check(self._complete())
+
+    def test_a_listed_record_must_be_a_reviewer_for_the_task(self):
+        self.assertCheckFails(self._complete(reviewer_records=[
+            "task-1-spec-reviewer", "task-1-python-quality-reviewer", "task-1-python-coder"]),
+            "not among")
+
+    def _age(self, name: str, seconds: int) -> None:
+        path = self.store / name
+        stamp = path.stat().st_mtime_ns - seconds * 10**9
+        os.utime(path, ns=(stamp, stamp))
+
+    def test_every_decision_written_earlier_is_reconciled(self):
+        self._check(self._complete(), name="task-1-decision-c2.json")
+        self._age("task-1-decision-c2.json", 60)
+        self.assertCheckFails(self._complete(cycle=3), "task-1-decision-c2",
+                              name="task-1-decision-c3.json")
+        self._check(self._complete(cycle=3, reconciled=[
+            {"decision": "task-1-decision-c2", "relation": "c2's mechanism failed because"}]),
+            name="task-1-decision-c3.json")
+
+    def test_an_earlier_decision_stays_valid_when_a_later_one_lands(self):
+        c2 = _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._age("task-1-decision-c2.json", 60)
+        self._check(self._complete(cycle=3, reconciled=[
+            {"decision": "task-1-decision-c2", "relation": "r"}]), name="task-1-decision-c3.json")
+        ledger.check_record(c2)
+
+    def test_reconciled_may_not_name_a_missing_decision_or_itself(self):
+        for stem in ("task-9-decision-c2", "task-1-decision-c2"):
+            with self.subTest(stem=stem):
+                self.assertCheckFails(self._complete(reconciled=[
+                    {"decision": stem, "relation": "r"}]), "not among the other")
+
+    def test_affects_brings_the_affected_tasks_findings_in(self):
+        _write(self.store, "task-2-spec-reviewer.json",
+               _spec_reviewer(task=2, status="issues", issues=[_SPEC_ISSUE]))
+        spec2 = _entry_id("task-2-spec-reviewer", "issues", _SPEC_ISSUE)
+        self.assertCheckFails(self._complete(affects=[2]), "task-2-spec-reviewer")
+        self.assertCheckFails(self._complete(affects=[2], reviewer_records=[
+            "task-1-spec-reviewer", "task-1-python-quality-reviewer", "task-2-spec-reviewer"]),
+            spec2)
+        self._check(self._complete(affects=[2], reviewer_records=[
+            "task-1-spec-reviewer", "task-1-python-quality-reviewer", "task-2-spec-reviewer"],
+            choices=[_fix_choice([self.spec_id, self.quality_id, spec2])]))
+
+    def test_a_malformed_record_for_the_task_blocks_the_decision(self):
+        (self.store / "task-1-rust-quality-reviewer.json").write_text("{not json")
+        self.assertCheckFails(self._complete(), "task-1-rust-quality-reviewer")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_findings(self.store, 1)
+        self.assertIn("MALFORMED", out.getvalue())
+
+    def test_another_tasks_malformed_record_does_not_block(self):
+        (self.store / "task-12-rust-quality-reviewer.json").write_text("{not json")
+        self._check(self._complete())
+
+    def test_the_name_carries_task_and_cycle(self):
+        for name in ("task-1-decision-c3.json", "task-2-decision-c2.json",
+                     "task-1-decision.json", "task-1-decision-c2.txt", "decision.json"):
+            with self.subTest(name=name):
+                self.assertCheckFails(self._complete(), "is named task-1-decision-c2.json",
+                                      name=name)
+
+    def test_a_final_decision_is_named_for_final(self):
+        lite = _review_lite(task="final", status="block", findings=[_QUALITY_FINDING])
+        _write(self.store, "final-python-review-lite.json", lite)
+        lite_id = _entry_id("final-python-review-lite", "findings", _QUALITY_FINDING)
+        data = _decision([lite_id], task="final", reviewer_records=["final-python-review-lite"])
+        self._check(data, name="final-decision-c2.json")
+
+    def test_a_precedent_cannot_cite_the_store(self):
+        _write(self.store, "notes.json", {"x": 1})
+        choice = _fix_choice([self.spec_id, self.quality_id], candidates=[
+            _candidate("A", chosen=True, precedent=".sdd/notes.json:1"), _candidate("B")])
+        self.assertCheckFails(self._complete(choices=[choice]), "is in the store")
+
+    def test_a_precedent_must_name_a_file_in_the_repo(self):
+        choice = _fix_choice([self.spec_id, self.quality_id], candidates=[
+            _candidate("A", chosen=True, precedent="missing.py:1"), _candidate("B")])
+        self.assertCheckFails(self._complete(choices=[choice]), "'missing.py' is not a file")
+
+    def test_a_precedent_cannot_leave_the_repo(self):
+        # A real file, so only the containment check can refuse it.
+        with tempfile.TemporaryDirectory() as elsewhere:
+            outside = Path(elsewhere) / "outside.py"
+            outside.write_text("y = 1\n", encoding="utf-8")
+            rel = os.path.relpath(outside.resolve(), self.repo.resolve())
+            choice = _fix_choice([self.spec_id, self.quality_id], candidates=[
+                _candidate("A", chosen=True, precedent=f"{rel}:1"), _candidate("B")])
+            self.assertCheckFails(self._complete(choices=[choice]), "is not a file in the repo")
+
+    def test_a_precedent_line_must_exist(self):
+        for precedent in ("a.py:2", "a.py:1-2", "a.py:0"):
+            choice = _fix_choice([self.spec_id, self.quality_id], candidates=[
+                _candidate("A", chosen=True, precedent=precedent), _candidate("B")])
+            self.assertCheckFails(self._complete(choices=[choice]), "outside a.py (1 lines)")
+
+    def test_a_store_outside_git_cannot_resolve_precedents(self):
+        with tempfile.TemporaryDirectory() as loose:
+            store = ledger.ensure_store(Path(loose))
+            _write(store, "task-1-spec-reviewer.json",
+                   _spec_reviewer(status="issues", issues=[_SPEC_ISSUE]))
+            path = _write(store, "task-1-decision-c2.json", _decision([self.spec_id]))
+            with self.assertRaises(ledger.RecordError) as ctx:
+                ledger.check_record(path)
+            self.assertIn("not inside a git repository", str(ctx.exception))
+
+    def test_cmd_check_runs_the_context_check_and_logs_history(self):
+        path = _write(self.store, "task-1-decision-c2.json", self._complete(excluded=[]))
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(path))
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        ledger.cmd_check(str(path))
+        history = (self.store / ledger.HISTORY_FILENAME).read_text().splitlines()
+        self.assertEqual(json.loads(history[-1])["role"], "decision")
+
+    def test_findings_lists_exactly_the_ids_check_requires(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_findings(self.store, 1)
+        listed = re.findall(r"\[(task-1-[^\]]+\])\]", out.getvalue())
+        required, optional = out.getvalue().split("cannot_verify (optional):")
+        self.assertEqual(set(re.findall(r"\[(task-1-[^\]]+\])\]", required)),
+                         {self.spec_id, self.quality_id, self.note_id})
+        self.assertEqual(len(re.findall(r"\[(task-1-[^\]]+\])\]", optional)), 1)
+        self.assertEqual(len(listed), 4)
+        self.assertIn("decisions to reconcile: (none)", out.getvalue())
+
+
+class TestSnapshotRoutes(DecisionStoreTestCase):
+    """A non-trivial fix baseline names its route; a decision route must
+    pass `check` for the snapshot's task."""
+
+    def _snapshot(self, task=1, **kwargs) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_snapshot(self.store, task, "pre-fix c2", "tree1", **kwargs)
+        return out.getvalue()
+
+    def test_a_non_trivial_fix_needs_a_route(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True)
+        self.assertIn("--decision", str(ctx.exception))
+        with self.assertRaises(ledger.RecordError):
+            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json",
+                           settled_by="cases")
+        self.assertEqual(ledger.load_progress_log(self.store), [])
+
+    def test_a_route_without_non_trivial_is_refused(self):
+        with self.assertRaises(ledger.RecordError):
+            self._snapshot(settled_by="cases")
+
+    def test_a_checked_decision_is_logged_and_counted(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        log = ledger.load_progress_log(self.store)
+        self.assertEqual(log[-1]["decision"], "task-1-decision-c2")
+        self.assertEqual(ledger.non_trivial_fix_count(log, 1), 1)
+
+    def test_a_failing_decision_logs_nothing(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete(excluded=[]))
+        with self.assertRaises(ledger.RecordError):
+            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        self.assertEqual(ledger.load_progress_log(self.store), [])
+
+    def test_a_decision_routes_only_its_own_or_affected_tasks(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(task=2, non_trivial=True, decision="task-1-decision-c2.json")
+        self.assertIn("not task 2", str(ctx.exception))
+        _write(self.store, "task-1-decision-c2.json", self._complete(affects=[2]))
+        self._snapshot(task=2, non_trivial=True, decision="task-1-decision-c2.json")
+
+    def test_a_decision_outside_the_store_is_refused(self):
+        with tempfile.TemporaryDirectory() as elsewhere:
+            path = _write(Path(elsewhere), "task-1-decision-c2.json", self._complete())
+            with self.assertRaises(ledger.RecordError) as ctx:
+                self._snapshot(non_trivial=True, decision=str(path))
+            self.assertIn("must be in the store", str(ctx.exception))
+
+    def test_a_non_decision_record_is_refused(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True, decision="task-1-spec-reviewer.json")
+        self.assertIn("not a decision record", str(ctx.exception))
+
+    def test_settled_by_is_logged(self):
+        self._snapshot(non_trivial=True, settled_by="ruling")
+        self.assertEqual(ledger.load_progress_log(self.store)[-1]["settled_by"], "ruling")
+
+    def test_baseline_reports_each_route(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "t-dec", True,
+                                decision="task-1-decision-c2.json")
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t-cases", True, settled_by="cases")
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c4", "t-trivial")
+        ledger._append_jsonl(self.store / ledger.PROGRESS_FILENAME, {
+            "type": "snapshot", "task": 1, "label": "old", "tree": "t-old", "non_trivial": True})
+        for tree, expected in (("t-dec", f"decision: {self.store / 'task-1-decision-c2.json'}"),
+                               ("t-cases", "settled-by: cases"), ("t-trivial", "trivial"),
+                               ("t-old", "unrecorded")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ledger.cmd_baseline(self.store, tree, 1)
+            self.assertEqual(out.getvalue().strip(), expected)
+
+    def test_baseline_survives_later_records(self):
+        # A parallel task's decision and a re-review land after the
+        # snapshot; the routed decision was checked then and stays valid.
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        _write(self.store, "task-2-spec-reviewer.json",
+               _spec_reviewer(task=2, status="issues", issues=[_SPEC_ISSUE]))
+        spec2 = _entry_id("task-2-spec-reviewer", "issues", _SPEC_ISSUE)
+        later = _write(self.store, "task-2-decision-c2.json", _decision(
+            [spec2], task=2, reviewer_records=["task-2-spec-reviewer"],
+            reconciled=[{"decision": "task-1-decision-c2", "relation": "disjoint"}]))
+        ledger.check_record(later)
+        _write(self.store, "task-1-spec-reviewer.json",
+               _spec_reviewer(status="issues", issues=[{**_SPEC_ISSUE, "claim": "new"}]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, "tree1", 1)
+        self.assertTrue(out.getvalue().startswith("decision: "))
+
+    def test_baseline_refuses_a_decision_changed_after_the_snapshot(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        _write(self.store, "task-1-decision-c2.json", self._complete(excluded=[]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_baseline(self.store, "tree1", 1)
+        self.assertIn("changed since the snapshot", str(ctx.exception))
+        (self.store / "task-1-decision-c2.json").unlink()
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_baseline(self.store, "tree1", 1)
+
+    def test_a_decision_routes_one_fix(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        self.assertIn("needs a new decision", str(ctx.exception))
+
+    def test_an_all_escalation_decision_routes_no_fix(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete(
+            status="escalated", choices=[{"kind": "escalate", "why": "w", "evidence": "e",
+                                          "findings": [self.spec_id, self.quality_id]}]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        self.assertIn("nothing to fix", str(ctx.exception))
+
+    def test_baseline_matches_the_task_and_takes_the_latest_snapshot(self):
+        # Parallel tasks share a working tree, so one tree id can be two
+        # tasks' baselines; a re-taken baseline supersedes the earlier one.
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="cases")
+            ledger.cmd_snapshot(self.store, 2, "pre-fix c2", "shared")
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="ruling")
+        for task, expected in ((1, "settled-by: ruling"), (2, "trivial")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                ledger.cmd_baseline(self.store, "shared", task)
+            self.assertEqual(out.getvalue().strip(), expected)
+
+    def test_baseline_refuses_an_unknown_tree(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_baseline(self.store, "nope", 1)
+        self.assertIn("ledger.py snapshot", str(ctx.exception))
+
+    def test_stats_lists_each_fix_route(self):
+        self._snapshot(non_trivial=True, settled_by="cases")
+        ledger._append_jsonl(self.store / ledger.PROGRESS_FILENAME, {
+            "type": "snapshot", "task": 1, "label": "pre-fix c3", "tree": "t", "non_trivial": True})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        self.assertIn("task 1 pre-fix c2: settled-by cases", out.getvalue())
+        self.assertIn("task 1 pre-fix c3: unrecorded", out.getvalue())
+
+    def test_cli_snapshot_with_a_decision_then_baseline(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        run = lambda *a: subprocess.run(  # noqa: E731
+            [sys.executable, str(LEDGER_PY), *a, "--store", str(self.store)],
+            cwd=self.repo, capture_output=True, text=True)
+        refused = run("snapshot", "--task", "1", "--label", "pre-fix c2", "--non-trivial")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("--decision", refused.stderr)
+        snap = run("snapshot", "--task", "1", "--label", "pre-fix c2", "--non-trivial",
+                   "--decision", "task-1-decision-c2.json")
+        self.assertEqual(snap.returncode, 0, snap.stderr)
+        base = run("baseline", snap.stdout.strip(), "--task", "1")
+        self.assertEqual(base.returncode, 0, base.stderr)
+        self.assertTrue(base.stdout.startswith("decision: "))
+        findings = run("findings", "--task", "1")
+        self.assertIn(self.spec_id, findings.stdout)
 
 
 # --- process labels (review-process narrative in code) ---

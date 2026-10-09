@@ -98,7 +98,46 @@ A set of issues is a **batch**, not a per-issue fan-out. Triage and rank them, f
 
 Every other batch keeps the full `lean-spec` route.
 
-**Per-task variant.** When the batch is one SDD task's non-trivial review findings (see `chris-code:subagent-driven-development`, *Constructing Reviewer Dispatches*), the task's coder already owns the fix, so this variant is decision-only. Run only `chris-code:coherent-change` stages 2–4: batch research over the task's changed files, then a defended choice per finding. Write all of them to the one output path the dispatch supplies and return that path. When the research shows a finding can't or shouldn't be fixed as asked (no reachable fixture for a requested test, a requirement that conflicts with another), say so for that finding, with the evidence, instead of defending a change: SDD escalates it to the user. It skips this skill's stage 1 (the reviewer records already frame each finding, and the coder's TDD supplies the tests). It has **no approval checkpoint**: persist the doc immediately and do not ask to proceed, because SDD's execution stays continuous and a third non-trivial fix escalates to the user instead (`ledger.py fix-count`). It also has no `lean-spec`, no `lean-plan`, and no origin recording, since the reviewers' re-review is the close. A recurring finding's defended choice must read the prior decision doc and say why its mechanism failed. A finding the reviewers listed in `introduced_by_fix` was caused by the previous fix: its defended choice must say how that fix broke it, reading the fix's diff (`ledger.py diff-since` the previous fix baseline) and the coder record's `hunk_map` and `consumers_checked`.
+**Per-task variant.** When the batch is one SDD task's non-trivial review findings (see `chris-code:subagent-driven-development`, *Constructing Reviewer Dispatches*), the task's coder already owns the fix, so this variant is decision-only. Run only `chris-code:coherent-change` stages 2–4: batch research over the task's changed files, then a defended choice per finding. Start with `python3 <scripts-path>/ledger.py findings --task N --store <store>`: it lists every finding id on the task's reviewer records, which the decision must account for, and every decision doc already in the store, which it must reconcile with. A decision whose choices change another task's code lists that task in `affects` and accounts for its findings too (`findings --task M` for each). Research means reading the code each candidate would change and the code it would mirror, not restating the reviewers' probes. Settle every open question by reading: "use X if it exists" or "`f()` or equivalent" handed to the coder is research left undone.
+
+Write the decision doc as one typed record to the output path the dispatch supplies (`task-N-decision-c<cycle>.json`, or `final-decision-c<cycle>.json` at the whole-change gate; `check` holds the name to the record's `task` and `cycle`), run `python3 <scripts-path>/ledger.py check <path>` until it exits 0, and return that path. `check` verifies that every finding is accounted for, every decision written before this one is reconciled, and every precedent exists in the repo, outside the store. A non-trivial fix can't start until it passes, and each decision routes one fix.
+
+```json
+{
+  "schema": 1,
+  "agent": "remediating-issues",
+  "role": "decision",
+  "task": 3,
+  "status": "decided | escalated",
+  "cycle": 2,
+  "reviewer_records": ["task-3-spec-reviewer", "task-3-python-quality-reviewer"],
+  "affects": [],
+  "choices": [
+    {
+      "kind": "fix",
+      "findings": ["task-3-spec-reviewer#issues[1a2b3c4d]"],
+      "reframe": "the facts from research that change the problem",
+      "choice": "what changes, what is deleted, what is deliberately left alone",
+      "candidates": [
+        {"name": "validate under the old type", "precedent": "src/scale.py:120-134", "why": "why it wins", "chosen": true},
+        {"name": "validate after translating", "precedent": "src/merge.py:88", "why": "why it loses"}
+      ],
+      "cases": [{"case": "ordinal padding 1.5 to band", "today": "refused at render", "under_fix": "refused at to_spec()", "result": "fixed"}],
+      "completeness": "cases I might be missing, and where I searched for them"
+    },
+    {"kind": "escalate", "findings": ["task-3-python-quality-reviewer#findings[5e6f7a8b]"], "why": "no reachable fixture for the requested test", "evidence": "what the research showed"}
+  ],
+  "excluded": [{"finding": "task-3-python-quality-reviewer#findings[9c0d1e2f]", "reason": "trivial: message text, fixed directly"}],
+  "reconciled": [{"decision": "task-2-decision-c2", "relation": "how this decision fits that one, or why they don't touch"}]
+}
+```
+
+- `choices`: one per finding or cluster of findings sharing a cause. A `fix` choice carries the defended choice's parts: `reframe`, `choice`, the `cases` table (every case the change touches, unchanged ones included), the `completeness` line, and at least two `candidates`, exactly one `chosen`. Each candidate cites the code it mirrors as `path:line` or `path:start-end` from the repo root. The obvious candidate (often the reviewer's suggestion) is one of them, and the losers' `why` is a real rebuttal.
+- An `escalate` choice is a finding the research shows can't or shouldn't be fixed as asked (no reachable fixture for a requested test, a requirement that conflicts with another), with the evidence: SDD escalates it to the user. `status` is `escalated` when any choice is.
+- `excluded`: every finding with no choice, and why (trivial and fixed directly, already settled by the brief's `Cases:` line, a severity-1 note). `cannot_verify` items may be decided too, but needn't be listed.
+- `reconciled`: every decision doc written before this one, and how this one relates to it: whether they touch the same code, overlap, or contradict. A decision written later reconciles with this one, not the reverse.
+
+The variant skips this skill's stage 1 (the reviewer records already frame each finding, and the coder's TDD supplies the tests). It has **no approval checkpoint**: persist the doc immediately and do not ask to proceed, because SDD's execution stays continuous and a third non-trivial fix escalates to the user instead (`ledger.py fix-count`). It also has no `lean-spec`, no `lean-plan`, and no origin recording, since the reviewers' re-review is the close. A recurring finding's defended choice must read the prior decision doc and say why its mechanism failed, in its `reframe` and in the `reconciled` entry for that doc. A finding the reviewers listed in `introduced_by_fix` was caused by the previous fix: its defended choice must say how that fix broke it, reading the fix's diff (`ledger.py diff-since` the previous fix baseline) and the coder record's `hunk_map` and `consumers_checked`.
 
 ## Rationalizations — All Mean "Do the Research and Write the Defense"
 
