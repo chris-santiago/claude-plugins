@@ -14,15 +14,16 @@ In ferrum's wave 8, every per-task decision doc was written by the orchestrator 
 
 ### Added
 - **Decision docs are typed records (role `decision`).** The `remediating-issues` per-task variant writes `task-N-decision-c<cycle>.json` and runs `ledger.py check` on it. Beyond its shape (each fix choice has a reframe, a cases table, a completeness line, and at least two candidates with exactly one chosen), `check` verifies it against the store and the repo:
-  - it accounts for every finding on every reviewer record for its task (and every task in `affects`), with a choice or an exclusion and its reason;
+  - it accounts for every finding on every reviewer record in its scope, with a choice or an exclusion and its reason. Scope comes from file names (`task-N-`, `final-`, `final-r2-`), and a record whose `task` disagrees with its name blocks the decision;
   - it reconciles with every decision doc written before it;
   - each candidate cites a `path:line` that exists in the repo, outside the store;
-  - its file name matches its `task` and `cycle`, and a malformed record for its task blocks it.
-- **`ledger.py findings --task N`** lists the finding ids a decision must account for, any malformed record hiding findings, and the decision docs to reconcile with.
+  - its file name matches its scope and `cycle`, and a malformed record in its scope blocks it.
+- **`ledger.py findings <decision path>`** lists the finding ids that decision must account for, any malformed or misfiled record hiding findings, and the decision docs to reconcile with.
+- **Escalations wait on the user in `open`.** Each `escalate` choice is an open item until `resolve` logs the ruling (`--note "user ruling: ..."`, required), and reviewers keep raising an escalated finding until then.
 - **`ledger.py baseline <tree> --task N`** prints how a fix baseline was routed. Coders run it before fixing and return `needs_context` when it errors or doesn't match the dispatch.
 
 ### Changed
-- **A non-trivial fix names its route.** `snapshot --non-trivial` now takes `--decision <record>` (which must pass `check` for this task, have a fix choice, and not have routed a fix already) or `--settled-by cases|ruling`. It logs the decision's digest, so `baseline` confirms the doc is the one that passed without re-deriving coverage that later records would make stale. `stats` lists every fix's route.
+- **A non-trivial fix names its route.** `snapshot --non-trivial` now takes `--decision <record>` (which must pass `check` for this task, have a fix choice, and not be unchanged since it routed an earlier fix) or `--settled-by cases|ruling` (a ruling must be logged first). A decision the coder refused can be rewritten and route the same fix again; `fix-count` counts it once. It logs the decision's digest, so `baseline` confirms the doc is the one that passed without re-deriving coverage that later records would make stale. `stats` lists every fix's route.
 - **SDD tells the orchestrator to dispatch the research agent and never write the decision doc itself**, with a matching red flag. The dispatch has the agent invoke the skill with the Skill tool.
 - **Record envelopes validate `task`** (a positive integer or `"final"`), and reviewer `issues`/`findings` lists are validated when present, so a malformed finding can't drop out of a decision's coverage.
 

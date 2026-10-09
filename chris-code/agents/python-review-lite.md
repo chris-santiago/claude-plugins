@@ -120,7 +120,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 - `schema` — contract version; always `1`.
 - `agent` — this agent's registered name, `python-review-lite`.
 - `role` — always `review-lite`.
-- `task` — the task number from the brief; at the final cross-task gate (no task number — see Inputs), use `"final"`.
+- `task` — the task number the dispatch names, which your record path also carries (`task-N-<agent-name>.json`); at the final cross-task gate (no task number — see Inputs), use `"final"`. A record whose `task` disagrees with its file name hides its findings from the task's decision.
 - `status` — `clean | block | escalate`, lowercase, matching the JSON block above and matching the status word in your one-line return summary exactly.
 - `cycle` — the value you derived in Workflow step 2; never dispatch-supplied.
 - `findings` — one entry per finding from the diff-level checklist, `severity` as the integer and `claim` a one-line condensation of the verdict's "what / why it matters"; empty list when clean.

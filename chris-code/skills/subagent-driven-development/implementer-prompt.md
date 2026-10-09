@@ -32,12 +32,14 @@ Agent tool:
 
     Fix baseline: [FIX_BASELINE]. Task files: [TASK_FILES].
     Reviewer records: [REVIEWER_RECORDS]. Decision doc: [DECISION_DOC or "none"].
+    User ruling: [the logged ruling, verbatim, or "none"].
     Review checklist(s): [REVIEW_CHECKLISTS or "none" for an all-trivial batch].
     A fix dispatch missing the baseline or task files is malformed: return
     NEEDS_CONTEXT naming it.
     Before changing anything, run
     `python3 [SCRIPTS_DIR]/ledger.py baseline [FIX_BASELINE] --task <your task> --store <your record's directory>`.
-    `decision: <path>` must be the decision doc above; implement its choices.
+    `decision: <path>` must be the decision doc above, at the cycle you're
+    writing; implement its choices.
     `settled-by: cases` means every non-trivial finding only reports a case
     the brief's Cases: line lists; `settled-by: ruling` means this dispatch
     quotes the user's ruling. `trivial` and `unrecorded` need nothing more.
