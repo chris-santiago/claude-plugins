@@ -1802,6 +1802,14 @@ class TestEscalations(DecisionStoreTestCase):
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
 
+    def test_a_ruling_counts_only_until_the_next_fix(self):
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c4", "t2", True, settled_by="ruling")
+        self.assertIn("no ruling is logged", str(ctx.exception))
+
     def test_a_resolved_escalation_or_progress_note_is_a_ruling(self):
         self._check(self._escalating())
         (item,) = self._open_escalations()
@@ -1848,6 +1856,34 @@ class TestSnapshotRoutes(DecisionStoreTestCase):
         with self.assertRaises(ledger.RecordError):
             self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
         self.assertEqual(ledger.load_progress_log(self.store), [])
+
+    def test_a_rewrite_cannot_route_a_later_fix(self):
+        _write(self.store, "task-1-decision-c2.json", self._complete())
+        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t3", True, settled_by="cases")
+        _write(self.store, "task-1-decision-c2.json", self._complete(
+            choices=[_fix_choice([self.spec_id, self.quality_id], choice="revised")]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
+        self.assertIn("moved on", str(ctx.exception))
+
+    def test_a_rewrite_cannot_route_across_a_close_round(self):
+        lite = _review_lite(task="final", status="block", findings=[_QUALITY_FINDING])
+        _write(self.store, "final-python-review-lite.json", lite)
+        lite_id = _entry_id("final-python-review-lite", "findings", _QUALITY_FINDING)
+        data = _decision([lite_id], task="final", reviewer_records=["final-python-review-lite"])
+        _write(self.store, "final-decision-c2.json", data)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t", True,
+                                decision="final-decision-c2.json")
+            ledger.cmd_close_round(self.store, "round 1", "abc", 1)
+        _write(self.store, "final-decision-c2.json",
+               {**data, "choices": [_fix_choice([lite_id], choice="revised")]})
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t2", True,
+                                decision="final-decision-c2.json")
+        self.assertIn("moved on", str(ctx.exception))
 
     def test_a_decision_routes_only_its_own_task(self):
         _write(self.store, "task-1-decision-c2.json", self._complete())
@@ -1951,10 +1987,10 @@ class TestSnapshotRoutes(DecisionStoreTestCase):
     def test_baseline_matches_the_task_and_takes_the_latest_snapshot(self):
         # Parallel tasks share a working tree, so one tree id can be two
         # tasks' baselines; a re-taken baseline supersedes the earlier one.
-        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="cases")
             ledger.cmd_snapshot(self.store, 2, "pre-fix c2", "shared")
+            ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
             ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="ruling")
         for task, expected in ((1, "settled-by: ruling"), (2, "trivial")):
             out = io.StringIO()

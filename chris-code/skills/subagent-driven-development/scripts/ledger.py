@@ -1090,21 +1090,37 @@ def _fix_route(store_dir: Path, task: int | str, non_trivial: bool,
     if not any(c["kind"] == "fix" for c in data["choices"]):
         raise RecordError(f"{path}: every choice escalates; there is nothing to fix")
     digest = _file_sha256(path)
-    # A decision the coder refused can be rewritten and route the same fix
-    # again (fix-count counts it once); an unchanged one routes one fix.
-    routed = [e.get("label") for e in load_progress_log(store_dir) if e.get("type") == "snapshot"
-              and e.get("decision") == path.stem and e.get("decision_sha256") == digest]
-    if routed:
-        raise RecordError(f"{path}: unchanged since it routed fix {routed[0]!r}; a "
-                          "further fix needs a new decision")
+    _check_reroute(load_progress_log(store_dir), task, path, digest)
     return {"decision": path.stem, "decision_sha256": digest}
 
 
+def _check_reroute(log: list[dict], task: int | str, path: Path, digest: str) -> None:
+    """A decision routes one fix. The coder may refuse it before changing
+    anything, so a rewrite can route that same fix again (fix-count counts
+    it once), but only while it is still the task's latest fix and no close
+    round has started since; a later fix needs a new decision."""
+    routed = [i for i, e in enumerate(log) if e.get("type") == "snapshot"
+              and e.get("decision") == path.stem]
+    if not routed:
+        return
+    last = routed[-1]
+    label = log[last].get("label")
+    if any(log[i].get("decision_sha256") == digest for i in routed):
+        raise RecordError(f"{path}: unchanged since it routed fix {label!r}; a further "
+                          "fix needs a new decision")
+    if any(e.get("type") == "close_round" or (e.get("type") == "snapshot" and e.get("task") == task)
+           for e in log[last + 1:]):
+        raise RecordError(f"{path}: routed fix {label!r}, and the task has moved on since; "
+                          "a later fix needs a new decision at its own cycle")
+
+
 def _ruling_logged(log: list[dict], task: int | str) -> bool:
-    """A user ruling for `task`: a progress note on it, or the resolution of
-    an escalation in one of its decisions."""
+    """A user ruling for `task` logged since its last fix baseline: a
+    progress note on it, or the resolution of an escalation in one of its
+    decisions. An older ruling was already acted on."""
     scopes = ("final", "final-r2") if task == "final" else (f"task-{task}",)
-    for e in log:
+    snapshots = [i for i, e in enumerate(log) if e.get("type") == "snapshot" and e.get("task") == task]
+    for e in log[snapshots[-1] + 1:] if snapshots else log:
         note = str(e.get("note", "")).lower()
         if not note.startswith(RULING_PREFIX):
             continue
