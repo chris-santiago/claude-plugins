@@ -67,7 +67,7 @@ def _write(store: Path, name: str, data: dict) -> Path:
     return path
 
 
-def _entry_id(stem: str, field_name: str, entry: dict) -> str:
+def _entry_id(stem: str, field_name: str, entry: dict | str) -> str:
     """The real id `open`/`resolve` compute for an entry-level open item —
     content-derived (spec Sec 6, amended 2026-08-27), so tests must
     compute it the same way ledger.py does rather than assume a fixed,
