@@ -59,6 +59,7 @@ Agent tool:
        doesn't make your status DONE_WITH_CONCERNS; a root cause you
        trace to code the brief doesn't cover is not yours to fix: report
        it in concerns as `root cause: ...` with its evidence and reach,
+       re-listed verbatim on every attempt until a fix implements it,
        and return DONE_WITH_CONCERNS)
     2. Write tests (following TDD if the brief says to). RED proofs and pinned
        fixtures must be produced by the real path under test, or a documented

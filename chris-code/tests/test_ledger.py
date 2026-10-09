@@ -1622,6 +1622,29 @@ class TestDecisionContext(DecisionStoreTestCase):
                                 decision="task-3-decision-c2.json")
         self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 3), 1)
 
+    def test_a_refused_root_cause_decision_reroutes_while_the_concern_is_relisted(self):
+        concern = "root cause: x"
+        _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
+        concern_id = _entry_id("task-3-python-coder", "concerns", concern)
+        data = _decision([concern_id], task=3, reviewer_records=[])
+        _write(self.store, "task-3-decision-c2.json", data)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t", True, decision="task-3-decision-c2.json")
+        _write(self.store, "task-3-decision-c2.json",
+               {**data, "choices": [_fix_choice([concern_id], choice="revised")]})
+        refusal = "refused: c names no site"
+        _write(self.store, "task-3-python-coder.json",
+               _coder(task=3, cycle=2, status="needs_context", concerns=[refusal]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t2", True,
+                                decision="task-3-decision-c2.json")
+        self.assertIn("no such finding", str(ctx.exception))
+        _write(self.store, "task-3-python-coder.json",
+               _coder(task=3, cycle=2, status="needs_context", concerns=[concern, refusal]))
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t2", True,
+                                decision="task-3-decision-c2.json")
+
     def test_every_reviewer_record_for_the_task_is_listed(self):
         self.assertCheckFails(self._complete(reviewer_records=["task-1-spec-reviewer"]),
                               "task-1-python-quality-reviewer")
