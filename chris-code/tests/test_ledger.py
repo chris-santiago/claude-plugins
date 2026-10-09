@@ -1535,6 +1535,10 @@ class TestDecisionShape(unittest.TestCase):
                 self.assertRejects(_spec_reviewer(task=task), "task")
         ledger.validate_record(_spec_reviewer(task="final"))
 
+    def test_a_decision_before_any_review_lists_no_reviewers(self):
+        ledger.validate_record(_decision(["x"], reviewer_records=[]))
+        self.assertRejects(_decision(["x"], reviewer_records=[""]), "reviewer_records")
+
     def test_reviewer_finding_lists_hold_objects(self):
         self.assertRejects(_spec_reviewer(issues="none"), "issues")
         self.assertRejects(_review_lite(findings=["x"]), "findings[0]")
@@ -1591,6 +1595,32 @@ class TestDecisionContext(DecisionStoreTestCase):
         cv = _entry_id("task-1-spec-reviewer", "cannot_verify",
                        {"requirement": "r", "why": "w", "should_check": "s"})
         self._check(self._complete(choices=[_fix_choice([self.spec_id, self.quality_id, cv])]))
+
+    def test_a_coder_concern_may_be_decided_but_is_not_required(self):
+        concern = "root cause: the band estimate copies the label cascade"
+        _write(self.store, "task-1-python-coder.json", _coder(concerns=[concern, 7]))
+        concern_id = _entry_id("task-1-python-coder", "concerns", concern)
+        self._check(self._complete())
+        self._check(self._complete(choices=[_fix_choice([self.spec_id, self.quality_id]),
+                                            _fix_choice([concern_id])]))
+
+    def test_another_tasks_coder_concern_is_unknown(self):
+        concern = "root cause: x"
+        _write(self.store, "task-2-python-coder.json", _coder(task=2, concerns=[concern]))
+        concern_id = _entry_id("task-2-python-coder", "concerns", concern)
+        self.assertCheckFails(self._complete(choices=[
+            _fix_choice([self.spec_id, self.quality_id, concern_id])]), "no such finding")
+
+    def test_a_root_cause_decision_before_review_routes_a_fix(self):
+        concern = "root cause: x"
+        _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
+        concern_id = _entry_id("task-3-python-coder", "concerns", concern)
+        self._check(_decision([concern_id], task=3, reviewer_records=[]),
+                    name="task-3-decision-c2.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t", True,
+                                decision="task-3-decision-c2.json")
+        self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 3), 1)
 
     def test_every_reviewer_record_for_the_task_is_listed(self):
         self.assertCheckFails(self._complete(reviewer_records=["task-1-spec-reviewer"]),
@@ -1752,6 +1782,14 @@ class TestDecisionContext(DecisionStoreTestCase):
         self.assertEqual(len(re.findall(r"\[(task-1-[^\]]+\])\]", optional)), 1)
         self.assertEqual(len(listed), 4)
         self.assertIn("decisions to reconcile: (none)", out.getvalue())
+
+    def test_findings_lists_coder_concerns_as_optional(self):
+        _write(self.store, "task-1-python-coder.json", _coder(concerns=["root cause: x"]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_findings(self.store / "task-1-decision-c2.json")
+        concerns = out.getvalue().split("coder concerns")[1]
+        self.assertIn(f"[{_entry_id('task-1-python-coder', 'concerns', 'root cause: x')}]", concerns)
 
     def test_findings_leaves_out_the_decision_being_written(self):
         _write(self.store, "task-1-decision-c2.json", self._complete())

@@ -20,6 +20,7 @@ In ferrum's wave 8, every per-task decision doc was written by the orchestrator 
   - its file name matches its scope and `cycle`, and a malformed record in its scope blocks it.
 - **`ledger.py findings <decision path>`** lists the finding ids that decision must account for, any malformed or misfiled record hiding findings, and the decision docs to reconcile with.
 - **Escalations wait on the user in `open`.** Each `escalate` choice is an open item until `resolve` logs the ruling (`--note "user ruling: ..."`, required), and reviewers keep raising an escalated finding until then.
+- **A root cause outside the brief has three routes.** A coder reports it as a `root cause:` concern, and SDD asks the user to choose: research it with `remediating-issues`, file it as a follow-up, or name the fix in a ruling. A bare "fix it" no longer sends the coder back. A decision record may claim a coder concern's id (`findings` lists them), and one written before any review lists no reviewer records, so the fix routes through a snapshot and re-review. In wave 8, task 13 instead spent a day at cycle 1, taking four such rulings with no review.
 - **`ledger.py baseline <tree> --task N`** prints how a fix baseline was routed. Coders run it before fixing and return `needs_context` when it errors or doesn't match the dispatch.
 
 ### Changed

@@ -142,9 +142,12 @@ FIX_MODE_FIELDS = {
 # or an exclusion with its reason. `cannot_verify` entries may be decided
 # too, but aren't required. Each fix choice weighs at least two
 # candidates, each citing the code it mirrors as path:line or
-# path:start-end (relative to the repo toplevel).
+# path:start-end (relative to the repo toplevel). A coder's `concerns`
+# entry (a root cause outside its brief) may be decided as well, so a
+# researched decision can route its fix before any review has run.
 FINDING_FIELDS = ("issues", "findings")
 OPTIONAL_FINDING_FIELDS = ("cannot_verify",)
+CONCERN_FIELD = "concerns"
 CHOICE_KEYS = {"fix": ("reframe", "choice", "completeness"), "escalate": ("why", "evidence")}
 CANDIDATE_KEYS = ("name", "precedent", "why")
 CASE_KEYS = ("case", "today", "under_fix", "result")
@@ -373,9 +376,9 @@ def _validate_decision(data: dict) -> None:
     with reasons, and its reconciliation with the run's other decisions.
     What it must cover in the store is checked by `check_record`."""
     stems = data.get("reviewer_records")
-    if not isinstance(stems, list) or not stems or not all(map(_non_empty_str, stems)):
-        raise RecordError(f"reviewer_records: got {stems!r}, expected a non-empty list of "
-                          "record names (e.g. task-3-spec-reviewer)")
+    if not isinstance(stems, list) or not all(map(_non_empty_str, stems)):
+        raise RecordError(f"reviewer_records: got {stems!r}, expected a list of record "
+                          "names (e.g. task-3-spec-reviewer; empty before any review)")
     seen: set[str] = set()
     escalated = False
     for idx, choice in enumerate(_require_objects(data, "choices", min_len=1)):
@@ -592,7 +595,7 @@ def _open_items_for_record(rec: Record) -> list[OpenItem]:
                           summary=f"error building open items: {e}", source=rec.stem)]
 
 
-def _entry_digest(entry: dict) -> str:
+def _entry_digest(entry: dict | str) -> str:
     """First 8 hex of the sha1 of the entry's canonical JSON — the
     content-derived component of an entry-level id (spec Sec 6, amended
     2026-08-27): a resolution id names *what the entry says*, not *where
@@ -602,7 +605,7 @@ def _entry_digest(entry: dict) -> str:
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:8]
 
 
-def _item_id(stem: str, field_name: str, entry: dict) -> str:
+def _item_id(stem: str, field_name: str, entry: dict | str) -> str:
     """An entry-level id: the record, the field, and the entry's digest."""
     return f"{stem}#{field_name}[{_entry_digest(entry)}]"
 
@@ -1321,6 +1324,13 @@ def finding_ids(rec: Record, fields: tuple[str, ...] = FINDING_FIELDS) -> dict[s
     return ids
 
 
+def concern_ids(rec: Record) -> dict[str, str]:
+    """Content-derived ids for a coder record's `concerns` entries."""
+    concerns = rec.data.get(CONCERN_FIELD)
+    return {_item_id(rec.stem, CONCERN_FIELD, c): c
+            for c in (concerns if isinstance(concerns, list) else []) if _non_empty_str(c)}
+
+
 def _scope(stem: str) -> str | None:
     match = SCOPE_RE.match(stem)
     return match["scope"] if match else None
@@ -1333,6 +1343,7 @@ def _scope_task(scope: str) -> int | str:
 @dataclass
 class ScopeRecords:
     reviewers: list[Record]  # well-formed reviewer records named for the scope
+    coders: list[Record]     # well-formed coder records named for the scope
     problems: list[str]      # malformed or misfiled records named for the scope
     decisions: list[Record]  # every well-formed decision record in the store
 
@@ -1349,6 +1360,7 @@ def _scope_records(store_dir: Path, scope: str) -> ScopeRecords:
                  if r.ok and r.data["task"] != _scope_task(scope)]
     return ScopeRecords(
         reviewers=[r for r in in_scope if r.ok and r.data["role"] in REVIEWER_ROLES],
+        coders=[r for r in in_scope if r.ok and r.data["role"] == "coder"],
         problems=problems,
         decisions=[r for r in records if r.ok and r.data["role"] == "decision"])
 
@@ -1370,6 +1382,7 @@ def _check_decision_context(path: Path, data: dict) -> None:
                       f"well-formed {scope}-* reviewer records in the store")
     required = {i for r in reviewers for i in finding_ids(r)}
     known = required | {i for r in reviewers for i in finding_ids(r, OPTIONAL_FINDING_FIELDS)}
+    known |= {i for r in found.coders for i in concern_ids(r)}
     accounted = {f for c in data["choices"] for f in c["findings"]}
     accounted |= {e["finding"] for e in data["excluded"]}
     unknown = sorted(accounted - known)
@@ -1457,7 +1470,8 @@ def _check_precedents(store_dir: Path, choices: list[dict]) -> None:
 def cmd_findings(path: Path) -> None:
     """What the decision to be written at `path` must account for: each
     finding id in its scope with a one-line summary, the optional
-    cannot_verify ids, and the decisions to reconcile with."""
+    cannot_verify and coder-concern ids, and the decisions to reconcile
+    with."""
     match = DECISION_STEM_RE.match(path.stem)
     if path.suffix != ".json" or not match:
         raise RecordError(f"{path.name}: a decision is named <scope>-decision-c<cycle>.json "
@@ -1476,6 +1490,10 @@ def cmd_findings(path: Path) -> None:
                 site = f"{entry.get('file', '')}:{entry.get('line', '')}".strip(":")
                 claim = str(entry.get("claim") or entry.get("requirement") or "")
                 print(f"  [{finding_id}] {site} {claim[:160]}".rstrip())
+    print("coder concerns (optional; a root cause sent for research):")
+    for rec in found.coders:
+        for concern_id, concern in concern_ids(rec).items():
+            print(f"  [{concern_id}] {concern[:160]}")
     print(f"decisions to reconcile: {', '.join(r.stem for r in decisions) or '(none)'}")
 
 
