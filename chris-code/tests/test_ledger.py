@@ -1881,6 +1881,32 @@ class TestEscalations(DecisionStoreTestCase):
             ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t2", True,
                                 settled_by="ruling")
 
+    def test_completion_waits_on_the_escalations_resolution(self):
+        self._check(self._escalating())
+        (item,) = self._open_escalations()
+        # A ruling logged as a progress note leaves the escalation open.
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it with a fixture")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_append(self.store, "complete", 1, "shipped")
+        self.assertIn(item.id, str(ctx.exception))
+        self.assertIn("resolve", str(ctx.exception))
+        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), [])
+        ledger.cmd_resolve(self.store, item.id, "user ruling: fix it with a fixture")
+        ledger.cmd_append(self.store, "complete", 1, "shipped")
+        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["1"])
+
+    def test_another_tasks_escalation_does_not_block_completion(self):
+        self._check(self._escalating())
+        ledger.cmd_append(self.store, "complete", 2, "shipped")
+        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["2"])
+
+    def test_final_completion_waits_on_a_close_gate_escalation(self):
+        escalate = {"kind": "escalate", "findings": ["x"], "why": "w", "evidence": "e"}
+        _write(self.store, "final-r2-decision-c1.json",
+               _decision(["x"], task="final", cycle=1, status="escalated", choices=[escalate]))
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_append(self.store, "complete", "final", "shipped")
+
 
 class TestSnapshotRoutes(DecisionStoreTestCase):
     """A non-trivial fix baseline names its route; a decision route must

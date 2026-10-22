@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-22
+
+### Fixed
+- **A task with an open escalation can't be completed.** An orchestrator could log the user's ruling as a progress note, which satisfies `--settled-by ruling` but leaves the escalation open, then complete the task anyway. The escalation then sat in `open` for the rest of the run. `ledger.py append --type complete` now refuses while any decision in the task's scope has an unresolved escalation, and it names the ids to `resolve` with the ruling. SDD's rule against completing such a task was already in prose; now it's enforced.
+
 ## [0.8.0] - 2026-10-09 — Decisions that were researched
 
 An orchestrator could write a per-task decision doc itself instead of dispatching `remediating-issues`: little research, rejected options in one line each, and open questions left to the coder ("or equivalent"). SDD's instruction to dispatch the research agent was already explicit, but nothing enforced it, so this release moves the check out of the orchestrator's own prompt and into a script and a second agent.

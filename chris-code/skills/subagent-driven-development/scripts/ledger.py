@@ -802,8 +802,27 @@ def cmd_store_dir(store_dir: Path) -> None:
 
 
 def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> None:
+    if entry_type == "complete":
+        _check_no_open_escalation(store_dir, task)
     ensure_store(store_dir)
     _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": entry_type, "task": task, "note": note})
+
+
+def _check_no_open_escalation(store_dir: Path, task: int | str) -> None:
+    """A task waiting on the user's ruling is not complete. A ruling logged
+    as a progress note leaves the escalation open, so completion names the
+    ids to `resolve` with that ruling."""
+    resolved = set(resolutions_from_log(load_progress_log(store_dir)))
+    pending = [item.id for item in compute_open_items(load_records(store_dir), resolved)
+               if item.kind == ESCALATION_KIND and _scope(item.source) in _task_scopes(task)]
+    if pending:
+        raise RecordError(f"task {task!r} has escalations awaiting the user's ruling: {pending}; "
+                          f"`resolve` each with --note \"{RULING_PREFIX} <the ruling, verbatim>\" "
+                          "before completing it")
+
+
+def _task_scopes(task: int | str) -> tuple[str, ...]:
+    return ("final", "final-r2") if task == "final" else (f"task-{task}",)
 
 
 def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
@@ -1121,7 +1140,7 @@ def _ruling_logged(log: list[dict], task: int | str) -> bool:
     """A user ruling for `task` logged since its last fix baseline: a
     progress note on it, or the resolution of an escalation in one of its
     decisions. An older ruling was already acted on."""
-    scopes = ("final", "final-r2") if task == "final" else (f"task-{task}",)
+    scopes = _task_scopes(task)
     snapshots = [i for i, e in enumerate(log) if e.get("type") == "snapshot" and e.get("task") == task]
     for e in log[snapshots[-1] + 1:] if snapshots else log:
         note = str(e.get("note", "")).lower()
