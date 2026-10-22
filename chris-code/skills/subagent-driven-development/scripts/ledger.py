@@ -1349,14 +1349,22 @@ def _check_coder_model(path: Path, data: dict) -> None:
     if "model" not in data:
         raise RecordError(f"{path}: missing required field(s): model (the model family "
                           "your system prompt names, lowercase)")
-    model = data["model"].strip().lower()
-    if data["status"] not in DIAGNOSIS_STATUSES or model == CODER_MODEL:
+    family = _model_family(data["model"])
+    if data["status"] not in DIAGNOSIS_STATUSES or family == CODER_MODEL:
         return
-    if model == OPUS_CODER_MODEL and _opus_ruling_logged(load_progress_log(path.parent), data["task"]):
+    if family == OPUS_CODER_MODEL and _opus_ruling_logged(load_progress_log(path.parent), data["task"]):
         return
     raise RecordError(f"{path}: coders run on {CODER_MODEL}; model {data['model']!r} needs a "
                       f"logged \"{OPUS_RULING_PREFIX} ...\" progress note for task "
                       f"{data['task']!r}, and only opus can be authorized")
+
+
+def _model_family(model: str) -> str | None:
+    """The family a model string names ("Sonnet 5.5", "claude-sonnet-5-5"
+    and "sonnet" are all sonnet), or None when it names neither family a
+    coder may run on."""
+    words = re.split(r"[^a-z]+", model.lower())
+    return next((f for f in (CODER_MODEL, OPUS_CODER_MODEL) if f in words), None)
 
 
 def _opus_ruling_logged(log: list[dict], task: int | str) -> bool:

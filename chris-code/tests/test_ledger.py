@@ -1093,6 +1093,13 @@ class TestCoderModel(LedgerTestCase):
         ledger.cmd_append(self.store, "progress", 1, "user ruling: opus coder")
         self.assertRefused("sonnet", model="haiku")
 
+    def test_the_model_is_read_by_family_not_spelling(self):
+        for spelling in ("Sonnet 5.5", "claude-sonnet-5-5", " SONNET "):
+            self._check(model=spelling)
+        self.assertRefused("sonnet", model="claude-opus-5-5")
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: opus coder")
+        self._check(model="Opus 5.5")
+
     def test_a_coder_that_refused_its_model_passes_on_any_model(self):
         self._check(model="opus", status="needs_context")
         self._check(model="haiku", status="blocked")

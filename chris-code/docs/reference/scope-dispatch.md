@@ -19,7 +19,7 @@ Agents and review skills match by `scope.extensions` and `scope.require_dependen
 
 ## Model selection
 
-Each role has a fixed model, pinned in its agent's frontmatter, and the orchestrator passes no `model` override.
+Each role has a fixed model, pinned in its agent's frontmatter, and the orchestrator passes no `model` override. Two roles run as `general-purpose` agents, which have no frontmatter, so their dispatch names the model: `sonnet` for the fallback implementer and `opus` for the `remediating-issues` research agent.
 
 | Model | Used for |
 |-------|----------|
