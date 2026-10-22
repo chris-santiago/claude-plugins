@@ -8,7 +8,17 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
-## [0.8.1] - 2026-10-22
+## [0.9.0] - 2026-10-22 — Fixed models per role
+
+An orchestrator choosing models per dispatch ran most coders on opus, on the table's "design judgment" row. Since 0.8.0 that judgment lives in the decision doc and the brief, so a coder implements choices already made. Each role now has a fixed model, and coders can't run above sonnet without the user's ruling.
+
+### Changed
+- **Models are pinned per role, with no orchestrator override.** Coders and the `*-review-lite` gates run on sonnet. The spec, quality, design and intent reviewers, `mutation-tester`, `bug-hunter` and the `remediating-issues` research agent run on opus. `claim-checker` stays on haiku. The lite gates and `bug-hunter` used to inherit the dispatch model. SDD's per-complexity model table is gone, and haiku is no longer a coder model.
+- **An opus coder takes the user's ruling.** The user can rule an opus coder for a task, logged as `user ruling: opus coder ...`. The orchestrator then dispatches with `model: opus` and a `Model: opus` line quoting the ruling.
+
+### Added
+- **Coders check their own model first.** A coder reads its model from its system prompt. On anything but sonnet without the `Model: opus` line, it changes nothing and returns `needs_context`.
+- **Coder records carry `model`.** `ledger.py check` requires it and refuses a `done` or `done_with_concerns` record on any model but sonnet, unless the opus ruling is logged for the task. Records written before this still load. `stats` shows each coder's model.
 
 ### Fixed
 - **A task with an open escalation can't be completed.** An orchestrator could log the user's ruling as a progress note, which satisfies `--settled-by ruling` but leaves the escalation open, then complete the task anyway. The escalation then sat in `open` for the rest of the run. `ledger.py append --type complete` now refuses while any decision in the task's scope has an unresolved escalation, and it names the ids to `resolve` with the ruling. SDD's rule against completing such a task was already in prose; now it's enforced.

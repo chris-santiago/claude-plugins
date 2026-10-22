@@ -7,7 +7,7 @@ All inputs are handed over as files (see the skill's **File Handoffs** section).
 ```
 Agent tool:
   subagent_type: [matched *-coder agent, or "general-purpose"]
-  model: [haiku|sonnet|opus per complexity]
+  model: [omit for a *-coder; sonnet for general-purpose; opus only under a logged "user ruling: opus coder"]
   description: "Implement Task N: [task name]"
   prompt: |
     You are implementing Task N: [task name]
@@ -46,6 +46,13 @@ Agent tool:
     If it errors or doesn't match this dispatch, return NEEDS_CONTEXT quoting it.
 
     ## Before You Begin
+
+    Model: [omit this line, or "opus" plus the logged "user ruling: opus coder ...", verbatim]
+    Your system prompt names the model you run on, and implementers run on
+    Sonnet. On any other model, implement only when it is Opus and the Model
+    line above quotes the user's ruling. Otherwise change nothing: write your
+    typed record with status needs_context and the model you actually run on,
+    and return NEEDS_CONTEXT naming it.
 
     If anything about the requirements, approach, or dependencies is unclear — ask now.
     It is always OK to pause and clarify. Don't guess.
@@ -132,6 +139,7 @@ Agent tool:
       "duplication_pending": [{"sites": ["file:line"], "wants_owner": "path", "why": "..."}],
       "concerns": ["..."],
       "cycle": 1,
+      "model": "sonnet",
       "diagnosis": {"root_cause": "...", "end_state": "...", "resolves_cluster": "..."},
       "hunk_map": [{"site": "file:lines", "implements": "<finding or decision-doc choice>"}],
       "consumers_checked": [{"symbol": "...", "consumers": ["file:line"], "verified": "..."}],
@@ -161,6 +169,10 @@ Agent tool:
     - `concerns` — anything you'd flag in the prose report; empty list when
       clean.
     - `report` — [REPORT_FILE], so the orchestrator can find your reasoning.
+    - `model` — the model family your system prompt names, lowercase
+      (`sonnet`, `opus`, `haiku`): what you run on, never what the dispatch
+      expects. `check` refuses a done or done_with_concerns record on any
+      model but sonnet, unless the user's opus ruling is logged for the task.
     - `cycle` — 1 on a first attempt. A fix re-dispatch points at this same
       record path: read your own prior record first and write its cycle + 1.
       Exception: if that prior record's status was needs_context or

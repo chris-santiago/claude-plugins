@@ -1,5 +1,6 @@
 ---
 name: bug-hunter
+model: opus
 description: Writes edge-case tests (Python and/or Rust) for one subsystem and reports failures as bugs. Dispatched in parallel by a bug-hunt skill — one instance per subsystem. Each instance receives a subsystem name, a mode (Py+Rs | Py | Rs), source paths, and existing test paths. Writes the appropriate test file(s), runs them, and returns a verdict. Never dispatched directly by the user.
 tools:
 - Read

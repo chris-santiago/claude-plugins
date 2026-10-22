@@ -165,6 +165,11 @@ PRECEDENT_RE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
 # Why a non-trivial fix owes no decision record: the brief's Cases: line
 # already settles it, or the user ruled on it.
 SETTLED_BY = ("cases", "ruling")
+# Coders run on sonnet. Opus only under the user's ruling for the task,
+# logged as a progress note with this prefix.
+CODER_MODEL = "sonnet"
+OPUS_CODER_MODEL = "opus"
+OPUS_RULING_PREFIX = f"{RULING_PREFIX} opus coder"
 
 PROGRESS_FILENAME = "progress.jsonl"
 
@@ -335,6 +340,10 @@ def validate_record(data: object) -> None:
                     else "the coder's upcoming fix cycle")
             raise RecordError(f"cycle: got {cycle!r}, expected a positive integer ({hint})")
     if role == "coder":
+        # Optional here so records from before it existed still load; `check`
+        # requires it (_check_coder_model).
+        if "model" in data and not _non_empty_str(data["model"]):
+            raise RecordError(f"model: got {data['model']!r}, expected a non-empty string")
         # Only a coder reporting a finished fix owes the fix-mode fields: one
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
@@ -1328,7 +1337,31 @@ def check_record(path: Path) -> dict:
             f"{path}: passes validation but fails to render as an open item: {e}") from e
     if data["role"] == "decision":
         _check_decision_context(path, data)
+    elif data["role"] == "coder":
+        _check_coder_model(path, data)
     return data
+
+
+def _check_coder_model(path: Path, data: dict) -> None:
+    """A coder that did work ran on sonnet, or on opus under the user's
+    ruling for its task. One that stopped (needs_context, blocked) changed
+    nothing, which is how a coder refuses a model it wasn't allowed."""
+    if "model" not in data:
+        raise RecordError(f"{path}: missing required field(s): model (the model family "
+                          "your system prompt names, lowercase)")
+    model = data["model"].strip().lower()
+    if data["status"] not in DIAGNOSIS_STATUSES or model == CODER_MODEL:
+        return
+    if model == OPUS_CODER_MODEL and _opus_ruling_logged(load_progress_log(path.parent), data["task"]):
+        return
+    raise RecordError(f"{path}: coders run on {CODER_MODEL}; model {data['model']!r} needs a "
+                      f"logged \"{OPUS_RULING_PREFIX} ...\" progress note for task "
+                      f"{data['task']!r}, and only opus can be authorized")
+
+
+def _opus_ruling_logged(log: list[dict], task: int | str) -> bool:
+    return any(e.get("type") == "progress" and e.get("task") == task
+               and str(e.get("note", "")).lower().startswith(OPUS_RULING_PREFIX) for e in log)
 
 
 def finding_ids(rec: Record, fields: tuple[str, ...] = FINDING_FIELDS) -> dict[str, dict]:
@@ -1526,12 +1559,15 @@ def _history_entry(stem: str, data: dict) -> dict:
         value = data.get(key)
         return len(value) if isinstance(value, list) else 0
 
-    return {"record": stem, "task": data.get("task"), "role": data.get("role"),
-            # Reviewer cycle isn't validated; keep only an int so stats can sort.
-            "cycle": data["cycle"] if type(data.get("cycle")) is int else None,
-            "status": data.get("status"),
-            "findings": count("issues") + count("findings"),
-            "recurring": count("recurring"), "introduced_by_fix": count("introduced_by_fix")}
+    entry = {"record": stem, "task": data.get("task"), "role": data.get("role"),
+             # Reviewer cycle isn't validated; keep only an int so stats can sort.
+             "cycle": data["cycle"] if type(data.get("cycle")) is int else None,
+             "status": data.get("status"),
+             "findings": count("issues") + count("findings"),
+             "recurring": count("recurring"), "introduced_by_fix": count("introduced_by_fix")}
+    if data.get("role") == "coder":
+        entry["model"] = data.get("model")
+    return entry
 
 
 def load_history(store_dir: Path) -> list[dict]:
@@ -1580,8 +1616,9 @@ def cmd_stats(store_dir: Path) -> None:
             print(f"task {current}")
         stem, prefix = entry.get("record") or "", f"task-{current}-"
         agent = stem[len(prefix):] if stem.startswith(prefix) else stem
+        model = f"  model={entry['model']}" if entry.get("model") else ""
         print(f"  {agent:<26} c{entry.get('cycle') or '?'}  {entry.get('status')}  "
-              f"findings={entry.get('findings', 0)}")
+              f"findings={entry.get('findings', 0)}{model}")
     for signal in ("introduced_by_fix", "recurring"):
         flagged = [f"{e.get('record')} c{e.get('cycle') or '?'} ({e[signal]})"
                    for e in history if e.get(signal)]

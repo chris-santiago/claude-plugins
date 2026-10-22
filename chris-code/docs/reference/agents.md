@@ -42,6 +42,8 @@ One coder per task. When several match the same extension, `scope.require_depend
 | `pytorch-coder` | sonnet | `.py`, `.ipynb` (torch, lightning) | PyTorch/Lightning implementation |
 | `rust-coder` | sonnet | `.rs` | Rust implementation |
 
+Coders run on sonnet only. The orchestrator never raises a coder's model; the user can rule an opus coder for a stalled task (see [Scope dispatch & models](scope-dispatch.md#model-selection)). A coder checks its own model before changing anything and returns `needs_context` when it runs above sonnet without that ruling.
+
 Coders **internalize the review principles** so their code passes the lite-review gate on the first attempt — preserve behavior, clarity over cleverness, small reviewable steps, prefer deletion to invention, no speculative architecture. They follow `test-driven-development`, run the project's tests and linter, and self-review against the S3+ list before reporting. They implement and test every case the brief's `Cases:` line lists. A case they find that isn't listed is handled, tested, and reported as a `concerns` entry starting `unlisted case:`, a planning gap that doesn't on its own make the status `done_with_concerns`.
 
 Crucially, a coder **reads the task's *intent* before the code** and builds toward the stated outcome, not just a passing diff. If a brief gives only *what* and *where* but no *why*, the coder **escalates for the intent** rather than guessing — one half of the loop that keeps intent flowing through dispatch (see [Context & dispatch](../explanation/context-and-dispatch.md)). Coders also escalate public-API changes, cross-language work, and changes to foundational invariants before implementing.
@@ -50,7 +52,7 @@ Coders also **mirror by reference rather than copy**: if a task needs a block a 
 
 **Fix mode.** A fix goes back to the original coder via `SendMessage` while it is reachable (a fresh dispatch at the same record path otherwise), with a `Fix baseline` tree and the task's file list. The coder first runs `ledger.py baseline` on it, which prints the route the orchestrator recorded (a decision doc that passes `check`, `settled-by cases`, or `settled-by ruling`), and returns `needs_context` if it errors or doesn't match the dispatch. On a fix the coder covers every input and site in each finding's class, not just the cited line, and, when the batch has any non-trivial finding, also self-reviews the fix diff against the matching quality reviewer's contract, which the dispatch supplies as the checklist the fix will be judged by. A consumer the fix breaks is part of the fix; one it can't change itself (another language, or a public-API change) is marked `escalated` in `consumers_checked`, named in `concerns`, and returned as `done_with_concerns` so the orchestrator routes it. On any attempt, comments state behavior, never the review process: before reporting, the coder runs `ledger.py labels HEAD` on its files and rewrites each hit, listing a false positive in `concerns`. Hits the orchestrator sends back are the same attempt, at the same `cycle`.
 
-**Typed record (role `coder`).** Before returning, a coder writes a JSON record to its dispatch-supplied path: `status` (the same four values as the return summary, lowercase), `changed_files`, `tests` (command, pass/fail, one-line summary), `new_shared_symbols` it hoisted, `duplication_pending` sites it left un-hoisted, `concerns`, `cycle` (self-derived: a fix re-dispatch points at the same record path, and the coder writes its prior record's cycle + 1), and the `report` path. From cycle 2 a `diagnosis` is required (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it): a fix states the cause it resolves before patching, and the re-reviewing agents judge it against that stated cause. A finished fix (`done` or `done_with_concerns`) also carries `hunk_map` (each hunk of the fix diff, read with `ledger.py diff-since <fix baseline> <task files>`, and the finding or choice it implements; at least one entry) and `consumers_checked` (each changed symbol's consumers and how each was verified), both enforced by `check`. It then runs `ledger.py check` against its own record and fixes until clean — the write-time gate lands with the agent that has the context, not at the orchestrator's later query.
+**Typed record (role `coder`).** Before returning, a coder writes a JSON record to its dispatch-supplied path: `status` (the same four values as the return summary, lowercase), `changed_files`, `tests` (command, pass/fail, one-line summary), `new_shared_symbols` it hoisted, `duplication_pending` sites it left un-hoisted, `concerns`, `model` (the model family it runs on; `check` refuses a finished record on any model but sonnet unless the user's opus ruling is logged for its task), `cycle` (self-derived: a fix re-dispatch points at the same record path, and the coder writes its prior record's cycle + 1), and the `report` path. From cycle 2 a `diagnosis` is required (`root_cause`, `end_state`, `resolves_cluster` — `check` enforces it): a fix states the cause it resolves before patching, and the re-reviewing agents judge it against that stated cause. A finished fix (`done` or `done_with_concerns`) also carries `hunk_map` (each hunk of the fix diff, read with `ledger.py diff-since <fix baseline> <task files>`, and the finding or choice it implements; at least one entry) and `consumers_checked` (each changed symbol's consumers and how each was verified), both enforced by `check`. It then runs `ledger.py check` against its own record and fixes until clean — the write-time gate lands with the agent that has the context, not at the orchestrator's later query.
 
 ---
 
@@ -76,8 +78,8 @@ Dispatched before each commit and as a final full-diff pass at plan end.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-review-lite` | inherit | `.py` | Trimmed idiom checklist + the project linter |
-| `rust-review-lite` | inherit | `.rs` | Trimmed idiom checklist + `cargo clippy -D warnings` |
+| `python-review-lite` | sonnet | `.py` | Trimmed idiom checklist + the project linter |
+| `rust-review-lite` | sonnet | `.rs` | Trimmed idiom checklist + `cargo clippy -D warnings` |
 
 These are fast, autonomous **regression guardrails**, not refactoring agents. They read `git diff --cached`, apply a diff-level idiom checklist, run the linter on the affected files, and return **clean / block / escalate**. When one blocks, the coder fixes and the agent is re-dispatched at the same record path; it reads its own prior record there and self-derives `cycle` as `prior + 1` (else `1`) — the dispatch carries no cycle counter. At `cycle ≥ 3` with a block condition remaining (an S3+ finding or a failed linter) it escalates to break a stuck fix loop.
 
@@ -117,7 +119,7 @@ Not scope-matched — these review conformance and behavior, not language idioms
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `bug-hunter` | inherit | per dispatch | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes |
+| `bug-hunter` | opus | per dispatch | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes |
 
 Dispatched one-per-subsystem by the `bug-hunt` skill. Each instance writes edge-case tests (Python and/or Rust) for its subsystem, runs them, and reports failures as bugs — it writes tests, never fixes.
 

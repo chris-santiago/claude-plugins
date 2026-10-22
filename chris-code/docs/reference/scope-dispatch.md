@@ -19,12 +19,14 @@ Agents and review skills match by `scope.extensions` and `scope.require_dependen
 
 ## Model selection
 
-Each role runs on the least powerful model that can handle it. Where an agent's frontmatter pins no `model`, it inherits the dispatch model.
+Each role has a fixed model, pinned in its agent's frontmatter, and the orchestrator passes no `model` override.
 
 | Model | Used for |
 |-------|----------|
-| **Haiku** | Isolated functions, clear spec, 1–2 files, mechanical changes |
-| **Sonnet** | Multi-file coordination, integration, pattern matching — the coders |
-| **Opus** | Architecture and design judgment, broad understanding — the quality, design, and conformance reviewers |
+| **Sonnet** | The coders and the `*-review-lite` commit gates |
+| **Opus** | The spec, quality, design and intent reviewers, `mutation-tester`, `bug-hunter`, and the `remediating-issues` research agent |
+| **Haiku** | `claim-checker` |
+
+Design judgment lives in the decision doc and the brief, so coders implement choices that are already made. Coders never run above sonnet on the orchestrator's judgment. The user can rule an opus coder for a stalled task: the ruling is logged in the ledger, the coder checks its own model against it before changing anything, and `ledger.py check` refuses a finished coder record on any model but sonnet without it. Reviewers on opus also read code written by a different model, so their blind spots correlate less with the author's.
 
 Every dispatch announces its model and agent, e.g. *"Dispatching sonnet rust-coder agent for Task 5 (refactor pipeline)."*

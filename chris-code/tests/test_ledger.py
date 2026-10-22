@@ -34,7 +34,7 @@ def _coder(**overrides) -> dict:
         "schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
         "status": "done", "changed_files": [], "tests": {},
         "new_shared_symbols": [], "duplication_pending": [],
-        "concerns": [], "report": "", "cycle": 1,
+        "concerns": [], "report": "", "cycle": 1, "model": "sonnet",
     }
     data.update(overrides)
     return data
@@ -1053,6 +1053,57 @@ class TestCmdCheck(LedgerTestCase):
     def test_missing_file_raises(self):
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_check(str(self.store / "nope.json"))
+
+
+class TestCoderModel(LedgerTestCase):
+    """Coders run on sonnet; opus only under the user's logged ruling for
+    the task. A coder that refused its model changed nothing, so its
+    needs_context record passes on any model."""
+
+    def _check(self, **overrides) -> None:
+        ledger.cmd_check(str(_write(self.store, "task-1-python-coder.json", _coder(**overrides))))
+
+    def assertRefused(self, fragment: str, **overrides) -> None:
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(**overrides)
+        self.assertIn(fragment, str(ctx.exception))
+
+    def test_a_sonnet_coder_passes(self):
+        self._check()
+
+    def test_check_requires_the_model_but_an_older_record_still_loads(self):
+        data = _coder()
+        del data["model"]
+        path = _write(self.store, "task-1-python-coder.json", data)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_check(str(path))
+        self.assertIn("model", str(ctx.exception))
+        (rec,) = ledger.load_records(self.store)
+        self.assertTrue(rec.ok)
+
+    def test_an_opus_coder_needs_the_users_ruling_for_its_task(self):
+        self.assertRefused(ledger.OPUS_RULING_PREFIX, model="opus")
+        ledger.cmd_append(self.store, "progress", 2, "user ruling: opus coder for task 2")
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
+        self.assertRefused(ledger.OPUS_RULING_PREFIX, model="opus")
+        ledger.cmd_append(self.store, "progress", 1, "User ruling: opus coder, the fix stalled")
+        self._check(model="opus")
+
+    def test_no_ruling_admits_a_model_other_than_sonnet_or_opus(self):
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: opus coder")
+        self.assertRefused("sonnet", model="haiku")
+
+    def test_a_coder_that_refused_its_model_passes_on_any_model(self):
+        self._check(model="opus", status="needs_context")
+        self._check(model="haiku", status="blocked")
+
+    def test_stats_shows_each_coders_model(self):
+        ledger.ensure_store(self.store)  # history is kept only inside a store
+        self._check()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        self.assertRegex(out.getvalue(), r"python-coder\s+c1\s+done\s+findings=0\s+model=sonnet")
 
     def test_invalid_json_raises(self):
         path = self.store / "task-1-bad.json"
