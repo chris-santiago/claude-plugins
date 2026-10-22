@@ -42,7 +42,7 @@ One coder per task. When several match the same extension, `scope.require_depend
 | `pytorch-coder` | sonnet | `.py`, `.ipynb` (torch, lightning) | PyTorch/Lightning implementation |
 | `rust-coder` | sonnet | `.rs` | Rust implementation |
 
-Coders run on sonnet only. The orchestrator never raises a coder's model; the user can rule an opus coder for a stalled task (see [Scope dispatch & models](scope-dispatch.md#model-selection)). A coder checks its own model before changing anything and returns `needs_context` when it runs above sonnet without that ruling.
+Coders run on sonnet only. The orchestrator never raises a coder's model; the user can rule an opus coder for a task, and the fix-cap escalation offers one alongside the routes for the next fix (see [Scope dispatch & models](scope-dispatch.md#model-selection)). A coder checks its own model before changing anything and returns `needs_context` when it runs above sonnet without that ruling.
 
 Coders **internalize the review principles** so their code passes the lite-review gate on the first attempt — preserve behavior, clarity over cleverness, small reviewable steps, prefer deletion to invention, no speculative architecture. They follow `test-driven-development`, run the project's tests and linter, and self-review against the S3+ list before reporting. They implement and test every case the brief's `Cases:` line lists. A case they find that isn't listed is handled, tested, and reported as a `concerns` entry starting `unlisted case:`, a planning gap that doesn't on its own make the status `done_with_concerns`.
 

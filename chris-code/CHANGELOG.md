@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-22
+
+### Changed
+- **The fix-cap escalation offers an opus coder.** Alongside the routes for the next fix (a fresh researched decision through `remediating-issues`, or a fix the user names), the briefing offers an opus coder with the reason the records give. It isn't a route: it combines with whichever route the user picks, and it's logged only when the user picks it. The user can still ask for one at any time.
+
 ## [0.9.0] - 2026-10-22 — Fixed models per role
 
 An orchestrator choosing models per dispatch ran most coders on opus, on the table's "design judgment" row. Since 0.8.0 that judgment lives in the decision doc and the brief, so a coder implements choices already made. Each role now has a fixed model, and coders can't run above sonnet without the user's ruling.
