@@ -422,6 +422,62 @@ class TestOpenListsNoteItems(DeliveryTestCase):
         self.assertNotIn("unknown entry", out)
 
 
+# --- stage map and handles (2026-10-30) ---
+
+class TestStageMap(StoreTestCase):
+    def test_records_a_normalized_footprint(self):
+        ledger.cmd_stage(self.store, 3, 1, ["./src/a.py", "tests/../tests/test_a.py", "src/a.py"])
+        entry = self._log()[-1]
+        self.assertEqual((entry["task"], entry["stage"], entry["files"]),
+                         (3, 1, ["src/a.py", "tests/test_a.py"]))
+
+    def test_restaging_a_task_replaces_its_entry(self):
+        ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+        ledger.cmd_stage(self.store, 3, 2, ["a.py", "b.py"])
+        self.assertEqual(ledger.stage_map(self._log())[3]["stage"], 2)
+        ledger.cmd_stage(self.store, 4, 1, ["a.py"])  # task 3 left stage 1
+
+    def test_an_overlap_in_one_stage_is_refused(self):
+        ledger.cmd_stage(self.store, 3, 1, ["src/a.py", "src/b.py"])
+        self.assertRefused("task 3", ledger.cmd_stage, self.store, 4, 1, ["./src/b.py"])
+        self.assertRefused("['src/b.py']", ledger.cmd_stage, self.store, 4, 1, ["src/b.py"])
+
+    def test_overlap_is_allowed_across_stages_or_after_completion(self):
+        ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+        ledger.cmd_stage(self.store, 4, 2, ["a.py"])
+        self._complete(3)
+        ledger.cmd_stage(self.store, 5, 1, ["a.py"])
+
+    def test_bad_footprints_are_refused(self):
+        self.assertRefused("expected the paths", ledger.cmd_stage, self.store, 3, 1, ["  "])
+        self.assertRefused("expected the paths", ledger.cmd_stage, self.store, 3, 1, ["./"])
+        no_files = self._cli("stage", "--task", "3", "--stage", "1", "--files")
+        stage_zero = self._cli("stage", "--task", "3", "--stage", "0", "--files", "a.py")
+        self.assertEqual((no_files.returncode, stage_zero.returncode), (2, 2))
+
+
+class TestHandles(StoreTestCase):
+    def test_latest_handle_per_task_and_role_wins(self):
+        ledger.cmd_handle(self.store, 3, "python-coder", "a1")
+        ledger.cmd_handle(self.store, 3, "python-coder", "a2")
+        ledger.cmd_handle(self.store, "final", "rust-coder", "b1")
+        handles = ledger.latest_handles(self._log())
+        self.assertEqual(handles[(3, "python-coder")]["agent"], "a2")
+        self.assertEqual(handles[("final", "rust-coder")]["agent"], "b1")
+
+    def test_empty_role_or_agent_is_refused(self):
+        self.assertRefused("non-empty", ledger.cmd_handle, self.store, 3, " ", "a1")
+        self.assertRefused("non-empty", ledger.cmd_handle, self.store, 3, "python-coder", "")
+
+    def test_read_renders_stages_and_handles(self):
+        ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+        ledger.cmd_handle(self.store, 3, "python-coder", "a1")
+        out = self._out(ledger.cmd_read, self.store)
+        self.assertIn("task 3 in stage 1: a.py", out)
+        self.assertIn("task 3 python-coder is agent `a1`", out)
+        self.assertNotIn("unknown entry", out)
+
+
 class TestRenderingNotes(StoreTestCase):
     def test_read_renders_every_kind_and_note_resolutions(self):
         nid = self._note("task-note", "carry it", for_task=3, source=1)

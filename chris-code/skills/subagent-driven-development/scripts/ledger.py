@@ -27,6 +27,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--sto
        python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
        python3 ledger.py note --kind KIND --text "..." [--for N] [--owner N|close] [--from N|final|run] [--store DIR]
        python3 ledger.py notes --task N [--deliver | --waive ID --reason "..."] [--store DIR]
+       python3 ledger.py stage --task N --stage K --files PATH... [--store DIR]
+       python3 ledger.py handle --task N|final --role NAME --agent ID [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
@@ -88,7 +90,7 @@ __all__ = [
     "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
     "store_lock", "NOTE_KINDS", "note_id", "notes_from_log", "open_notes",
     "required_notes", "delivered_note_ids", "undelivered_notes", "owned_open_notes",
-    "tasks_in_flight", "record_delivery",
+    "tasks_in_flight", "record_delivery", "stage_map", "latest_handles",
 ]
 
 SCHEMA_VERSION = 1
@@ -811,6 +813,12 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             ids = ", ".join(f"`{n}`" for n in entry.get("notes", [])) or "(none)"
             lines.append(f"- task {entry.get('task')} received notes via "
                           f"{entry.get('via')}: {ids}")
+        elif entry.get("type") == "stage":
+            lines.append(f"- task {entry.get('task')} in stage {entry.get('stage')}: "
+                          f"{', '.join(entry.get('files', []))}")
+        elif entry.get("type") == "handle":
+            lines.append(f"- task {entry.get('task')} {entry.get('role')} is agent "
+                          f"`{entry.get('agent')}`")
         elif entry.get("type") == "waiver":
             lines.append(f"- task {entry.get('task')} waived `{entry.get('note')}`: "
                           f"{entry.get('reason', '')}")
@@ -985,6 +993,55 @@ def _check_close_notes(log: list[dict]) -> None:
                 "the user)" if owed else "",
                 f"task-notes for tasks that never completed {stranded} (run the task, or "
                 "`resolve` the note as superseded)" if stranded else "") if part))
+
+
+def stage_map(log: list[dict]) -> dict[int, dict]:
+    """Each task's latest stage entry: re-staging a task replaces its
+    stage and footprint."""
+    return {e["task"]: e for e in log if e.get("type") == "stage"
+            and _positive_int_value(e.get("task"))}
+
+
+def latest_handles(log: list[dict]) -> dict[tuple, dict]:
+    """The latest handle per (task, role)."""
+    return {(e.get("task"), e.get("role")): e for e in log if e.get("type") == "handle"}
+
+
+def _normalize_path(path: str) -> str:
+    return posixpath.normpath(path.strip().replace("\\", "/"))
+
+
+def cmd_stage(store_dir: Path, task: int, stage: int, files: list[str]) -> None:
+    """Record `task`'s stage and file footprint. Tasks in one stage run in
+    parallel on one working tree, so a footprint sharing a path with another
+    unfinished task in the same stage is refused."""
+    footprint = sorted({_normalize_path(f) for f in files if f.strip()})
+    if not footprint or "." in footprint:
+        raise RecordError(f"--files: got {files!r}, expected the paths task {task} will touch")
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        done = set(completed_task_ids(log))
+        for other, entry in sorted(stage_map(log).items()):
+            if other == task or str(other) in done or entry.get("stage") != stage:
+                continue
+            shared = sorted(set(footprint) & set(entry.get("files", [])))
+            if shared:
+                raise RecordError(f"task {task} and task {other} both touch {shared} in stage "
+                                  f"{stage}; tasks that share a file go in different stages")
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": "stage", "task": task, "stage": stage, "files": footprint,
+                       "at": _now()})
+
+
+def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
+    """Record the agent id behind a task's role, so the original agent can
+    be continued after a compaction instead of dispatching a cold one."""
+    if not _non_empty_str(role) or not _non_empty_str(agent):
+        raise RecordError("a handle needs a non-empty --role and --agent")
+    with store_lock(store_dir):
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": "handle", "task": task, "role": role.strip(),
+                       "agent": agent.strip(), "at": _now()})
 
 
 def _describe_note(note: dict) -> str:
@@ -2067,6 +2124,20 @@ def build_parser() -> argparse.ArgumentParser:
     notes_action.add_argument("--waive", metavar="ID")
     p_notes.add_argument("--reason", help="why the waived note doesn't apply")
 
+    p_stage = sub.add_parser("stage", parents=[store_parent],
+                              help="record a task's stage and file footprint; refuses a "
+                                   "path shared with another unfinished task in the stage")
+    p_stage.add_argument("--task", required=True, type=_positive_int)
+    p_stage.add_argument("--stage", required=True, type=_positive_int)
+    p_stage.add_argument("--files", required=True, nargs="+")
+
+    p_handle = sub.add_parser("handle", parents=[store_parent],
+                               help="record the agent id behind a task's role, for "
+                                    "SendMessage after a compaction")
+    p_handle.add_argument("--task", required=True, type=_task_arg)
+    p_handle.add_argument("--role", required=True, help="the agent name, e.g. python-coder")
+    p_handle.add_argument("--agent", required=True, help="the agent id the dispatch returned")
+
     p_close = sub.add_parser("close-round", parents=[store_parent],
                               help="start the next close-gate round and print its "
                                    f"number; fails past the cap ({CLOSE_ROUND_CAP})")
@@ -2198,6 +2269,10 @@ def main() -> None:
             cmd_note(store_dir, args.kind, args.text, args.for_task, args.owner, args.source)
         elif args.command == "notes":
             cmd_notes(store_dir, args.task, args.deliver, args.waive, args.reason)
+        elif args.command == "stage":
+            cmd_stage(store_dir, args.task, args.stage, args.files)
+        elif args.command == "handle":
+            cmd_handle(store_dir, args.task, args.role, args.agent)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()),
