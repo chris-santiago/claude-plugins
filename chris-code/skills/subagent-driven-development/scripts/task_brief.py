@@ -23,13 +23,18 @@ ever-growing set of punctuation apologies. See find_consumes_pointers.
 Every task entry must also carry a `Cases:` line (the cases its rule
 covers, or `n/a — <reason>`); the brief carries it verbatim with the entry.
 
+Cross-task notes come only from the ledger store: every open task-note for
+the task, every active run-note, and every open disclosure the task owns.
+After writing the brief, the script logs a delivery listing exactly the
+notes it embedded, which is what `ledger.py append --type complete` checks.
+
 Exit codes: 2 usage (bad args, missing files, task not found, --spec
-required but absent), 3 missing/empty --intent, a stale Consumes:
-pointer (naming each), or a missing/empty Cases: line.
+required but absent, an unreadable progress log), 3 missing/empty
+--intent, a stale Consumes: pointer (naming each), or a missing/empty
+Cases: line.
 
 Usage: python3 task_brief.py PLAN_FILE TASK_N --intent TEXT
-           [--note TEXT]... [--spec PATH] [--constraints-from PLAN]
-           [--store DIR] [-o OUT]
+           [--spec PATH] [--constraints-from PLAN] [--store DIR] [-o OUT]
 """
 
 from __future__ import annotations
@@ -129,14 +134,10 @@ class BriefRequest:
     intent in named fields instead of building an argparse.Namespace just
     to hand run() something with the right attribute names. main()
     translates the parsed CLI args into one of these; nothing about run()
-    depends on argparse. `note` is a tuple, not a list: frozen is only a
-    real guarantee if every field is itself immutable — a list field
-    would let a caller mutate it after construction despite the frozen
-    dataclass."""
+    depends on argparse."""
     plan_file: str
     task_n: str
     intent: str | None
-    note: tuple[str, ...] = ()
     spec: str | None = None
     constraints_from: str | None = None
     store: str | None = None
@@ -547,16 +548,22 @@ def _cases_blocks(task_entry: str) -> list[list[str]]:
 
 
 def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],
-                 constraints: str | None, shapes_text: str) -> str:
+                 constraints: str | None, shapes_text: str,
+                 disclosures: tuple[str, ...] = ()) -> str:
     """Assemble the brief markdown (spec Sec 4): the task's plan entry,
-    the intent, orchestrator cross-task notes, the verbatim Constraints
-    section (only when --constraints-from was given), and the
-    always-present shared-shapes section (no flag disables it)."""
+    the intent, the cross-task notes, the disclosures the task owes (only
+    when it owes one), the verbatim Constraints section (only when
+    --constraints-from was given), and the always-present shared-shapes
+    section (no flag disables it)."""
     parts = [f"# Task {task_n} brief", "", "## Task entry", "", task_entry.rstrip("\n"), ""]
     parts += ["## Intent", "", intent, ""]
     parts += ["## Cross-task notes", ""]
     parts += [f"- {note}" for note in notes] if notes else ["(none)"]
     parts.append("")
+    if disclosures:
+        parts += ["## Disclosures this task owes", ""]
+        parts += [f"- {d}" for d in disclosures]
+        parts.append("")
     if constraints is not None:
         parts += ["## Constraints", "", constraints.rstrip("\n"), ""]
     parts += ["## Shared shapes already built", "", shapes_text, ""]
@@ -604,9 +611,16 @@ def run(request: BriefRequest) -> Path:
     except RuntimeError as e:
         raise UsageError(str(e)) from e
     shapes_text = ledger.render_shapes(ledger.list_shapes(ledger.load_records(store_dir)))
+    try:
+        required = ledger.required_notes(ledger.load_progress_log(store_dir), int(request.task_n))
+    except ledger.RecordError as e:
+        raise UsageError(f"cannot read the store's notes: {e}") from e
+    notes = tuple(_note_line(n) for n in required if n["kind"] != "disclosure")
+    disclosures = tuple(_note_line(n) for n in required if n["kind"] == "disclosure")
 
     brief = build_brief(task_n=request.task_n, task_entry=task_entry, intent=intent,
-                         notes=request.note, constraints=constraints, shapes_text=shapes_text)
+                         notes=notes, constraints=constraints, shapes_text=shapes_text,
+                         disclosures=disclosures)
 
     try:
         if request.output is not None:
@@ -618,8 +632,24 @@ def run(request: BriefRequest) -> Path:
         out_path.write_text(brief, encoding="utf-8")
     except OSError as e:
         raise UsageError(f"cannot write brief: {e}") from e
+    # After the write: a delivery that fails here leaves the notes
+    # undelivered, which `complete` refuses, rather than claiming a brief
+    # that doesn't exist.
+    try:
+        ledger.record_delivery(store_dir, int(request.task_n), [n["id"] for n in required],
+                               "brief")
+    except OSError as e:
+        raise UsageError(f"wrote {out_path} but could not log its delivery: {e}") from e
 
     return out_path
+
+
+def _note_line(note: dict) -> str:
+    """A note as the coder reads it: its id, its text, and where it arose."""
+    source = note.get("from")
+    origin = f" (from task {source})" if isinstance(source, int) else (
+        f" (from {source})" if source else "")
+    return f"[{note['id']}] {note.get('text', '')}{origin}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -630,9 +660,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--intent", default=None,
         help="required: the observable outcome this task must produce")
-    parser.add_argument(
-        "--note", action="append", default=[],
-        help="repeatable orchestrator cross-task note")
     parser.add_argument(
         "--spec", default=None,
         help="design spec path; required iff the task entry contains a §-ref")
@@ -652,7 +679,7 @@ def main() -> None:
     args = build_parser().parse_args()
     request = BriefRequest(
         plan_file=args.plan_file, task_n=args.task_n, intent=args.intent,
-        note=tuple(args.note), spec=args.spec, constraints_from=args.constraints_from,
+        spec=args.spec, constraints_from=args.constraints_from,
         store=args.store, output=args.output,
     )
     try:

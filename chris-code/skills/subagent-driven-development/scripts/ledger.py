@@ -53,7 +53,8 @@ Importable API: see __all__ below — the module's public query/validate/
 render surface (data classes, `get_store_dir`, the `load_*`/`compute_*`/
 `list_*`/`render_*` functions). `task_brief.py` imports a subset of it
 (`get_store_dir`, `ensure_store`, `load_records`, `list_shapes`,
-`render_shapes`); the CLI
+`render_shapes`, `load_progress_log`, `required_notes`, `record_delivery`);
+the CLI
 subcommand handlers (`cmd_*`), `build_parser`, and `main` are plumbing
 invoked only through this script's own `main()` and are not part of the
 importable surface. Functions raise instead of calling sys.exit, so

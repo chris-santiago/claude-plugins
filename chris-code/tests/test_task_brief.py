@@ -7,6 +7,8 @@ Run: python3 -m unittest discover chris-code/tests -v
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -105,7 +107,6 @@ class TaskBriefTestCase(unittest.TestCase):
             plan_file=str(self.plan_path),
             task_n="2",
             intent="make the thing work",
-            note=(),
             spec=None,
             constraints_from=None,
             store=str(self.store),
@@ -590,6 +591,91 @@ def _write_shape_record(store: Path) -> None:
     }), encoding="utf-8")
 
 
+def _file_note(store: Path, kind: str, text: str, **kwargs) -> str:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ledger.cmd_note(store, kind, text, **kwargs)
+    return out.getvalue().strip()
+
+
+class TestBriefNotes(TaskBriefTestCase):
+    """Cross-task notes come from the store, and the brief logs exactly the
+    notes it embedded as delivered (spec 2026-10-30-note-store §4.2, §4.7)."""
+
+    def setUp(self):
+        super().setUp()
+        consumed = self.tmp / "consumed.py"
+        consumed.write_text("x = 1\n", encoding="utf-8")
+        self.plan_path.write_text(
+            _plan_with_pointer(f"contract from spec §6 → `{consumed}`"), encoding="utf-8")
+
+    def _brief(self) -> str:
+        return task_brief.run(self._args(spec=str(self.spec_path))).read_text(encoding="utf-8")
+
+    def _deliveries(self) -> list[dict]:
+        return [e for e in ledger.load_progress_log(self.store) if e.get("type") == "delivery"]
+
+    def test_embeds_required_notes_and_logs_their_delivery(self):
+        mine = _file_note(self.store, "task-note", "use the shared helper", for_task=2, source=1)
+        rule = _file_note(self.store, "run-note", "rebuild before testing")
+        owed = _file_note(self.store, "disclosure", "changelog line", owner=2)
+        other = _file_note(self.store, "task-note", "for task 3", for_task=3)
+        question = _file_note(self.store, "question", "bless?", owner=2)
+        brief = self._brief()
+        self.assertIn(f"- [{mine}] use the shared helper (from task 1)", brief)
+        self.assertIn(f"- [{rule}] rebuild before testing", brief)
+        self.assertIn(f"## Disclosures this task owes\n\n- [{owed}] changelog line", brief)
+        self.assertNotIn(other, brief)
+        self.assertNotIn(question, brief)
+        self.assertEqual(self._deliveries()[-1]["notes"], [mine, rule, owed])
+        self.assertEqual(ledger.undelivered_notes(ledger.load_progress_log(self.store), 2), [])
+
+    def test_no_notes_renders_none_and_omits_disclosures(self):
+        brief = self._brief()
+        self.assertIn("## Cross-task notes\n\n(none)", brief)
+        self.assertNotIn("Disclosures this task owes", brief)
+        self.assertEqual(self._deliveries()[-1]["notes"], [])
+
+    def test_resolved_notes_are_left_out(self):
+        old = _file_note(self.store, "task-note", "old plan", for_task=2)
+        ledger.cmd_resolve(self.store, old, "superseded by the stage 2 rework")
+        self.assertNotIn(old, self._brief())
+
+    def test_rebuilding_logs_a_new_delivery(self):
+        self._brief()
+        late = _file_note(self.store, "task-note", "late note", for_task=2)
+        self.assertIn(late, self._brief())
+        self.assertEqual(len(self._deliveries()), 2)
+
+    def test_a_malformed_log_fails_with_nothing_written(self):
+        self.store.mkdir(parents=True)
+        (self.store / ledger.PROGRESS_FILENAME).write_text("not json\n", encoding="utf-8")
+        with self.assertRaisesRegex(task_brief.UsageError, "line 1"):
+            self._brief()
+        self.assertFalse(any(self.store.rglob("*brief*")))
+
+    def test_a_failed_validation_logs_no_delivery(self):
+        _file_note(self.store, "run-note", "x")
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.run(self._args(intent=" ", spec=str(self.spec_path)))
+        self.assertEqual(self._deliveries(), [])
+
+    def test_a_failed_write_logs_no_delivery(self):
+        _file_note(self.store, "run-note", "x")
+        with mock.patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            with self.assertRaises(task_brief.UsageError):
+                task_brief.run(self._args(spec=str(self.spec_path)))
+        self.assertEqual(self._deliveries(), [])
+
+    def test_the_cli_rejects_note(self):
+        result = subprocess.run(
+            [sys.executable, str(TASK_BRIEF_PY), str(self.plan_path), "2", "--intent", "x",
+             "--spec", str(self.spec_path), "--note", "an ad-hoc note", "--store", str(self.store)],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(any(self.store.rglob("*brief*")))
+
+
 class TestRunEndToEnd(TaskBriefTestCase):
     def test_missing_intent_exits_nonzero_and_writes_nothing(self):
         # Acceptance criterion 1.
@@ -637,9 +723,10 @@ class TestRunEndToEnd(TaskBriefTestCase):
         self.plan_path.write_text(
             _plan_with_pointer(f"contract from spec §6 → `{consumed}`"), encoding="utf-8")
         _write_shape_record(self.store)
+        _file_note(self.store, "task-note", "watch out for X", for_task=2)
+        _file_note(self.store, "run-note", "Y was already handled")
 
         args = self._args(
-            note=("watch out for X", "Y was already handled"),
             spec=str(self.spec_path),
             constraints_from=str(self.plan_path),
         )
