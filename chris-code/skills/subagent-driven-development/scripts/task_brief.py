@@ -586,6 +586,9 @@ def run(request: BriefRequest) -> Path:
     plan_path = _require_existing_file(request.plan_file, "plan file")
     plan_text = _read_text(plan_path, error_cls=UsageError, label=f"plan file {request.plan_file}")
     task_entry = extract_task_entry(plan_text, request.task_n)
+    if not request.task_n.isdigit() or int(request.task_n) < 1:
+        raise UsageError(f"task {request.task_n!r}: the ledger tracks tasks by positive "
+                         "number, so give the task a numbered heading (Task 7, not Task 3a)")
 
     intent = (request.intent or "").strip()
     if not intent:

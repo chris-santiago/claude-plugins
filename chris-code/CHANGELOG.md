@@ -26,7 +26,7 @@ A long SDD run's cross-task knowledge had no durable home, so an orchestrator im
 - **`task_brief.py` no longer takes `--note`.** Cross-task notes reach a brief only through the store.
 - **`clear` refuses to drop open follow-ups, disclosures or questions** unless `--discard-open` says the user confirmed the loss.
 - **Each fix owns its snapshot.** A finished fix record carries `baseline`, the `Fix baseline:` tree from its dispatch. `check` refuses one with no snapshot for the task, or one an earlier cycle of the same record already used. Records written before this still load.
-- **A flagged fix is non-trivial.** `snapshot` refuses to take a trivial fix while a reviewer record of the task flags `recurring` or `introduced_by_fix`, so the fix is routed and counted toward the cap.
+- **A flagged fix is non-trivial.** While a reviewer record of the task flags `recurring` or `introduced_by_fix`, `snapshot` refuses a trivial fix and one settled by the brief's `Cases:` line, so the fix goes through a decision or the user's ruling and counts toward the cap.
 - **The skills use the store.** SDD gains a Run Notes section, records the stage map and handles, checkpoints before a pause, and never keeps cross-task state in a file of its own. `verification-before-completion` builds the completion report from `report` and settles close-owned questions and disclosures before a round. `executing-plans` takes each task's notes at its start. `finishing-a-development-branch` reports open follow-ups before removing the store. A blocked coder that needs more reasoning is offered to the user as an opus coder instead of being re-dispatched on a stronger model unasked.
 
 ## [0.9.1] - 2026-10-22

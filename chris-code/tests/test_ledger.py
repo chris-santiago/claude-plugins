@@ -2616,6 +2616,29 @@ class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
         self._snapshot(non_trivial=True, settled_by="ruling")
         self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 1), 1)
 
+    def test_every_reviewer_role_and_the_final_scope_are_checked(self):
+        flagged = [{"site": "a.py:1", "why": "w"}]
+        quality = {"schema": 1, "agent": "python-quality-reviewer", "role": "quality-reviewer",
+                   "task": 1, "status": "issues", "findings": [], "recurring": [],
+                   "introduced_by_fix": flagged}
+        _write(self.store, "task-1-python-quality-reviewer.json", quality)
+        with self.assertRaises(ledger.RecordError):
+            self._snapshot()
+        _write(self.store, "final-spec-reviewer.json", _spec_reviewer(
+            task="final", status="issues", recurring=flagged))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            with contextlib.redirect_stdout(io.StringIO()):
+                ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "tree-f")
+        self.assertIn("final-spec-reviewer", str(ctx.exception))
+
+    def test_the_cases_line_cannot_settle_a_flagged_fix(self):
+        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
+            status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._snapshot(non_trivial=True, settled_by="cases")
+        self.assertIn("--settled-by ruling", str(ctx.exception))
+        self.assertEqual(ledger.load_progress_log(self.store), [])
+
     def test_clean_or_other_task_reviews_allow_a_trivial_snapshot(self):
         _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(status="issues"))
         _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(

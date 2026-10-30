@@ -602,14 +602,28 @@ def resolutions_from_log(log: list[dict]) -> dict[str, str]:
 def store_lock(store_dir: Path) -> Iterator[None]:
     """Hold the store's exclusive lock: a mutating command's read, checks
     and append happen as one step, so two writers can neither interleave
-    lines nor both pass a check only one of them should."""
-    ensure_store(store_dir)
+    lines nor both pass a check only one of them should. Only an existing
+    store (one `ensure_store` seeded) is locked: locking must not create
+    or seed anything, so a refusal writes nothing and a directory that
+    isn't a store is never touched. A store doesn't exist until its first
+    append (normally the session's `store-dir`), so that write alone runs
+    unlocked."""
+    if not _is_store(store_dir):
+        yield
+        return
     with (store_dir / LOCK_FILENAME).open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _append_progress(store_dir: Path, entry: dict) -> None:
+    """Append one entry to the progress log, seeding the store on its first
+    write: the only point where a command creates the store."""
+    ensure_store(store_dir)
+    _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
 
 
 def _now() -> str:
@@ -930,7 +944,7 @@ def tasks_in_flight(log: list[dict], records: list[Record]) -> list[int]:
 def record_delivery(store_dir: Path, task: int, ids: list[str], via: str) -> None:
     """Log that `task` received the notes `ids` (via "brief" or "session")."""
     with store_lock(store_dir):
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": "delivery", "task": task, "notes": list(ids), "via": via,
                        "at": _now()})
 
@@ -951,13 +965,13 @@ def cmd_notes(store_dir: Path, task: int, deliver: bool = False, waive: str | No
             if waive not in required:
                 raise RecordError(f"{waive!r} is not a note task {task} still needs; its "
                                   f"required notes: {required}")
-            _append_jsonl(store_dir / PROGRESS_FILENAME,
+            _append_progress(store_dir,
                           {"type": "waiver", "task": task, "note": waive, "reason": reason,
                            "at": _now()})
     elif deliver:
         with store_lock(store_dir):
             required = [n["id"] for n in required_notes(load_progress_log(store_dir), task)]
-            _append_jsonl(store_dir / PROGRESS_FILENAME,
+            _append_progress(store_dir,
                           {"type": "delivery", "task": task, "notes": required,
                            "via": "session", "at": _now()})
     log = load_progress_log(store_dir)
@@ -1037,7 +1051,7 @@ def cmd_stage(store_dir: Path, task: int, stage: int, files: list[str]) -> None:
             if shared:
                 raise RecordError(f"task {task} and task {other} both touch {shared} in stage "
                                   f"{stage}; tasks that share a file go in different stages")
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": "stage", "task": task, "stage": stage, "files": footprint,
                        "at": _now()})
 
@@ -1048,7 +1062,7 @@ def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
     if not _non_empty_str(role) or not _non_empty_str(agent):
         raise RecordError("a handle needs a non-empty --role and --agent")
     with store_lock(store_dir):
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": "handle", "task": task, "role": role.strip(),
                        "agent": agent.strip(), "at": _now()})
 
@@ -1186,17 +1200,28 @@ def cmd_note(store_dir: Path, kind: str, text: str, for_task: int | None = None,
         log = load_progress_log(store_dir)
         _check_note_target(log, kind, for_task, owner)
         nid = note_id(kind, text, for_task, owner, source)
-        if any(n["id"] == nid for n in notes_from_log(log)):
-            state = "resolved" if nid in resolutions_from_log(log) else "already open"
-            raise RecordError(f"this note is already filed as {nid} ({state}); file a "
-                              "different text to say something new")
+        existing = next((n for n in notes_from_log(log) if n["id"] == nid), None)
+        if existing is not None:
+            raise RecordError(f"this note is already filed as {nid} "
+                              f"({_note_state(log, existing)}); file a different text to "
+                              "say something new")
         entry: dict = {"type": "note", "id": nid, "kind": kind, "text": text}
         for key, value in (("for", for_task), ("owner", owner), ("from", source)):
             if value is not None:
                 entry[key] = value
         entry["at"] = _now()
-        _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
+        _append_progress(store_dir, entry)
     print(nid)
+
+
+def _note_state(log: list[dict], note: dict) -> str:
+    if note["id"] in resolutions_from_log(log):
+        return "resolved"
+    if note.get("kind") not in RESOLVABLE_NOTE_KINDS:
+        return f"a {note.get('kind')} is never open or resolved"
+    if any(n["id"] == note["id"] for n in open_notes(log)):
+        return "open"
+    return f"closed when task {note.get('for')} completed"
 
 
 def _check_note_flags(kind: str, text: str, for_task: int | None,
@@ -1275,7 +1300,7 @@ def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> 
             _check_no_open_escalation(store_dir, task)
             if isinstance(task, int):
                 _check_task_notes_settled(load_progress_log(store_dir), task)
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": entry_type, "task": task, "note": note})
 
 
@@ -1310,7 +1335,7 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
         _check_close_round(log, expect)
         _check_close_notes(log)
         started = close_rounds(log)
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": "close_round", "round": started + 1, "head": head, "note": note})
     print(started + 1)
 
@@ -1550,30 +1575,35 @@ def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Calla
     why none is owed (`settled_by`). `tree` may be a callable, so a
     refused route writes no git objects."""
     with store_lock(store_dir):
-        if not non_trivial:
-            _check_unflagged_review(store_dir, task)
+        _check_flagged_fix_route(store_dir, task, non_trivial, settled_by)
         route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
         tree = tree() if callable(tree) else tree
         entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
         if non_trivial:
             entry["non_trivial"] = True
             entry.update(route)
-        _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
+        _append_progress(store_dir, entry)
     print(tree)
 
 
-def _check_unflagged_review(store_dir: Path, task: int | str) -> None:
+def _check_flagged_fix_route(store_dir: Path, task: int | str, non_trivial: bool,
+                             settled_by: str | None) -> None:
     """A recurring finding or one the last fix introduced is never trivial,
-    so while a reviewer record of the task flags one, the next fix is
-    non-trivial: routed, and counted toward the cap."""
+    and the brief's Cases: line can't settle it either: a recurrence needs
+    a new mechanism and a regression needs its cause found. So while a
+    reviewer record of the task flags one, the next fix is non-trivial and
+    routed by a decision record or the user's ruling, and it counts toward
+    the cap."""
+    if non_trivial and settled_by != "cases":
+        return
     flagged = sorted(rec.stem for rec in load_records(store_dir)
                      if rec.ok and rec.data.get("role") in REVIEWER_ROLES
                      and _scope(rec.stem) in _task_scopes(task)
                      and (rec.data.get("recurring") or rec.data.get("introduced_by_fix")))
     if flagged:
         raise RecordError(f"{flagged} flag recurring or fix-introduced findings, which are "
-                          "never trivial: take this snapshot with --non-trivial and its route "
-                          "(--decision, or --settled-by ruling)")
+                          "never trivial and never settled by the Cases: line: take this "
+                          "snapshot with --non-trivial and --decision, or --settled-by ruling")
 
 
 def _fix_route(store_dir: Path, task: int | str, non_trivial: bool,
@@ -1729,7 +1759,7 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
     the message lists what's actually open right now)."""
     with store_lock(store_dir):
         _check_resolvable(store_dir, resolve_id, note)
-        _append_jsonl(store_dir / PROGRESS_FILENAME,
+        _append_progress(store_dir,
                       {"type": "resolution", "resolves": resolve_id, "note": note})
 
 
@@ -1866,9 +1896,12 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
     record inside a store (a directory ensure_store seeded) is summarized
     into HISTORY_FILENAME there, since the next cycle overwrites it."""
     path = _resolve_check_path(record_path, store)
-    data = check_record(path)
-    if _is_store(path.parent):
-        with store_lock(path.parent):
+    # The lock covers check_record's reads of the log and the history (the
+    # baseline-reuse check) as well as the history append. check_record
+    # itself never locks: `snapshot` calls it while holding the lock.
+    with store_lock(path.parent):
+        data = check_record(path)
+        if _is_store(path.parent):
             _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
 
 

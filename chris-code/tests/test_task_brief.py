@@ -639,7 +639,18 @@ class TestBriefNotes(TaskBriefTestCase):
     def test_resolved_notes_are_left_out(self):
         old = _file_note(self.store, "task-note", "old plan", for_task=2)
         ledger.cmd_resolve(self.store, old, "superseded by the stage 2 rework")
-        self.assertNotIn(old, self._brief())
+        retired = _file_note(self.store, "run-note", "old recipe")
+        ledger.cmd_resolve(self.store, retired, "retired: the build no longer needs it")
+        brief = self._brief()
+        self.assertNotIn(old, brief)
+        self.assertNotIn(retired, brief)
+
+    def test_a_task_label_the_ledger_cannot_track_is_a_usage_error(self):
+        self.plan_path.write_text("# Plan\n\n### Task 3a: a lettered task\n"
+                                  "- Cases: n/a — wiring only\n- [ ] do it\n", encoding="utf-8")
+        with self.assertRaisesRegex(task_brief.UsageError, "numbered heading"):
+            task_brief.run(self._args(task_n="3a"))
+        self.assertFalse(any(self.store.rglob("*brief*")))
 
     def test_rebuilding_logs_a_new_delivery(self):
         self._brief()
@@ -650,9 +661,10 @@ class TestBriefNotes(TaskBriefTestCase):
     def test_a_malformed_log_fails_with_nothing_written(self):
         self.store.mkdir(parents=True)
         (self.store / ledger.PROGRESS_FILENAME).write_text("not json\n", encoding="utf-8")
-        with self.assertRaisesRegex(task_brief.UsageError, "line 1"):
+        with self.assertRaisesRegex(task_brief.UsageError, r"progress\.jsonl line 1"):
             self._brief()
         self.assertFalse(any(self.store.rglob("*brief*")))
+        self.assertEqual((self.store / ledger.PROGRESS_FILENAME).read_text(), "not json\n")
 
     def test_a_failed_validation_logs_no_delivery(self):
         _file_note(self.store, "run-note", "x")

@@ -53,11 +53,13 @@ class StoreTestCase(unittest.TestCase):
         ledger.cmd_append(self.store, "complete", task, "shipped")
 
     def assertRefused(self, fragment: str, func, *args, **kwargs) -> None:
-        before = len(self._log())
+        def snapshot() -> dict:
+            return {p.name: p.read_bytes() for p in self.store.iterdir()}
+        before = snapshot()
         with self.assertRaises(ledger.RecordError) as ctx:
             self._out(func, *args, **kwargs)
         self.assertIn(fragment, str(ctx.exception))
-        self.assertEqual(len(self._log()), before, "a refusal must append nothing")
+        self.assertEqual(snapshot(), before, "a refusal must write nothing")
 
 
 # --- store lock (2026-10-30) ---
@@ -102,17 +104,53 @@ class TestStoreLock(StoreTestCase):
         self.assertTrue((self.store / ledger.LOCK_FILENAME).exists())
         self.assertFalse((self.store / ledger.PROGRESS_FILENAME).exists())
 
-    def test_read_only_commands_take_no_lock(self):
+    def test_read_only_commands_create_nothing(self):
         missing = Path(self._tmp.name) / "nowhere"
-        self._out(ledger.cmd_open, missing)
-        self._out(ledger.cmd_read, missing)
+        for func in (ledger.cmd_open, ledger.cmd_read, ledger.cmd_run_state, ledger.cmd_report,
+                     ledger.cmd_completed, ledger.cmd_stats):
+            self._out(func, missing)
+        self._out(ledger.cmd_notes, missing, 3)
         self.assertFalse(missing.exists())
 
-    def test_lock_file_is_created_on_first_write(self):
+    def test_the_first_append_seeds_the_store_and_later_writes_lock_it(self):
         fresh = Path(self._tmp.name) / "fresh"
         ledger.cmd_append(fresh, "progress", 1, "x")
-        self.assertTrue((fresh / ledger.LOCK_FILENAME).exists())
         self.assertEqual((fresh / ".gitignore").read_text(), "*\n")
+        ledger.cmd_append(fresh, "progress", 1, "y")
+        self.assertTrue((fresh / ledger.LOCK_FILENAME).exists())
+
+    def test_a_refusal_on_a_missing_store_creates_nothing(self):
+        missing = Path(self._tmp.name) / "nowhere"
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_resolve(missing, "bogus", "x")
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_close_round(missing, "close", "abc", 2)
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_note(missing, "task-note", "x")
+        self.assertFalse(missing.exists())
+
+    def test_clear_never_seeds_a_directory_that_is_not_a_store(self):
+        plain = Path(self._tmp.name) / "plain"
+        plain.mkdir()
+        (plain / "keep.txt").write_text("mine", encoding="utf-8")
+        ledger.cmd_clear(plain)
+        self.assertEqual(sorted(p.name for p in plain.iterdir()), ["keep.txt"])
+
+    def test_concurrent_checks_leave_whole_history_lines(self):
+        record = {"schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
+                  "status": "done", "cycle": 1, "model": "sonnet", "new_shared_symbols": [],
+                  "duplication_pending": [], "concerns": ["x" * 3000]}
+        path = self.store / "task-1-python-coder.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        script = (f"import sys; sys.path.insert(0, {str(SCRIPTS_DIR)!r}); import ledger\n"
+                  f"for _ in range(30): ledger.cmd_check({str(path)!r})\n")
+        procs = [subprocess.Popen([sys.executable, "-c", script]) for _ in range(4)]
+        for proc in procs:
+            self.assertEqual(proc.wait(), 0)
+        lines = (self.store / ledger.HISTORY_FILENAME).read_text().splitlines()
+        self.assertEqual(len(lines), 120)
+        for line in lines:
+            json.loads(line)  # raises on a torn or merged line
 
 
 # --- the run scope for rulings (2026-10-30) ---
@@ -187,10 +225,19 @@ class TestFilingNotes(StoreTestCase):
 
     def test_a_duplicate_is_refused_with_its_state(self):
         nid = self._note("follow-up", "same text")
-        self.assertRefused("already open", ledger.cmd_note, self.store, "follow-up", "same text")
+        self.assertRefused("(open)", ledger.cmd_note, self.store, "follow-up", "same text")
         ledger.cmd_resolve(self.store, nid, "fixed in task 3")
         self.assertRefused("(resolved)", ledger.cmd_note, self.store, "follow-up", "same text")
         self._note("follow-up", "same text", source=4)  # different content, different note
+        self._note("checkpoint", "paused")
+        self.assertRefused("never open or resolved", ledger.cmd_note, self.store, "checkpoint",
+                           "paused")
+        self._note("task-note", "carry it", for_task=6)
+        ledger.record_delivery(self.store, 6, [ledger.note_id("task-note", "carry it", 6)],
+                               "brief")
+        self._complete(6)
+        self.assertRefused("never be delivered", ledger.cmd_note, self.store,
+                           "task-note", "carry it", for_task=6)
 
     def test_cli_files_a_note_and_rejects_bad_flag_values(self):
         result = self._cli("note", "--kind", "task-note", "--text", "x", "--for", "3")
@@ -468,6 +515,24 @@ class TestHandles(StoreTestCase):
     def test_empty_role_or_agent_is_refused(self):
         self.assertRefused("non-empty", ledger.cmd_handle, self.store, 3, " ", "a1")
         self.assertRefused("non-empty", ledger.cmd_handle, self.store, 3, "python-coder", "")
+
+    def test_cli_runs_stage_handle_and_notes(self):
+        ok = [self._cli("stage", "--task", "3", "--stage", "1", "--files", "a.py", "b.py"),
+              self._cli("handle", "--task", "3", "--role", "python-coder", "--agent", "a1"),
+              self._cli("note", "--kind", "run-note", "--text", "rebuild first")]
+        for result in ok:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        rule = ok[-1].stdout.strip()
+        delivered = self._cli("notes", "--task", "3", "--deliver")
+        self.assertEqual(delivered.returncode, 0, delivered.stderr)
+        self.assertIn(f"[{rule}] delivered", delivered.stdout)
+        self._cli("note", "--kind", "run-note", "--text", "second rule")
+        second = ledger.notes_from_log(self._log())[-1]["id"]
+        waived = self._cli("notes", "--task", "3", "--waive", second, "--reason", "no ext")
+        self.assertEqual(waived.returncode, 0, waived.stderr)
+        self.assertEqual(ledger.undelivered_notes(self._log(), 3), [])
+        self.assertEqual(ledger.latest_handles(self._log())[(3, "python-coder")]["agent"], "a1")
+        self.assertEqual(ledger.stage_map(self._log())[3]["files"], ["a.py", "b.py"])
 
     def test_read_renders_stages_and_handles(self):
         ledger.cmd_stage(self.store, 3, 1, ["a.py"])

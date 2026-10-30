@@ -96,7 +96,7 @@ Task-scoped rulings are unchanged (`append --type progress --task N --note "user
 ### 4.8 Fix-loop integrity
 
 - **One snapshot per fix.** A finished coder fix record (cycle 2 or later, `done` or `done_with_concerns`) carries `baseline`: the tree from its dispatch's `Fix baseline:` line. `check` refuses the record when no snapshot of that tree exists for the record's task, or when an earlier cycle of the same record already used that baseline. A fix resumed after `needs_context` or `blocked` keeps its cycle and its baseline, so it passes; two coders fixing the same cycle (another language, an escalated consumer) may share one. History entries for coder records carry the baseline.
-- **Flagged fixes are non-trivial.** `snapshot` without `--non-trivial` refuses while any of the task's current reviewer records has a non-empty `recurring` or `introduced_by_fix`, naming those records. The remedy is a routed non-trivial fix: a decision doc (which may exclude a finding already escalated) or a logged ruling. The fix then counts toward `fix-count`, and the cap applies.
+- **Flagged fixes are non-trivial.** `snapshot` without `--non-trivial`, or with `--settled-by cases`, refuses while any of the task's current reviewer records has a non-empty `recurring` or `introduced_by_fix`, naming those records. The remedy is a routed non-trivial fix: a decision doc (which may exclude a finding already escalated) or a logged ruling. The fix then counts toward `fix-count`, and the cap applies.
 - Neither check depends on who drives the task.
 
 ## 5. Architecture
@@ -152,7 +152,7 @@ Pure derivations over a loaded log (and records where named): required, delivere
 
 ### 6.4 Lock
 
-Every command that appends to or deletes from the store (`append`, `note`, `notes --deliver/--waive`, `stage`, `handle`, `resolve`, `snapshot`, `close-round`, `clear`, `check`'s history append, and `task_brief.py`'s delivery append) holds an exclusive `flock` on `<store>/.lock` across its read, its checks and its write. Read-only commands take no lock. `clear` never deletes `.lock`.
+Every command that appends to or deletes from the store (`append`, `note`, `notes --deliver/--waive`, `stage`, `handle`, `resolve`, `snapshot`, `close-round`, `clear`, `check`'s history append, and `task_brief.py`'s delivery append) holds an exclusive `flock` on `<store>/.lock` across its read, its checks and its write. Read-only commands take no lock. `clear` never deletes `.lock`. Locking never creates or seeds a store: a directory that isn't yet a store is not locked, so a refusal writes nothing and a non-store directory is never touched, and the store's first write (normally `store-dir`) is the one write that runs unlocked.
 
 ## 7. Invariants and constraints
 
