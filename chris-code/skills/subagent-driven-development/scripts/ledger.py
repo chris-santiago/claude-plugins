@@ -26,6 +26,7 @@ Totality ("never crash on any input") is explicitly not a goal.
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
        python3 ledger.py note --kind KIND --text "..." [--for N] [--owner N|close] [--from N|final|run] [--store DIR]
+       python3 ledger.py notes --task N [--deliver | --waive ID --reason "..."] [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
@@ -86,6 +87,8 @@ __all__ = [
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
     "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
     "store_lock", "NOTE_KINDS", "note_id", "notes_from_log", "open_notes",
+    "required_notes", "delivered_note_ids", "undelivered_notes", "owned_open_notes",
+    "tasks_in_flight", "record_delivery",
 ]
 
 SCHEMA_VERSION = 1
@@ -804,6 +807,13 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
                           f"{entry.get('note', '')}")
         elif entry.get("type") == "note":
             lines.append(f"- note `{entry.get('id')}` {_describe_note(entry)}")
+        elif entry.get("type") == "delivery":
+            ids = ", ".join(f"`{n}`" for n in entry.get("notes", [])) or "(none)"
+            lines.append(f"- task {entry.get('task')} received notes via "
+                          f"{entry.get('via')}: {ids}")
+        elif entry.get("type") == "waiver":
+            lines.append(f"- task {entry.get('task')} waived `{entry.get('note')}`: "
+                          f"{entry.get('reason', '')}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -849,6 +859,132 @@ def open_notes(log: list[dict]) -> list[dict]:
     return [n for n in notes_from_log(log)
             if n.get("kind") in RESOLVABLE_NOTE_KINDS and n["id"] not in resolved
             and not (n.get("kind") == "task-note" and str(n.get("for")) in done)]
+
+
+def required_notes(log: list[dict], task: int) -> list[dict]:
+    """The notes `task` must receive before it completes: its open
+    task-notes, every active run-note, and the open disclosures it owns.
+    Questions it owns block it too, but go to the user, never the coder. A
+    completed task requires nothing."""
+    if str(task) in set(completed_task_ids(log)):
+        return []
+    return [n for n in open_notes(log)
+            if (n.get("kind") == "task-note" and n.get("for") == task)
+            or n.get("kind") == "run-note"
+            or (n.get("kind") == "disclosure" and n.get("owner") == task)]
+
+
+def delivered_note_ids(log: list[dict], task: int) -> set[str]:
+    """Ids a delivery for `task` listed (a brief or the session), plus the
+    ones waived for it."""
+    ids: set[str] = set()
+    for e in log:
+        if e.get("task") != task:
+            continue
+        if e.get("type") == "delivery" and isinstance(e.get("notes"), list):
+            ids.update(n for n in e["notes"] if isinstance(n, str))
+        elif e.get("type") == "waiver" and isinstance(e.get("note"), str):
+            ids.add(e["note"])
+    return ids
+
+
+def undelivered_notes(log: list[dict], task: int) -> list[dict]:
+    delivered = delivered_note_ids(log, task)
+    return [n for n in required_notes(log, task) if n["id"] not in delivered]
+
+
+def owned_open_notes(log: list[dict], owner: int | str | None = None) -> list[dict]:
+    """Open disclosures and questions, those of one owner when given."""
+    return [n for n in open_notes(log) if n.get("kind") in OWNED_NOTE_KINDS
+            and (owner is None or n.get("owner") == owner)]
+
+
+def tasks_in_flight(log: list[dict], records: list[Record]) -> list[int]:
+    """Numbered tasks that have started (a delivery, snapshot, handle or
+    record names them) and not completed."""
+    started = {e["task"] for e in log if e.get("type") in ("delivery", "snapshot", "handle")
+               and _positive_int_value(e.get("task"))}
+    started |= {rec.data["task"] for rec in records
+                if rec.ok and _positive_int_value(rec.data.get("task"))}
+    done = set(completed_task_ids(log))
+    return sorted(t for t in started if str(t) not in done)
+
+
+def record_delivery(store_dir: Path, task: int, ids: list[str], via: str) -> None:
+    """Log that `task` received the notes `ids` (via "brief" or "session")."""
+    with store_lock(store_dir):
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": "delivery", "task": task, "notes": list(ids), "via": via,
+                       "at": _now()})
+
+
+def cmd_notes(store_dir: Path, task: int, deliver: bool = False, waive: str | None = None,
+              reason: str | None = None) -> None:
+    """Print the notes `task` must receive, marked delivered or not, and the
+    questions it owns. `deliver` records the session delivering every one
+    of them; `waive` records one that doesn't apply, with its reason."""
+    if reason is not None and waive is None:
+        raise RecordError("--reason goes with --waive ID")
+    if waive is not None:
+        if not _non_empty_str(reason):
+            raise RecordError("a waiver needs --reason saying why the note doesn't apply "
+                              f"to task {task}")
+        with store_lock(store_dir):
+            required = [n["id"] for n in required_notes(load_progress_log(store_dir), task)]
+            if waive not in required:
+                raise RecordError(f"{waive!r} is not a note task {task} still needs; its "
+                                  f"required notes: {required}")
+            _append_jsonl(store_dir / PROGRESS_FILENAME,
+                          {"type": "waiver", "task": task, "note": waive, "reason": reason,
+                           "at": _now()})
+    elif deliver:
+        with store_lock(store_dir):
+            required = [n["id"] for n in required_notes(load_progress_log(store_dir), task)]
+            _append_jsonl(store_dir / PROGRESS_FILENAME,
+                          {"type": "delivery", "task": task, "notes": required,
+                           "via": "session", "at": _now()})
+    log = load_progress_log(store_dir)
+    delivered = delivered_note_ids(log, task)
+    required_list = required_notes(log, task)
+    questions = [n for n in owned_open_notes(log, task) if n.get("kind") == "question"]
+    if not required_list and not questions:
+        print(f"No notes for task {task}.")
+    for n in required_list:
+        mark = "delivered" if n["id"] in delivered else "UNDELIVERED"
+        print(f"[{n['id']}] {mark} {_describe_note(n)}")
+    for n in questions:
+        print(f"[{n['id']}] for the user: {_describe_note(n)}")
+
+
+def _check_task_notes_settled(log: list[dict], task: int) -> None:
+    """A task completes only with every required note delivered and every
+    disclosure and question it owns resolved."""
+    undelivered = [n["id"] for n in undelivered_notes(log, task)]
+    owned = [n["id"] for n in owned_open_notes(log, task)]
+    problems = []
+    if undelivered:
+        problems.append(f"undelivered notes {undelivered} (rebuild the brief, or "
+                        "`notes --deliver`, or `notes --waive ID --reason ...`)")
+    if owned:
+        problems.append(f"open disclosures or questions it owns {owned} (`resolve` each: "
+                        f"where a disclosure landed, or \"{RULING_PREFIX} ...\" for a question)")
+    if problems:
+        raise RecordError(f"task {task} cannot complete with " + "; and ".join(problems))
+
+
+def _check_close_notes(log: list[dict]) -> None:
+    """The close starts with no debt left: no open disclosure or question,
+    and no task-note still waiting on a task that never completed."""
+    owed = [n["id"] for n in owned_open_notes(log)]
+    stranded = [n["id"] for n in open_notes(log) if n.get("kind") == "task-note"]
+    if owed or stranded:
+        raise RecordError(
+            "the close cannot start: "
+            + "; ".join(part for part in (
+                f"open disclosures or questions {owed} (land each and `resolve` it, or ask "
+                "the user)" if owed else "",
+                f"task-notes for tasks that never completed {stranded} (run the task, or "
+                "`resolve` the note as superseded)" if stranded else "") if part))
 
 
 def _describe_note(note: dict) -> str:
@@ -924,13 +1060,14 @@ def cmd_read(store_dir: Path) -> None:
 
 def cmd_open(store_dir: Path) -> None:
     records = load_records(store_dir)
-    resolved = set(resolutions_from_log(load_progress_log(store_dir)))
-    items = compute_open_items(records, resolved)
-    if not items:
-        print("No open items.")
-        return
-    for item in items:
-        print(f"[{item.id}] {item.kind}: {item.summary}")
+    log = load_progress_log(store_dir)
+    items = compute_open_items(records, set(resolutions_from_log(log)))
+    lines = [f"[{item.id}] {item.kind}: {item.summary}" for item in items]
+    for task in tasks_in_flight(log, records):
+        lines += [f"[{n['id']}] undelivered to task {task}: {_describe_note(n)}"
+                  for n in undelivered_notes(log, task)]
+    lines += [f"[{n['id']}] {_describe_note(n)}" for n in owned_open_notes(log)]
+    print("\n".join(lines) if lines else "No open items.")
 
 
 def cmd_shapes(store_dir: Path) -> None:
@@ -957,6 +1094,8 @@ def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> 
     with store_lock(store_dir):
         if entry_type == "complete":
             _check_no_open_escalation(store_dir, task)
+            if isinstance(task, int):
+                _check_task_notes_settled(load_progress_log(store_dir), task)
         _append_jsonl(store_dir / PROGRESS_FILENAME,
                       {"type": entry_type, "task": task, "note": note})
 
@@ -990,6 +1129,7 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
         _check_close_round(log, expect)
+        _check_close_notes(log)
         started = close_rounds(log)
         _append_jsonl(store_dir / PROGRESS_FILENAME,
                       {"type": "close_round", "round": started + 1, "head": head, "note": note})
@@ -1917,6 +2057,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_note.add_argument("--from", dest="source", type=_append_task_arg,
                          help=f"where it arose: a task number, 'final' or '{RUN_SCOPE}'")
 
+    p_notes = sub.add_parser("notes", parents=[store_parent],
+                              help="list the notes a task must receive; --deliver records "
+                                   "the session delivering them, --waive one that doesn't "
+                                   "apply")
+    p_notes.add_argument("--task", required=True, type=_positive_int)
+    notes_action = p_notes.add_mutually_exclusive_group()
+    notes_action.add_argument("--deliver", action="store_true")
+    notes_action.add_argument("--waive", metavar="ID")
+    p_notes.add_argument("--reason", help="why the waived note doesn't apply")
+
     p_close = sub.add_parser("close-round", parents=[store_parent],
                               help="start the next close-gate round and print its "
                                    f"number; fails past the cap ({CLOSE_ROUND_CAP})")
@@ -2046,6 +2196,8 @@ def main() -> None:
             cmd_append(store_dir, args.type, args.task, args.note)
         elif args.command == "note":
             cmd_note(store_dir, args.kind, args.text, args.for_task, args.owner, args.source)
+        elif args.command == "notes":
+            cmd_notes(store_dir, args.task, args.deliver, args.waive, args.reason)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()),

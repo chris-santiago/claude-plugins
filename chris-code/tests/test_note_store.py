@@ -253,6 +253,175 @@ class TestResolvingNotes(StoreTestCase):
         self.assertRefused(nid, ledger.cmd_resolve, self.store, "task-1-x#cannot_verify[1]", "x")
 
 
+# --- delivery, waivers and the delivery gates (2026-10-30) ---
+
+class DeliveryTestCase(StoreTestCase):
+    def _deliver(self, task: int, ids: list[str], via: str = "brief") -> None:
+        ledger.record_delivery(self.store, task, ids, via)
+
+    def _required(self, task: int) -> list[str]:
+        return [n["id"] for n in ledger.required_notes(self._log(), task)]
+
+    def _undelivered(self, task: int) -> list[str]:
+        return [n["id"] for n in ledger.undelivered_notes(self._log(), task)]
+
+
+class TestRequiredNotes(DeliveryTestCase):
+    def test_a_task_requires_its_task_notes_run_notes_and_owned_disclosures(self):
+        mine = self._note("task-note", "for 5", for_task=5)
+        self._note("task-note", "for 6", for_task=6)
+        rule = self._note("run-note", "never stash")
+        owed = self._note("disclosure", "changelog", owner=5)
+        self._note("disclosure", "spec", owner="close")
+        self._note("question", "bless?", owner=5)
+        self._note("follow-up", "later")
+        self.assertEqual(self._required(5), [mine, rule, owed])
+
+    def test_resolved_notes_are_not_required(self):
+        rule = self._note("run-note", "never stash")
+        ledger.cmd_resolve(self.store, rule, "retired")
+        self.assertEqual(self._required(5), [])
+
+    def test_a_completed_task_requires_nothing(self):
+        self._complete(5)
+        self._note("run-note", "filed later")
+        self.assertEqual(self._required(5), [])
+
+    def test_a_delivery_or_waiver_delivers(self):
+        a = self._note("run-note", "a")
+        b = self._note("run-note", "b")
+        self._deliver(5, [a])
+        self._out(ledger.cmd_notes, self.store, 5, waive=b, reason="the task touches no Python")
+        self.assertEqual(self._undelivered(5), [])
+
+    def test_a_note_filed_after_the_delivery_is_undelivered(self):
+        a = self._note("task-note", "a", for_task=5)
+        self._deliver(5, [a])
+        late = self._note("task-note", "late", for_task=5)
+        self.assertEqual(self._undelivered(5), [late])
+
+
+class TestNotesCommand(DeliveryTestCase):
+    def test_lists_required_notes_with_marks_and_owned_questions(self):
+        a = self._note("task-note", "a", for_task=5)
+        b = self._note("run-note", "b")
+        q = self._note("question", "bless?", owner=5)
+        self._deliver(5, [a])
+        out = self._out(ledger.cmd_notes, self.store, 5)
+        self.assertIn(f"[{a}] delivered", out)
+        self.assertIn(f"[{b}] UNDELIVERED", out)
+        self.assertIn(f"[{q}] for the user", out)
+
+    def test_nothing_to_list(self):
+        self.assertIn("No notes for task 5.", self._out(ledger.cmd_notes, self.store, 5))
+
+    def test_deliver_records_exactly_the_required_ids(self):
+        a = self._note("task-note", "a", for_task=5)
+        b = self._note("run-note", "b")
+        self._note("task-note", "other", for_task=6)
+        self._out(ledger.cmd_notes, self.store, 5, deliver=True)
+        entry = self._log()[-1]
+        self.assertEqual((entry["type"], entry["via"], entry["notes"]),
+                         ("delivery", "session", [a, b]))
+        self._out(ledger.cmd_notes, self.store, 5, deliver=True)  # nothing new: still fine
+        self.assertEqual(self._undelivered(5), [])
+
+    def test_waivers_are_checked(self):
+        a = self._note("run-note", "a")
+        other = self._note("task-note", "x", for_task=6)
+        self.assertRefused("not a note task 5 still needs", ledger.cmd_notes, self.store, 5,
+                           waive=other, reason="n/a")
+        self.assertRefused("needs --reason", ledger.cmd_notes, self.store, 5, waive=a,
+                           reason="  ")
+        self.assertRefused("needs --reason", ledger.cmd_notes, self.store, 5, waive=a)
+        self.assertRefused("goes with --waive", ledger.cmd_notes, self.store, 5, reason="x")
+
+    def test_cli_rejects_deliver_with_waive(self):
+        a = self._note("run-note", "a")
+        result = self._cli("notes", "--task", "5", "--deliver", "--waive", a)
+        self.assertEqual(result.returncode, 2)
+
+
+class TestCompletionGate(DeliveryTestCase):
+    def test_an_undelivered_note_blocks_completion(self):
+        a = self._note("task-note", "a", for_task=5)
+        self.assertRefused(a, ledger.cmd_append, self.store, "complete", 5, "done")
+        self._deliver(5, [a])
+        self._complete(5)
+
+    def test_a_run_note_blocks_every_task_in_flight_but_not_a_completed_one(self):
+        for task in (5, 6):
+            self._deliver(task, [])
+        self._deliver(4, [])
+        self._complete(4)
+        rule = self._note("run-note", "rebuild the extension before testing")
+        for task in (5, 6):
+            self.assertRefused(rule, ledger.cmd_append, self.store, "complete", task, "done")
+        self.assertEqual(self._required(4), [])
+
+    def test_an_owned_disclosure_or_question_blocks_until_resolved(self):
+        d = self._note("disclosure", "changelog", owner=7)
+        q = self._note("question", "bless?", owner=7)
+        self._deliver(7, [d])
+        self.assertRefused(d, ledger.cmd_append, self.store, "complete", 7, "done")
+        self.assertRefused(q, ledger.cmd_append, self.store, "complete", 7, "done")
+        ledger.cmd_resolve(self.store, d, "CHANGELOG.md in abc1234")
+        ledger.cmd_resolve(self.store, q, "user ruling: bless")
+        self._complete(7)
+
+    def test_a_superseded_task_note_never_blocks(self):
+        a = self._note("task-note", "a", for_task=5)
+        ledger.cmd_resolve(self.store, a, "superseded by the stage 2 rework")
+        self._complete(5)
+
+    def test_final_is_not_held_by_notes(self):
+        self._note("run-note", "a")
+        ledger.cmd_append(self.store, "complete", "final", "whole change clean")
+
+
+class TestCloseRoundGate(DeliveryTestCase):
+    def test_open_disclosures_questions_and_stranded_task_notes_block_the_close(self):
+        d = self._note("disclosure", "spec text", owner="close")
+        q = self._note("question", "ship it?", owner="close")
+        t = self._note("task-note", "for a task that never ran", for_task=9)
+        for nid in (d, q, t):
+            self.assertRefused(nid, ledger.cmd_close_round, self.store, "close", "abc", 1)
+        ledger.cmd_resolve(self.store, d, "spec.md in abc1234")
+        ledger.cmd_resolve(self.store, q, "user ruling: ship")
+        ledger.cmd_resolve(self.store, t, "superseded: task 9 was dropped")
+        self.assertEqual(self._out(ledger.cmd_close_round, self.store, "close", "abc", 1).strip(),
+                         "1")
+
+    def test_follow_ups_dispositions_and_run_notes_do_not_block_the_close(self):
+        for kind in ("follow-up", "disposition", "run-note", "checkpoint"):
+            self._note(kind, f"a {kind}")
+        self._out(ledger.cmd_close_round, self.store, "close", "abc", 1)
+
+
+class TestOpenListsNoteItems(DeliveryTestCase):
+    def test_open_lists_undelivered_notes_for_tasks_in_flight_and_owned_notes(self):
+        self._deliver(5, [])
+        a = self._note("task-note", "a", for_task=5)
+        future = self._note("task-note", "b", for_task=8)  # task 8 hasn't started
+        d = self._note("disclosure", "changelog", owner="close")
+        f = self._note("follow-up", "later")
+        out = self._out(ledger.cmd_open, self.store)
+        self.assertIn(f"[{a}] undelivered to task 5", out)
+        self.assertIn(f"[{d}] disclosure owned by the close", out)
+        self.assertNotIn(future, out)
+        self.assertNotIn(f, out)
+
+    def test_read_renders_deliveries_and_waivers(self):
+        a = self._note("run-note", "a")
+        b = self._note("run-note", "b")
+        self._deliver(5, [a])
+        self._out(ledger.cmd_notes, self.store, 5, waive=b, reason="no Python here")
+        out = self._out(ledger.cmd_read, self.store)
+        self.assertIn(f"task 5 received notes via brief: `{a}`", out)
+        self.assertIn(f"task 5 waived `{b}`: no Python here", out)
+        self.assertNotIn("unknown entry", out)
+
+
 class TestRenderingNotes(StoreTestCase):
     def test_read_renders_every_kind_and_note_resolutions(self):
         nid = self._note("task-note", "carry it", for_task=3, source=1)
