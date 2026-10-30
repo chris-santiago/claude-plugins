@@ -18,7 +18,7 @@ Commands that write the store hold an exclusive lock on its `.lock` file while t
 | `notes --task N` | The notes task N must receive, marked delivered or not, and the questions it owns |
 | `fix-count --task N` | How many non-trivial fixes the task has had |
 | `findings <decision-path>` | The finding ids a decision record at that path must account for, and the decisions it must reconcile with |
-| `baseline <tree> --task N` | How a fix baseline was routed: a decision record, `settled-by`, or trivial |
+| `baseline <tree> --task N` | How a fix baseline was routed: a decision record, `settled-by`, trivial, or `unrecorded` (a non-trivial snapshot from before routes were logged) |
 | `store-dir` | The resolved store path, creating it and its self-ignoring `.gitignore` if needed |
 
 ## Writing the run

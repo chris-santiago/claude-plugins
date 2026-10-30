@@ -79,7 +79,7 @@ The signature artifact, presented at `coherent-change`'s stage-4 approval checkp
 
 **4. Why it's the most coherent and user-friendly choice.** Cover: reuse (which existing helper or abstraction it leans on), idiom-fit, whether it *mirrors an existing strategy* elsewhere in the codebase, contract-preservation, smallest correct blast radius, project-constraint fit (cite `CLAUDE.md` where relevant), and the end-user / API payoff.
 
-**5. Defense against the alternatives.** Every rejected candidate (A/B/C/D…) gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star fix from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it. Inside an SDD run, that means a `follow-up` note in its store (subagent-driven-development's *Run Notes*); otherwise the defense itself is the record.
+**5. Defense against the alternatives.** Every rejected candidate (A/B/C/D…) gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star fix from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it. Inside an SDD run the orchestrator files it as a `follow-up` note (subagent-driven-development's *Run Notes*); the per-task variant names it in the decision's defense and leaves the filing to the orchestrator. Otherwise the defense itself is the record.
 
 **6. Implementation + verification plan.** Who implements (coder agent), the test(s) and the domain-appropriate proof, `regression-test`, and how the origin gets closed.
 

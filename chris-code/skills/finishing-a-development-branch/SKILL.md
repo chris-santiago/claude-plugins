@@ -159,7 +159,7 @@ git branch -D <feature-branch>
 
 **Only runs for Options 1 and 4.** Options 2 and 3 always preserve the worktree.
 
-First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` (resolved as subagent-driven-development's File Handoffs describes) and give the user its open follow-ups and disclosures in your summary: removing the store destroys them.
+First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` and give the user its open follow-ups and landed disclosures in your summary: removing the store destroys them. `SDD_SCRIPTS` is `<this skill's base directory>/../subagent-driven-development/scripts`, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`, or the session's `--store` override.
 
 Then remove the SDD run artifacts (task briefs, reports, review diffs, ledger records and progress log):
 
