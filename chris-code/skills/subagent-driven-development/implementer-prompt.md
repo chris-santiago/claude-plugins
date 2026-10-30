@@ -140,6 +140,7 @@ Agent tool:
       "concerns": ["..."],
       "cycle": 1,
       "model": "sonnet",
+      "baseline": "<the Fix baseline tree from this dispatch, on a fix>",
       "diagnosis": {"root_cause": "...", "end_state": "...", "resolves_cluster": "..."},
       "hunk_map": [{"site": "file:lines", "implements": "<finding or decision-doc choice>"}],
       "consumers_checked": [{"symbol": "...", "consumers": ["file:line"], "verified": "..."}],
@@ -173,6 +174,11 @@ Agent tool:
       (`sonnet`, `opus`, `haiku`): what you run on, never what the dispatch
       expects. `check` refuses a done or done_with_concerns record on any
       model but sonnet, unless the user's opus ruling is logged for the task.
+    - `baseline` — on a fix (cycle 2+), the `Fix baseline:` tree this
+      dispatch gave you, never a tree you made. `check` refuses a finished
+      fix whose baseline has no snapshot for the task, or one an earlier
+      cycle of your record already used: if the dispatch reuses an old
+      baseline, return needs_context naming it. Omit it on a first attempt.
     - `cycle` — 1 on a first attempt. A fix re-dispatch points at this same
       record path: read your own prior record first and write its cycle + 1.
       Exception: if that prior record's status was needs_context or

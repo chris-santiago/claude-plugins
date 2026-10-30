@@ -156,7 +156,7 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
             if data["role"] != "coder":
                 continue
             with self.subTest(contract=path.name):
-                for field_name in ("diagnosis", *ledger.FIX_MODE_FIELDS):
+                for field_name in ("diagnosis", "baseline", *ledger.FIX_MODE_FIELDS):
                     self.assertIn(field_name, data,
                                   f"{path.name}: fix-mode field {field_name!r} missing "
                                   "from the contract's record example")
