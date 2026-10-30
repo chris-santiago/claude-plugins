@@ -115,6 +115,9 @@ gh pr create --title "<title>" --body "$(cat <<'EOF'
 
 ## Test Plan
 - [ ] <verification steps>
+
+## Follow-ups
+<open follow-ups and landed disclosures from `ledger.py report`, when an SDD run built the change; omit otherwise>
 EOF
 )"
 ```
@@ -156,7 +159,9 @@ git branch -D <feature-branch>
 
 **Only runs for Options 1 and 4.** Options 2 and 3 always preserve the worktree.
 
-First, remove the SDD run artifacts (task briefs, reports, review diffs, ledger records and progress log):
+First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` (resolved as subagent-driven-development's File Handoffs describes) and give the user its open follow-ups and disclosures in your summary: removing the store destroys them.
+
+Then remove the SDD run artifacts (task briefs, reports, review diffs, ledger records and progress log):
 
 ```bash
 rm -rf "$(git rev-parse --show-toplevel)/.sdd"   # per-worktree: toplevel resolves to this worktree's root
