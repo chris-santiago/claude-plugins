@@ -379,6 +379,10 @@ def validate_record(data: object) -> None:
         # requires it (_check_coder_model).
         if "model" in data and not _non_empty_str(data["model"]):
             raise RecordError(f"model: got {data['model']!r}, expected a non-empty string")
+        # Same for a fix's baseline: `check` requires it (_check_fix_baseline).
+        if "baseline" in data and not _non_empty_str(data["baseline"]):
+            raise RecordError(f"baseline: got {data['baseline']!r}, expected the "
+                              "`Fix baseline:` tree from the dispatch")
         # Only a coder reporting a finished fix owes the fix-mode fields: one
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
@@ -1545,6 +1549,8 @@ def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Calla
     why none is owed (`settled_by`). `tree` may be a callable, so a
     refused route writes no git objects."""
     with store_lock(store_dir):
+        if not non_trivial:
+            _check_unflagged_review(store_dir, task)
         route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
         tree = tree() if callable(tree) else tree
         entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
@@ -1553,6 +1559,20 @@ def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Calla
             entry.update(route)
         _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
     print(tree)
+
+
+def _check_unflagged_review(store_dir: Path, task: int | str) -> None:
+    """A recurring finding or one the last fix introduced is never trivial,
+    so while a reviewer record of the task flags one, the next fix is
+    non-trivial: routed, and counted toward the cap."""
+    flagged = sorted(rec.stem for rec in load_records(store_dir)
+                     if rec.ok and rec.data.get("role") in REVIEWER_ROLES
+                     and _scope(rec.stem) in _task_scopes(task)
+                     and (rec.data.get("recurring") or rec.data.get("introduced_by_fix")))
+    if flagged:
+        raise RecordError(f"{flagged} flag recurring or fix-introduced findings, which are "
+                          "never trivial: take this snapshot with --non-trivial and its route "
+                          "(--decision, or --settled-by ruling)")
 
 
 def _fix_route(store_dir: Path, task: int | str, non_trivial: bool,
@@ -1867,7 +1887,32 @@ def check_record(path: Path) -> dict:
         _check_decision_context(path, data)
     elif data["role"] == "coder":
         _check_coder_model(path, data)
+        _check_fix_baseline(path, data)
     return data
+
+
+def _check_fix_baseline(path: Path, data: dict) -> None:
+    """A finished fix names the snapshot it started from, and that snapshot
+    is its own: a fix that reused an earlier cycle's baseline (or had none)
+    would go uncounted by `fix-count`, and the two-fix cap would never
+    fire. A fix resumed after needs_context or blocked keeps its cycle, so
+    its baseline is still its own."""
+    if data["cycle"] < 2 or data["status"] not in DIAGNOSIS_STATUSES:
+        return
+    baseline = data.get("baseline")
+    if not _non_empty_str(baseline):
+        raise RecordError(f"{path}: missing required field(s): baseline (the `Fix baseline:` "
+                          "tree from your dispatch)")
+    if not _is_store(path.parent):
+        return
+    find_baseline(load_progress_log(path.parent), baseline, data["task"])
+    reused = sorted(e["cycle"] for e in load_history(path.parent)
+                    if e.get("record") == path.stem and e.get("baseline") == baseline
+                    and type(e.get("cycle")) is int and e["cycle"] < data["cycle"])
+    if reused:
+        raise RecordError(f"{path}: baseline {baseline} already started cycle {reused[0]}; "
+                          "each fix starts from its own snapshot, so this fix needs a new "
+                          "`snapshot` (return needs_context naming it)")
 
 
 def _check_coder_model(path: Path, data: dict) -> None:
@@ -2103,6 +2148,7 @@ def _history_entry(stem: str, data: dict) -> dict:
              "recurring": count("recurring"), "introduced_by_fix": count("introduced_by_fix")}
     if data.get("role") == "coder":
         entry["model"] = data.get("model")
+        entry["baseline"] = data.get("baseline")
     return entry
 
 

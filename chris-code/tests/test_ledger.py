@@ -2513,6 +2513,117 @@ class TestHistory(LedgerTestCase):
         self.assertIn("No history", out.getvalue())
 
 
+# --- fix-loop integrity (2026-10-30) ---
+
+class TestFixBaselineIsItsOwn(LedgerTestCase):
+    """A finished fix names the snapshot it started from, and no earlier
+    cycle of the same record used it, so `fix-count` sees every fix."""
+
+    def setUp(self):
+        super().setUp()
+        ledger.ensure_store(self.store)
+
+    def _snapshot(self, tree: str, task: int | str = 1) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, task, f"pre-fix {tree}", tree)
+
+    def _fix(self, cycle: int, baseline: str | None, name: str = "task-1-python-coder.json",
+             **overrides) -> Path:
+        fields = {"cycle": cycle, "diagnosis": {"root_cause": "r", "end_state": "e",
+                                                "resolves_cluster": "c"},
+                  "hunk_map": [{"site": "a.py:1", "implements": "f"}], "consumers_checked": []}
+        if baseline is not None:
+            fields["baseline"] = baseline
+        fields.update(overrides)
+        return _write(self.store, name, _coder(**fields))
+
+    def _check(self, path: Path) -> None:
+        ledger.cmd_check(str(path))
+
+    def test_a_finished_fix_without_baseline_fails(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(self._fix(2, None))
+        self.assertIn("baseline", str(ctx.exception))
+
+    def test_a_baseline_with_no_snapshot_fails(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(self._fix(2, "deadbeef"))
+        self.assertIn("no snapshot", str(ctx.exception))
+
+    def test_reusing_an_earlier_cycles_baseline_fails(self):
+        self._snapshot("tree-a")
+        self._check(self._fix(2, "tree-a"))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(self._fix(3, "tree-a"))
+        self.assertIn("already started cycle 2", str(ctx.exception))
+        self._snapshot("tree-b")
+        self._check(self._fix(3, "tree-b"))
+
+    def test_a_resumed_fix_keeps_its_cycle_and_baseline(self):
+        self._snapshot("tree-a")
+        self._check(self._fix(2, None, status="needs_context"))  # paused: no baseline owed
+        self._check(self._fix(2, "tree-a"))
+        self._check(self._fix(2, "tree-a"))  # re-checked after a rewrite
+
+    def test_two_coders_may_share_one_cycles_baseline(self):
+        self._snapshot("tree-a")
+        self._check(self._fix(2, "tree-a"))
+        self._check(self._fix(3, "tree-a", name="task-1-rust-coder.json", agent="rust-coder"))
+
+    def test_first_attempts_and_final_scope(self):
+        self._check(_write(self.store, "task-1-python-coder.json", _coder()))  # cycle 1
+        self._snapshot("tree-f", task="final")
+        self._check(self._fix(2, "tree-f", name="final-python-coder.json", task="final"))
+
+    def test_history_records_the_baseline(self):
+        self._snapshot("tree-a")
+        self._check(self._fix(2, "tree-a"))
+        self.assertEqual(ledger.load_history(self.store)[-1]["baseline"], "tree-a")
+
+    def test_a_pre_upgrade_record_without_baseline_still_loads(self):
+        self._fix(2, None)
+        records = ledger.load_records(self.store)
+        self.assertTrue(records[0].ok, records[0].error)
+
+    def test_an_empty_baseline_is_malformed_at_load(self):
+        self._fix(2, "  ")
+        self.assertFalse(ledger.load_records(self.store)[0].ok)
+
+
+class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
+    def setUp(self):
+        super().setUp()
+        ledger.ensure_store(self.store)
+
+    def _snapshot(self, **kwargs) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "tree-a", **kwargs)
+
+    def test_a_trivial_snapshot_is_refused_after_a_flagged_review(self):
+        for field_name in ("recurring", "introduced_by_fix"):
+            with self.subTest(field=field_name):
+                _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
+                    status="issues", **{field_name: [{"site": "a.py:1", "why": "w"}]}))
+                with self.assertRaises(ledger.RecordError) as ctx:
+                    self._snapshot()
+                self.assertIn("task-1-spec-reviewer", str(ctx.exception))
+                self.assertEqual(ledger.load_progress_log(self.store), [])
+
+    def test_a_routed_non_trivial_snapshot_proceeds_and_counts(self):
+        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
+            status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+        ledger.cmd_append(self.store, "progress", 1, "user ruling: delete, don't reword")
+        self._snapshot(non_trivial=True, settled_by="ruling")
+        self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 1), 1)
+
+    def test_clean_or_other_task_reviews_allow_a_trivial_snapshot(self):
+        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(status="issues"))
+        _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
+            task=2, status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+        self._snapshot()
+        self.assertEqual(len(ledger.load_progress_log(self.store)), 1)
+
+
 # --- CLI end-to-end (subprocess) ---
 
 class TestCLI(LedgerTestCase):
