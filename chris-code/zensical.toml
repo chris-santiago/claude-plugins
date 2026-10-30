@@ -36,6 +36,7 @@ nav = [
         { "Skills"               = "reference/skills.md" },
         { "Agents"               = "reference/agents.md" },
         { "Scope dispatch & models" = "reference/scope-dispatch.md" },
+        { "Ledger commands"      = "reference/ledger.md" },
     ] },
 
     { "Explanation" = [

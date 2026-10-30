@@ -8,6 +8,27 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-30 — Run notes in the store
+
+A long SDD run's cross-task knowledge had no durable home, so an orchestrator improvised a free-form notes file. It grew without bound, nothing in it was ever marked done, and it dropped items: a standing test recipe fell out of later briefs twice, notes filed after their target's brief was built reached the coder only by luck, and changelog debts had no owner. The same run showed the fix cap never firing: fixes reused an earlier cycle's snapshot or skipped one, and fixes were logged as trivial right after reviewers flagged regressions, so `fix-count` stayed at two through seven cycles. This release moves that knowledge into typed ledger entries the briefs, gates and reports read, and makes the fix count rest on evidence.
+
+### Added
+- **Typed run notes.** `ledger.py note` files seven kinds: a task-note for one later task, a run-note for every task, a disclosure owed to the docs, a question for the user, a follow-up, a disposition (a call the orchestrator made alone), and a checkpoint. Ids are content-derived, and a duplicate is refused. `resolve` closes a note with a reason: a disclosure says where it landed, a question takes `user ruling: ...`.
+- **Delivery tracking.** `task_brief.py` embeds a task's task-notes, the active run-notes and the disclosures it owes, and logs the delivery. `ledger.py notes --task N` lists what a task must receive; `--deliver` records a session delivering them (for `executing-plans`), and `--waive ID --reason` records one that doesn't apply.
+- **`run-state` and `report`.** `run-state` shows where a run stands from the store alone: the stage map, task states, fix counts, notes owed, open disclosures and questions, agent handles, and the latest checkpoint. `report` lists what the completion report needs: rulings, follow-ups, the coders' unlisted cases, dispositions and waivers, and disclosures.
+- **The stage map and agent handles.** `ledger.py stage` records each task's stage and footprint and refuses a path another unfinished task in the same stage claims. `ledger.py handle` records the agent behind a task's role, so the original coder can be continued after a compaction.
+- **A run scope for rulings.** `append --type progress --task run` logs a ruling about the whole run.
+- **A store lock.** Every command that writes the store holds an exclusive lock on `<store>/.lock` while it reads, checks and writes.
+- **A ledger command reference** in the docs.
+
+### Changed
+- **Completion and the close wait on owed notes.** `append --type complete` refuses a task with an undelivered note or an open disclosure or question it owns. `close-round` refuses while any disclosure or question is open, or a task-note waits on a task that never completed.
+- **`task_brief.py` no longer takes `--note`.** Cross-task notes reach a brief only through the store.
+- **`clear` refuses to drop open follow-ups, disclosures or questions** unless `--discard-open` says the user confirmed the loss.
+- **Each fix owns its snapshot.** A finished fix record carries `baseline`, the `Fix baseline:` tree from its dispatch. `check` refuses one with no snapshot for the task, or one an earlier cycle of the same record already used. Records written before this still load.
+- **A flagged fix is non-trivial.** `snapshot` refuses to take a trivial fix while a reviewer record of the task flags `recurring` or `introduced_by_fix`, so the fix is routed and counted toward the cap.
+- **The skills use the store.** SDD gains a Run Notes section, records the stage map and handles, checkpoints before a pause, and never keeps cross-task state in a file of its own. `verification-before-completion` builds the completion report from `report` and settles close-owned questions and disclosures before a round. `executing-plans` takes each task's notes at its start. `finishing-a-development-branch` reports open follow-ups before removing the store. A blocked coder that needs more reasoning is offered to the user as an opus coder instead of being re-dispatched on a stronger model unasked.
+
 ## [0.9.1] - 2026-10-22
 
 ### Changed
