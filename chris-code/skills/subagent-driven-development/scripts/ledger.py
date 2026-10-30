@@ -25,6 +25,7 @@ Totality ("never crash on any input") is explicitly not a goal.
 
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
+       python3 ledger.py note --kind KIND --text "..." [--for N] [--owner N|close] [--from N|final|run] [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
@@ -84,7 +85,7 @@ __all__ = [
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
     "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
-    "store_lock",
+    "store_lock", "NOTE_KINDS", "note_id", "notes_from_log", "open_notes",
 ]
 
 SCHEMA_VERSION = 1
@@ -184,6 +185,19 @@ PROGRESS_FILENAME = "progress.jsonl"
 LOCK_FILENAME = ".lock"
 # `append --type progress --task run` logs a ruling about the run as a whole.
 RUN_SCOPE = "run"
+
+# Orchestrator notes (2026-10-30): the run's cross-task knowledge as typed
+# progress entries, so it reaches briefs, gates, resume and the report
+# instead of living in a free-form notes file.
+NOTE_KINDS = ("task-note", "run-note", "disclosure", "question", "follow-up",
+              "disposition", "checkpoint")
+# Owed by a task or by the close; each blocks its owner until resolved.
+OWNED_NOTE_KINDS = ("disclosure", "question")
+# Closed with `resolve`. A disposition is an audit entry and a checkpoint is
+# superseded by the next one, so neither is ever open.
+RESOLVABLE_NOTE_KINDS = frozenset({"task-note", "run-note", "follow-up", "disclosure", "question"})
+CLOSE_OWNER = "close"
+NOTE_ID_PREFIX = "note#"
 
 # Per-cycle history (2026-10-08): records are overwritten each cycle, so a
 # passing `check` appends one summary line per record here. `stats` reads it.
@@ -788,6 +802,8 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         elif entry.get("type") == "close_round":
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
+        elif entry.get("type") == "note":
+            lines.append(f"- note `{entry.get('id')}` {_describe_note(entry)}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -808,6 +824,98 @@ def close_rounds(log: list[dict]) -> int:
     count, so the round cap survives compaction instead of living in the
     orchestrator's memory."""
     return sum(1 for entry in log if entry.get("type") == "close_round")
+
+
+def note_id(kind: str, text: str, for_task: int | None = None, owner: int | str | None = None,
+            source: int | str | None = None) -> str:
+    """A note's content-derived id: the same note filed twice is one note."""
+    content: dict = {"kind": kind, "text": text}
+    for key, value in (("for", for_task), ("owner", owner), ("from", source)):
+        if value is not None:
+            content[key] = value
+    return f"{NOTE_ID_PREFIX}{kind}[{_entry_digest(content)}]"
+
+
+def notes_from_log(log: list[dict]) -> list[dict]:
+    return [e for e in log if e.get("type") == "note" and isinstance(e.get("id"), str)]
+
+
+def open_notes(log: list[dict]) -> list[dict]:
+    """Notes still owed: unresolved, of a resolvable kind, and, for a
+    task-note, aimed at a task that hasn't completed (completing the target
+    closes it)."""
+    resolved = set(resolutions_from_log(log))
+    done = set(completed_task_ids(log))
+    return [n for n in notes_from_log(log)
+            if n.get("kind") in RESOLVABLE_NOTE_KINDS and n["id"] not in resolved
+            and not (n.get("kind") == "task-note" and str(n.get("for")) in done)]
+
+
+def _describe_note(note: dict) -> str:
+    target = ""
+    if note.get("kind") == "task-note":
+        target = f" for task {note.get('for')}"
+    elif note.get("kind") in OWNED_NOTE_KINDS:
+        owner = note.get("owner")
+        target = " owned by the close" if owner == CLOSE_OWNER else f" owned by task {owner}"
+    source = f", from {_scope_name(note['from'])}" if note.get("from") is not None else ""
+    return f"{note.get('kind')}{target}{source}: {note.get('text', '')}"
+
+
+def _scope_name(scope: int | str) -> str:
+    return f"task {scope}" if isinstance(scope, int) else str(scope)
+
+
+def cmd_note(store_dir: Path, kind: str, text: str, for_task: int | None = None,
+             owner: int | str | None = None, source: int | str | None = None) -> None:
+    """File a note and print its id. Refused: a flag the kind doesn't take
+    or lacks, empty text, a target that has already completed (the note
+    could never be consumed), or a note already filed."""
+    _check_note_flags(kind, text, for_task, owner)
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        _check_note_target(log, kind, for_task, owner)
+        nid = note_id(kind, text, for_task, owner, source)
+        if any(n["id"] == nid for n in notes_from_log(log)):
+            state = "resolved" if nid in resolutions_from_log(log) else "already open"
+            raise RecordError(f"this note is already filed as {nid} ({state}); file a "
+                              "different text to say something new")
+        entry: dict = {"type": "note", "id": nid, "kind": kind, "text": text}
+        for key, value in (("for", for_task), ("owner", owner), ("from", source)):
+            if value is not None:
+                entry[key] = value
+        entry["at"] = _now()
+        _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
+    print(nid)
+
+
+def _check_note_flags(kind: str, text: str, for_task: int | None,
+                      owner: int | str | None) -> None:
+    if kind not in NOTE_KINDS:
+        raise RecordError(f"kind: got {kind!r}, allowed set: {list(NOTE_KINDS)}")
+    if not _non_empty_str(text):
+        raise RecordError("a note needs non-empty --text")
+    if kind == "task-note" and for_task is None:
+        raise RecordError("a task-note needs --for N, the task whose brief carries it")
+    if kind != "task-note" and for_task is not None:
+        raise RecordError(f"--for is only for a task-note, not a {kind}")
+    if kind in OWNED_NOTE_KINDS and owner is None:
+        raise RecordError(f"a {kind} needs --owner N|{CLOSE_OWNER}: the task that settles "
+                          "it, or the close")
+    if kind not in OWNED_NOTE_KINDS and owner is not None:
+        raise RecordError(f"--owner is only for a disclosure or question, not a {kind}")
+
+
+def _check_note_target(log: list[dict], kind: str, for_task: int | None,
+                       owner: int | str | None) -> None:
+    done = set(completed_task_ids(log))
+    if for_task is not None and str(for_task) in done:
+        raise RecordError(f"task {for_task} is complete, so a task-note for it would never "
+                          "be delivered; file a follow-up, or a disclosure with "
+                          f"--owner {CLOSE_OWNER}")
+    if isinstance(owner, int) and str(owner) in done:
+        raise RecordError(f"task {owner} is complete, so it can no longer settle this {kind}; "
+                          f"use --owner {CLOSE_OWNER}")
 
 
 def cmd_read(store_dir: Path) -> None:
@@ -1296,10 +1404,14 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     if resolve_id in already_resolved:
         raise RecordError(
             f"{resolve_id!r} already resolved (note: {already_resolved[resolve_id]!r})")
+    if resolve_id.startswith(NOTE_ID_PREFIX):
+        _check_note_resolvable(log, resolve_id, note)
+        return
 
     records = load_records(store_dir)
     items = compute_open_items(records, set(already_resolved))
-    open_ids = sorted(item.id for item in items if item.kind in RESOLVABLE_KINDS)
+    open_ids = sorted([item.id for item in items if item.kind in RESOLVABLE_KINDS]
+                      + [n["id"] for n in open_notes(log)])
     if resolve_id not in open_ids:
         message = (f"{resolve_id!r} matches no open resolvable item; "
                     f"currently open resolvable ids: {open_ids}")
@@ -1315,6 +1427,35 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     if f"#{ESCALATION_KIND}[" in resolve_id and not note.lower().startswith(RULING_PREFIX):
         raise RecordError(f"{resolve_id!r} waits on the user: resolve it with --note "
                           f"\"{RULING_PREFIX} <the ruling, verbatim>\"")
+
+
+# What a note's resolution must say, by kind.
+_NOTE_RESOLUTION_HINTS = {
+    "task-note": "why it no longer applies (superseded or withdrawn)",
+    "run-note": "why the rule is retired",
+    "follow-up": "how it was settled",
+    "disclosure": "where it landed (file and commit)",
+}
+
+
+def _check_note_resolvable(log: list[dict], resolve_id: str, note: str) -> None:
+    found = next((n for n in notes_from_log(log) if n["id"] == resolve_id), None)
+    if found is None:
+        raise RecordError(f"{resolve_id!r} matches no filed note; currently open note ids: "
+                          f"{sorted(n['id'] for n in open_notes(log))}")
+    kind = found.get("kind")
+    if kind not in RESOLVABLE_NOTE_KINDS:
+        why = ("an audit entry" if kind == "disposition"
+               else "superseded by the next checkpoint")
+        raise RecordError(f"{resolve_id!r} is a {kind}, {why}: it is never resolved")
+    if all(n["id"] != resolve_id for n in open_notes(log)):
+        raise RecordError(f"{resolve_id!r} closed when task {found.get('for')} completed")
+    if kind == "question":
+        if not note.lower().startswith(RULING_PREFIX):
+            raise RecordError(f"{resolve_id!r} is a question for the user: resolve it with "
+                              f"--note \"{RULING_PREFIX} <the ruling, verbatim>\"")
+    elif not _non_empty_str(note):
+        raise RecordError(f"{resolve_id!r} needs --note saying {_NOTE_RESOLUTION_HINTS[kind]}")
 
 
 # Store-managed handoff files beyond the JSON records (decision docs are
@@ -1724,6 +1865,17 @@ def _append_task_arg(value: str) -> int | str:
             f"must be a positive integer, 'final' or '{RUN_SCOPE}'") from None
 
 
+def _owner_arg(value: str) -> int | str:
+    """A positive task number, or 'close' for the close."""
+    if value == CLOSE_OWNER:
+        return value
+    try:
+        return _positive_int(value)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"must be a positive integer or '{CLOSE_OWNER}'") from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     store_parent = argparse.ArgumentParser(add_help=False)
     store_parent.add_argument(
@@ -1752,6 +1904,18 @@ def build_parser() -> argparse.ArgumentParser:
                            help="positive task number, 'final' for the whole-change gate, "
                                 f"or '{RUN_SCOPE}' for a ruling about the whole run")
     p_append.add_argument("--note", required=True)
+
+    p_note = sub.add_parser("note", parents=[store_parent],
+                             help="file an orchestrator note and print its id")
+    p_note.add_argument("--kind", required=True, choices=NOTE_KINDS)
+    p_note.add_argument("--text", required=True)
+    p_note.add_argument("--for", dest="for_task", type=_positive_int,
+                         help="task-note only: the task whose brief carries it")
+    p_note.add_argument("--owner", type=_owner_arg,
+                         help=f"disclosure or question only: the task that settles it, "
+                              f"or '{CLOSE_OWNER}'")
+    p_note.add_argument("--from", dest="source", type=_append_task_arg,
+                         help=f"where it arose: a task number, 'final' or '{RUN_SCOPE}'")
 
     p_close = sub.add_parser("close-round", parents=[store_parent],
                               help="start the next close-gate round and print its "
@@ -1880,6 +2044,8 @@ def main() -> None:
             cmd_stats(store_dir)
         elif args.command == "append":
             cmd_append(store_dir, args.type, args.task, args.note)
+        elif args.command == "note":
+            cmd_note(store_dir, args.kind, args.text, args.for_task, args.owner, args.source)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()),
