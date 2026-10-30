@@ -10,8 +10,10 @@ queryable views over those files on the fly — no fold/sync step, no drift.
 Store: <repo toplevel>/.sdd/ by default, or --store DIR. The store is
 uncommitted working-tree scratch: creation seeds a `.gitignore` containing
 `*` inside it, so git never sees the contents no matter what the repo's
-own ignore rules say. progress.jsonl in that same dir is append-only,
-orchestrator-only.
+own ignore rules say. progress.jsonl in that same dir is append-only and
+written only through this script; every command that writes the store
+holds an exclusive lock on its `.lock` file while it reads, checks and
+writes.
 
 Philosophy (spec Sec 4/7, amended 2026-08-27): failures are loud, not
 defensively rendered away. `check` is the write-time gate — an agent runs
@@ -22,7 +24,7 @@ decision-driving fields only; informational fields are unvalidated.
 Totality ("never crash on any input") is explicitly not a goal.
 
 Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
-       python3 ledger.py append --type progress|complete --task N|final --note "..." [--store DIR]
+       python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
@@ -56,17 +58,21 @@ callers (task_brief.py, tests) own exit codes.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import fnmatch
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 __all__ = [
@@ -78,6 +84,7 @@ __all__ = [
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
     "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
+    "store_lock",
 ]
 
 SCHEMA_VERSION = 1
@@ -172,6 +179,11 @@ OPUS_CODER_MODEL = "opus"
 OPUS_RULING_PREFIX = f"{RULING_PREFIX} opus coder"
 
 PROGRESS_FILENAME = "progress.jsonl"
+# Every command that appends to or deletes from the store holds an
+# exclusive flock on this file across its read, its checks and its write.
+LOCK_FILENAME = ".lock"
+# `append --type progress --task run` logs a ruling about the run as a whole.
+RUN_SCOPE = "run"
 
 # Per-cycle history (2026-10-08): records are overwritten each cycle, so a
 # passing `check` appends one summary line per record here. `stats` reads it.
@@ -558,6 +570,24 @@ def resolutions_from_log(log: list[dict]) -> dict[str, str]:
             if entry.get("type") == "resolution" and isinstance(entry.get("resolves"), str)}
 
 
+@contextlib.contextmanager
+def store_lock(store_dir: Path) -> Iterator[None]:
+    """Hold the store's exclusive lock: a mutating command's read, checks
+    and append happen as one step, so two writers can neither interleave
+    lines nor both pass a check only one of them should."""
+    ensure_store(store_dir)
+    with (store_dir / LOCK_FILENAME).open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 def _append_jsonl(path: Path, entry: dict) -> None:
     # Guard against merging with a final line lacking a trailing newline
     # (e.g. a truncated or hand-edited file), which would corrupt both.
@@ -744,7 +774,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         lines += ["", "(none)"]
     for entry in log:
         lines.append("")
-        if entry.get("type") == "progress":
+        if entry.get("type") == "progress" and entry.get("task") == RUN_SCOPE:
+            lines.append(f"- run: {entry.get('note', '')}")
+        elif entry.get("type") == "progress":
             lines.append(f"- task {entry.get('task')}: {entry.get('note', '')}")
         elif entry.get("type") == "complete":
             lines.append(f"- task {entry.get('task')} **COMPLETE**: {entry.get('note', '')}")
@@ -811,10 +843,14 @@ def cmd_store_dir(store_dir: Path) -> None:
 
 
 def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> None:
-    if entry_type == "complete":
-        _check_no_open_escalation(store_dir, task)
-    ensure_store(store_dir)
-    _append_jsonl(store_dir / PROGRESS_FILENAME, {"type": entry_type, "task": task, "note": note})
+    if entry_type == "complete" and task == RUN_SCOPE:
+        raise RecordError(f"task {RUN_SCOPE!r} is a scope for run-level rulings and is never "
+                          "completed; complete a task number or 'final'")
+    with store_lock(store_dir):
+        if entry_type == "complete":
+            _check_no_open_escalation(store_dir, task)
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": entry_type, "task": task, "note": note})
 
 
 def _check_no_open_escalation(store_dir: Path, task: int | str) -> None:
@@ -843,7 +879,17 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
     round 2 can name the remediation range (round-1 head..HEAD). Past
     CLOSE_ROUND_CAP this raises and appends nothing: the cap is the
     escalation trigger, so a further round must never start silently."""
-    started = close_rounds(load_progress_log(store_dir))
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        _check_close_round(log, expect)
+        started = close_rounds(log)
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": "close_round", "round": started + 1, "head": head, "note": note})
+    print(started + 1)
+
+
+def _check_close_round(log: list[dict], expect: int) -> None:
+    started = close_rounds(log)
     if expect == 1 and started >= CLOSE_ROUND_CAP:
         raise RecordError(
             f"expected round 1, but this store already records {started} close "
@@ -867,10 +913,6 @@ def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
             f"close-round cap ({CLOSE_ROUND_CAP}) reached: escalate the open "
             "gate findings to the user instead of starting another round, and "
             "never clear the store to get past the cap.")
-    ensure_store(store_dir)
-    _append_jsonl(store_dir / PROGRESS_FILENAME,
-                  {"type": "close_round", "round": started + 1, "head": head, "note": note})
-    print(started + 1)
 
 
 def _git(repo: Path, *args: str, env: dict | None = None) -> str:
@@ -1080,14 +1122,14 @@ def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Calla
     its route: a decision record for this task that passes `check`, or
     why none is owed (`settled_by`). `tree` may be a callable, so a
     refused route writes no git objects."""
-    route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
-    tree = tree() if callable(tree) else tree
-    ensure_store(store_dir)
-    entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
-    if non_trivial:
-        entry["non_trivial"] = True
-        entry.update(route)
-    _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
+    with store_lock(store_dir):
+        route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
+        tree = tree() if callable(tree) else tree
+        entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
+        if non_trivial:
+            entry["non_trivial"] = True
+            entry.update(route)
+        _append_jsonl(store_dir / PROGRESS_FILENAME, entry)
     print(tree)
 
 
@@ -1242,6 +1284,13 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
     prior resolution — the corrective message quotes that resolution's own
     note) from "never was open" (the id never matched a resolvable item;
     the message lists what's actually open right now)."""
+    with store_lock(store_dir):
+        _check_resolvable(store_dir, resolve_id, note)
+        _append_jsonl(store_dir / PROGRESS_FILENAME,
+                      {"type": "resolution", "resolves": resolve_id, "note": note})
+
+
+def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     log = load_progress_log(store_dir)
     already_resolved = resolutions_from_log(log)
     if resolve_id in already_resolved:
@@ -1266,9 +1315,6 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
     if f"#{ESCALATION_KIND}[" in resolve_id and not note.lower().startswith(RULING_PREFIX):
         raise RecordError(f"{resolve_id!r} waits on the user: resolve it with --note "
                           f"\"{RULING_PREFIX} <the ruling, verbatim>\"")
-    ensure_store(store_dir)
-    _append_jsonl(store_dir / PROGRESS_FILENAME,
-                  {"type": "resolution", "resolves": resolve_id, "note": note})
 
 
 # Store-managed handoff files beyond the JSON records (decision docs are
@@ -1285,17 +1331,19 @@ def cmd_clear(store_dir: Path) -> None:
     (HANDOFF_FILE_PATTERNS), the progress log and the check history —
     content validity is
     irrelevant: a malformed record-attempt is clearable, an unrelated
-    notes.json is not."""
-    if store_dir.is_dir():
+    notes.json is not. The lock file stays: another writer may hold it."""
+    if not store_dir.is_dir():
+        return
+    with store_lock(store_dir):
         for path in sorted(store_dir.glob("*.json")):
             if fnmatch.fnmatch(path.stem, "task-*-*") or fnmatch.fnmatch(path.stem, "final-*"):
                 path.unlink()
         for pattern in HANDOFF_FILE_PATTERNS:
             for path in sorted(store_dir.glob(pattern)):
                 path.unlink()
-    for name in (PROGRESS_FILENAME, HISTORY_FILENAME):
-        if (store_dir / name).is_file():
-            (store_dir / name).unlink()
+        for name in (PROGRESS_FILENAME, HISTORY_FILENAME):
+            if (store_dir / name).is_file():
+                (store_dir / name).unlink()
 
 
 def _resolve_check_path(record_path: str, store: str | None) -> Path:
@@ -1320,7 +1368,8 @@ def cmd_check(record_path: str, store: str | None = None) -> None:
     path = _resolve_check_path(record_path, store)
     data = check_record(path)
     if _is_store(path.parent):
-        _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
+        with store_lock(path.parent):
+            _append_jsonl(path.parent / HISTORY_FILENAME, _history_entry(path.stem, data))
 
 
 def check_record(path: Path) -> dict:
@@ -1663,6 +1712,18 @@ def _task_arg(value: str) -> int | str:
         raise argparse.ArgumentTypeError("must be a positive integer or 'final'") from None
 
 
+def _append_task_arg(value: str) -> int | str:
+    """A task argument for `append`: also 'run', the scope of a ruling about
+    the run as a whole."""
+    if value == RUN_SCOPE:
+        return value
+    try:
+        return _task_arg(value)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"must be a positive integer, 'final' or '{RUN_SCOPE}'") from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     store_parent = argparse.ArgumentParser(add_help=False)
     store_parent.add_argument(
@@ -1687,8 +1748,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_append = sub.add_parser("append", parents=[store_parent], help="append a progress note")
     p_append.add_argument("--type", required=True, choices=["progress", "complete"])
-    p_append.add_argument("--task", required=True, type=_task_arg,
-                           help="positive task number, or 'final' for the whole-change gate")
+    p_append.add_argument("--task", required=True, type=_append_task_arg,
+                           help="positive task number, 'final' for the whole-change gate, "
+                                f"or '{RUN_SCOPE}' for a ruling about the whole run")
     p_append.add_argument("--note", required=True)
 
     p_close = sub.add_parser("close-round", parents=[store_parent],
