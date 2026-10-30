@@ -23,7 +23,8 @@ malformed entry, never hides its siblings. Required-ness is scoped to
 decision-driving fields only; informational fields are unvalidated.
 Totality ("never crash on any input") is explicitly not a goal.
 
-Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|clear [--store DIR]
+Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|report [--store DIR]
+       python3 ledger.py clear [--discard-open] [--store DIR]
        python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
        python3 ledger.py note --kind KIND --text "..." [--for N] [--owner N|close] [--from N|final|run] [--store DIR]
        python3 ledger.py notes --task N [--deliver | --waive ID --reason "..."] [--store DIR]
@@ -91,6 +92,7 @@ __all__ = [
     "store_lock", "NOTE_KINDS", "note_id", "notes_from_log", "open_notes",
     "required_notes", "delivered_note_ids", "undelivered_notes", "owned_open_notes",
     "tasks_in_flight", "record_delivery", "stage_map", "latest_handles",
+    "render_run_state", "render_report",
 ]
 
 SCHEMA_VERSION = 1
@@ -203,6 +205,8 @@ OWNED_NOTE_KINDS = ("disclosure", "question")
 RESOLVABLE_NOTE_KINDS = frozenset({"task-note", "run-note", "follow-up", "disclosure", "question"})
 CLOSE_OWNER = "close"
 NOTE_ID_PREFIX = "note#"
+# A coder's `concerns` entry for a case its brief's Cases: line didn't list.
+UNLISTED_CASE_PREFIX = "unlisted case:"
 
 # Per-cycle history (2026-10-08): records are overwritten each cycle, so a
 # passing `check` appends one summary line per record here. `stats` reads it.
@@ -1044,6 +1048,114 @@ def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
                        "agent": agent.strip(), "at": _now()})
 
 
+def render_run_state(log: list[dict], records: list[Record]) -> str:
+    """Where the run stands, from the store alone: what a resume reads."""
+    done = set(completed_task_ids(log))
+    in_flight = tasks_in_flight(log, records)
+    stages = stage_map(log)
+
+    def state(task: int) -> str:
+        if str(task) in done:
+            return "complete"
+        return "in flight" if task in in_flight else "not started"
+
+    lines = ["# Run state", "", "## Stages"]
+    for stage in sorted({e.get("stage") for e in stages.values()}):
+        lines.append(f"- stage {stage}:")
+        lines += [f"  - task {task} ({state(task)}): {', '.join(entry.get('files', []))}"
+                  for task, entry in sorted(stages.items()) if entry.get("stage") == stage]
+    if not stages:
+        lines.append("(no stage map recorded)")
+    known = set(in_flight) | {int(t) for t in done if t.isdigit()}
+    unstaged = sorted(known - set(stages))
+    if unstaged:
+        lines += ["", "## Unstaged tasks"]
+        lines += [f"- task {task} ({state(task)})" for task in unstaged]
+
+    lines += ["", "## Non-trivial fixes in flight"]
+    lines += ([f"- task {task}: {non_trivial_fix_count(log, task)}" for task in in_flight]
+              or ["(no task in flight)"])
+
+    lines += ["", "## Notes owed"]
+    owed = [f"- task {task}: [{n['id']}] {_describe_note(n)}"
+            for task in in_flight for n in undelivered_notes(log, task)]
+    owed += [f"- task {n.get('for')} (not started): [{n['id']}] {_describe_note(n)}"
+             for n in open_notes(log) if n.get("kind") == "task-note"
+             and n.get("for") not in in_flight]
+    lines += owed or ["(none)"]
+
+    lines += ["", "## Open disclosures and questions"]
+    lines += [f"- [{n['id']}] {_describe_note(n)}" for n in owned_open_notes(log)] or ["(none)"]
+
+    lines += ["", "## Blocking items", f"{len(_open_lines(log, records))} open (see `open`)"]
+
+    lines += ["", "## Agent handles (valid only in the session that created them)"]
+    live = [f"- task {task} {role}: `{entry.get('agent')}`"
+            for (task, role), entry in latest_handles(log).items()
+            if task == "final" or (_positive_int_value(task) and str(task) not in done)]
+    lines += live or ["(none)"]
+
+    checkpoints = [n for n in notes_from_log(log) if n.get("kind") == "checkpoint"]
+    lines += ["", "## Latest checkpoint"]
+    lines.append(f"{checkpoints[-1].get('at', '')}: {checkpoints[-1].get('text', '')}"
+                 if checkpoints else "(none)")
+    return "\n".join(lines)
+
+
+def render_report(log: list[dict], records: list[Record]) -> str:
+    """What the completion report lists, from the store alone."""
+    resolutions = resolutions_from_log(log)
+    notes = notes_from_log(log)
+
+    def of_kind(kind: str) -> list[dict]:
+        return [n for n in notes if n.get("kind") == kind]
+
+    lines = ["# Run report", "", "## User rulings"]
+    rulings = []
+    for e in log:
+        if not str(e.get("note", "")).lower().startswith(RULING_PREFIX):
+            continue
+        if e.get("type") == "progress":
+            rulings.append(f"- {_scope_name(e.get('task'))}: {e['note']}")
+        elif e.get("type") == "resolution":
+            rulings.append(f"- `{e.get('resolves')}`: {e['note']}")
+    lines += rulings or ["(none)"]
+
+    lines += ["", "## Follow-ups"]
+    lines += [f"- [{n['id']}] {_describe_note(n)}" for n in of_kind("follow-up")
+              if n["id"] not in resolutions] or ["(none open)"]
+    lines += ["", "### Unlisted cases the coders reported"]
+    unlisted = [f"- [{cid}] {concern} ({rec.stem})" for rec in records
+                if rec.ok and rec.data.get("role") == "coder"
+                for cid, concern in concern_ids(rec).items()
+                if concern.strip().lower().startswith(UNLISTED_CASE_PREFIX)]
+    lines += unlisted or ["(none)"]
+    lines += ["", "### Follow-ups settled during the run"]
+    lines += [f"- [{n['id']}] {n.get('text', '')}: {resolutions[n['id']]}"
+              for n in of_kind("follow-up") if n["id"] in resolutions] or ["(none)"]
+
+    lines += ["", "## Orchestrator dispositions and waivers"]
+    judged = [f"- [{n['id']}] {_describe_note(n)}" for n in of_kind("disposition")]
+    judged += [f"- task {e.get('task')} waived `{e.get('note')}`: {e.get('reason', '')}"
+               for e in log if e.get("type") == "waiver"]
+    lines += judged or ["(none)"]
+
+    for kind, heading in (("disclosure", "Disclosures"), ("question", "Questions for the user")):
+        lines += ["", f"## {heading}"]
+        lines += [f"- [{n['id']}] {_describe_note(n)}: {resolutions[n['id']]}"
+                  if n["id"] in resolutions else f"- [{n['id']}] OPEN {_describe_note(n)}"
+                  for n in of_kind(kind)] or ["(none)"]
+    return "\n".join(lines)
+
+
+def cmd_run_state(store_dir: Path) -> None:
+    print(render_run_state(load_progress_log(store_dir), load_records(store_dir)))
+
+
+def cmd_report(store_dir: Path) -> None:
+    print(render_report(load_progress_log(store_dir), load_records(store_dir)))
+
+
 def _describe_note(note: dict) -> str:
     target = ""
     if note.get("kind") == "task-note":
@@ -1116,15 +1228,20 @@ def cmd_read(store_dir: Path) -> None:
 
 
 def cmd_open(store_dir: Path) -> None:
-    records = load_records(store_dir)
-    log = load_progress_log(store_dir)
+    lines = _open_lines(load_progress_log(store_dir), load_records(store_dir))
+    print("\n".join(lines) if lines else "No open items.")
+
+
+def _open_lines(log: list[dict], records: list[Record]) -> list[str]:
+    """Everything that blocks: the records' open items, the notes tasks in
+    flight haven't received, and open disclosures and questions."""
     items = compute_open_items(records, set(resolutions_from_log(log)))
     lines = [f"[{item.id}] {item.kind}: {item.summary}" for item in items]
     for task in tasks_in_flight(log, records):
         lines += [f"[{n['id']}] undelivered to task {task}: {_describe_note(n)}"
                   for n in undelivered_notes(log, task)]
     lines += [f"[{n['id']}] {_describe_note(n)}" for n in owned_open_notes(log)]
-    print("\n".join(lines) if lines else "No open items.")
+    return lines
 
 
 def cmd_shapes(store_dir: Path) -> None:
@@ -1663,25 +1780,49 @@ HANDOFF_FILE_PATTERNS = ("task-*-*.md", "design-review-*.md", "intent-recheck.md
                          "intent-issue.md", "mutation-review.md", "review-*.diff")
 
 
-def cmd_clear(store_dir: Path) -> None:
+def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
+    """Refuse while the log holds follow-ups, disclosures or questions not
+    yet settled (they would vanish unreported) unless `discard_open` says
+    the user confirmed the loss; then clear (`_clear_store`)."""
+    if not store_dir.is_dir():
+        return
+    with store_lock(store_dir):
+        if not discard_open:
+            _check_nothing_owed(store_dir)
+        _clear_store(store_dir)
+
+
+def _check_nothing_owed(store_dir: Path) -> None:
+    try:
+        log = load_progress_log(store_dir)
+    except RecordError as e:
+        raise RecordError(f"{e}; the log can't be checked for open notes, so clearing it "
+                          "needs --discard-open") from e
+    owed = [n["id"] for n in open_notes(log)
+            if n.get("kind") in ("follow-up", *OWNED_NOTE_KINDS)]
+    if owed:
+        raise RecordError(f"the store still holds open follow-ups, disclosures or questions "
+                          f"{owed}: put them in the completion report (`report`) or resolve "
+                          "them; clear anyway only with the user's confirmation, via "
+                          "--discard-open")
+
+
+def _clear_store(store_dir: Path) -> None:
     """Delete files whose stem matches the record naming convention
     (task-*-* or final-*), the handoff files the run wrote
     (HANDOFF_FILE_PATTERNS), the progress log and the check history —
     content validity is
     irrelevant: a malformed record-attempt is clearable, an unrelated
     notes.json is not. The lock file stays: another writer may hold it."""
-    if not store_dir.is_dir():
-        return
-    with store_lock(store_dir):
-        for path in sorted(store_dir.glob("*.json")):
-            if fnmatch.fnmatch(path.stem, "task-*-*") or fnmatch.fnmatch(path.stem, "final-*"):
-                path.unlink()
-        for pattern in HANDOFF_FILE_PATTERNS:
-            for path in sorted(store_dir.glob(pattern)):
-                path.unlink()
-        for name in (PROGRESS_FILENAME, HISTORY_FILENAME):
-            if (store_dir / name).is_file():
-                (store_dir / name).unlink()
+    for path in sorted(store_dir.glob("*.json")):
+        if fnmatch.fnmatch(path.stem, "task-*-*") or fnmatch.fnmatch(path.stem, "final-*"):
+            path.unlink()
+    for pattern in HANDOFF_FILE_PATTERNS:
+        for path in sorted(store_dir.glob(pattern)):
+            path.unlink()
+    for name in (PROGRESS_FILENAME, HISTORY_FILENAME):
+        if (store_dir / name).is_file():
+            (store_dir / name).unlink()
 
 
 def _resolve_check_path(record_path: str, store: str | None) -> Path:
@@ -2201,11 +2342,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_resolve.add_argument("id")
     p_resolve.add_argument("--note", default="")
 
-    sub.add_parser("clear", parents=[store_parent],
-                    help="remove records matching the naming convention "
-                         "(task-*-*/final-*), the run's handoff files (briefs, "
-                         "reports, gate reports, review packages), and the "
-                         "progress log")
+    p_clear = sub.add_parser("clear", parents=[store_parent],
+                              help="remove records matching the naming convention "
+                                   "(task-*-*/final-*), the run's handoff files (briefs, "
+                                   "reports, gate reports, review packages), and the "
+                                   "progress log; refuses while follow-ups, disclosures "
+                                   "or questions are open")
+    p_clear.add_argument("--discard-open", action="store_true",
+                         help="clear even with open notes (the user confirmed the loss)")
+
+    sub.add_parser("run-state", parents=[store_parent],
+                    help="where the run stands: stages, task states, notes owed, open "
+                         "disclosures and questions, handles, the latest checkpoint")
+    sub.add_parser("report", parents=[store_parent],
+                    help="what the completion report lists: rulings, follow-ups, "
+                         "unlisted cases, dispositions, disclosures, questions")
 
     p_check = sub.add_parser("check", parents=[store_parent],
                               help="validate a single record file (write-time gate)")
@@ -2288,7 +2439,11 @@ def main() -> None:
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":
-            cmd_clear(store_dir)
+            cmd_clear(store_dir, args.discard_open)
+        elif args.command == "run-state":
+            cmd_run_state(store_dir)
+        elif args.command == "report":
+            cmd_report(store_dir)
         else:
             # A subcommand registered in build_parser but not wired here
             # must not exit 0 having done nothing.

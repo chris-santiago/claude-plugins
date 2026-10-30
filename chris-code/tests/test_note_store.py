@@ -478,6 +478,138 @@ class TestHandles(StoreTestCase):
         self.assertNotIn("unknown entry", out)
 
 
+# --- run-state, report and the guarded clear (2026-10-30) ---
+
+def _write_coder(store: Path, task: int, concerns: list[str]) -> None:
+    record = {"schema": 1, "agent": "python-coder", "role": "coder", "task": task,
+              "status": "done_with_concerns", "cycle": 1, "model": "sonnet",
+              "new_shared_symbols": [], "duplication_pending": [], "concerns": concerns}
+    (store / f"task-{task}-python-coder.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+class TestRunState(DeliveryTestCase):
+    def _state(self) -> str:
+        return self._out(ledger.cmd_run_state, self.store)
+
+    def test_an_empty_store_renders_every_section(self):
+        out = self._state()
+        for heading in ("## Stages", "## Non-trivial fixes in flight", "## Notes owed",
+                        "## Open disclosures and questions", "## Blocking items",
+                        "## Agent handles", "## Latest checkpoint"):
+            self.assertIn(heading, out)
+        self.assertIn("(no stage map recorded)", out)
+        self.assertLess(out.index("## Stages"), out.index("## Latest checkpoint"))
+
+    def test_a_mid_run_store(self):
+        ledger.cmd_stage(self.store, 1, 1, ["a.py"])
+        ledger.cmd_stage(self.store, 2, 1, ["b.py"])
+        ledger.cmd_stage(self.store, 3, 2, ["a.py"])
+        self._deliver(1, [])
+        self._complete(1)
+        self._deliver(2, [])
+        self._deliver(7, [])  # in flight but never staged
+        late = self._note("run-note", "rebuild before testing")
+        future = self._note("task-note", "carry the helper", for_task=3)
+        q = self._note("question", "bless the goldens?", owner="close")
+        ledger.cmd_handle(self.store, 1, "python-coder", "done-agent")
+        ledger.cmd_handle(self.store, 2, "python-coder", "live-agent")
+        self._note("checkpoint", "older checkpoint")
+        self._note("checkpoint", "paused after stage 1")
+        out = self._state()
+        self.assertIn("task 1 (complete): a.py", out)
+        self.assertIn("task 2 (in flight): b.py", out)
+        self.assertIn("task 3 (not started): a.py", out)
+        self.assertIn("## Unstaged tasks\n- task 7 (in flight)", out)
+        self.assertIn("- task 2: 0", out)
+        self.assertIn(f"- task 2: [{late}]", out)
+        self.assertIn(f"- task 3 (not started): [{future}]", out)
+        self.assertIn(f"- [{q}] question owned by the close", out)
+        self.assertIn("live-agent", out)
+        self.assertNotIn("done-agent", out)
+        self.assertIn("paused after stage 1", out)
+        self.assertNotIn("older checkpoint", out)
+
+    def test_a_finished_store(self):
+        ledger.cmd_stage(self.store, 1, 1, ["a.py"])
+        self._deliver(1, [])
+        self._complete(1)
+        out = self._state()
+        self.assertIn("task 1 (complete)", out)
+        self.assertIn("(no task in flight)", out)
+        self.assertIn("0 open", out)
+
+
+class TestReport(DeliveryTestCase):
+    def test_lists_everything_the_completion_report_needs(self):
+        ledger.cmd_append(self.store, "progress", 4, "User ruling: keep the digits")
+        ledger.cmd_append(self.store, "progress", "run", "user ruling: pause after stage 2")
+        ledger.cmd_append(self.store, "progress", 4, "not a ruling")
+        open_f = self._note("follow-up", "split the layout module", source=4)
+        done_f = self._note("follow-up", "typing gap in configure")
+        ledger.cmd_resolve(self.store, done_f, "fixed in task 6")
+        _write_coder(self.store, 4, ["Unlisted case: empty frame refuses", "root cause: x"])
+        disp = self._note("disposition", "took option A on a small call", source=4)
+        rule = self._note("run-note", "rebuild first")
+        self._deliver(5, [])
+        self._out(ledger.cmd_notes, self.store, 5, waive=rule, reason="no extension")
+        landed = self._note("disclosure", "changelog line", owner="close")
+        ledger.cmd_resolve(self.store, landed, "CHANGELOG.md in abc1234")
+        owed = self._note("disclosure", "spec amendment", owner="close")
+        q = self._note("question", "bless?", owner="close")
+        ledger.cmd_resolve(self.store, q, "user ruling: bless all four")
+        out = self._out(ledger.cmd_report, self.store)
+        self.assertIn("- task 4: User ruling: keep the digits", out)
+        self.assertIn("- run: user ruling: pause after stage 2", out)
+        self.assertIn(f"- `{q}`: user ruling: bless all four", out)
+        self.assertNotIn("not a ruling", out)
+        self.assertIn(f"[{open_f}] follow-up, from task 4: split the layout module", out)
+        self.assertIn("Unlisted case: empty frame refuses (task-4-python-coder)", out)
+        self.assertNotIn("root cause: x", out)
+        self.assertIn(f"[{done_f}] typing gap in configure: fixed in task 6", out)
+        self.assertIn(f"[{disp}] disposition, from task 4", out)
+        self.assertIn(f"task 5 waived `{rule}`: no extension", out)
+        self.assertIn(f"[{landed}] disclosure owned by the close: changelog line: CHANGELOG.md", out)
+        self.assertIn(f"[{owed}] OPEN disclosure", out)
+
+
+class TestGuardedClear(StoreTestCase):
+    def test_open_follow_ups_disclosures_or_questions_block_clear(self):
+        for kind, kwargs in (("follow-up", {}), ("disclosure", {"owner": "close"}),
+                             ("question", {"owner": "close"})):
+            with self.subTest(kind=kind):
+                nid = self._note(kind, f"a {kind}", **kwargs)
+                with self.assertRaises(ledger.RecordError) as ctx:
+                    ledger.cmd_clear(self.store)
+                self.assertIn(nid, str(ctx.exception))
+                self.assertTrue((self.store / ledger.PROGRESS_FILENAME).exists())
+                ledger.cmd_clear(self.store, discard_open=True)
+                self.assertFalse((self.store / ledger.PROGRESS_FILENAME).exists())
+                self.assertTrue((self.store / ledger.LOCK_FILENAME).exists())
+
+    def test_settled_or_non_blocking_notes_do_not_block_clear(self):
+        nid = self._note("follow-up", "x")
+        ledger.cmd_resolve(self.store, nid, "reported in the PR")
+        for kind in ("run-note", "disposition", "checkpoint"):
+            self._note(kind, f"a {kind}")
+        ledger.cmd_clear(self.store)
+        self.assertFalse((self.store / ledger.PROGRESS_FILENAME).exists())
+
+    def test_a_malformed_log_needs_discard_open(self):
+        (self.store / ledger.PROGRESS_FILENAME).write_text("not json\n", encoding="utf-8")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_clear(self.store)
+        self.assertIn("--discard-open", str(ctx.exception))
+        ledger.cmd_clear(self.store, discard_open=True)
+        self.assertFalse((self.store / ledger.PROGRESS_FILENAME).exists())
+
+    def test_cli_wires_the_views_and_discard_open(self):
+        self._note("follow-up", "x")
+        for command in ("run-state", "report"):
+            self.assertEqual(self._cli(command).returncode, 0, command)
+        self.assertEqual(self._cli("clear").returncode, 1)
+        self.assertEqual(self._cli("clear", "--discard-open").returncode, 0)
+
+
 class TestRenderingNotes(StoreTestCase):
     def test_read_renders_every_kind_and_note_resolutions(self):
         nid = self._note("task-note", "carry it", for_task=3, source=1)
