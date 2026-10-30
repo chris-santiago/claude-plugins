@@ -11,3 +11,4 @@ The ask, in the user's words: an orchestrator note store built into chris-code, 
 5. The completion report lists every follow-up, unlisted case, orchestrator disposition and user ruling straight from the store; nothing is reconstructed from memory, and neither `clear` nor branch cleanup can destroy them without reporting them or the user's confirmation.
 6. Two unfinished tasks in one stage cannot be recorded with overlapping files, and concurrent writers cannot corrupt the store.
 7. The orchestrator uses the store instead of an ad-hoc notes file ("knowledge through files, authority at the orchestrator"): the store is the only path by which notes reach briefs, gates, resume and the report, and the skill says so.
+8. (Added 2026-10-30 by the user's decision to fold in the fix-loop checks.) Every fix has its own snapshot, and a fix the reviewers flagged as recurring or fix-caused cannot be logged as trivial, so the two-fix cap reaches the user whoever drives the task.

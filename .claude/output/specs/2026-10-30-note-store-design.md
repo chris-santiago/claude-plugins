@@ -6,6 +6,8 @@ Intent ledger: `.claude/output/intent/2026-10-30-note-store-intent.md`.
 
 SDD's orchestrator holds cross-task knowledge (notes owed to later tasks, standing rules, follow-ups, docs debts, questions for the user, its own judgment calls, resume state, the stage map, live agent ids) with no durable home, so a long run improvises a free-form notes file that grows without bound, is never consumed, and silently drops items. This feature makes that knowledge typed entries in the SDD store, written and read only through `ledger.py`, consumed by `task_brief.py`, enforced by the ledger's gates, and surfaced by two views: `run-state` for resuming and `report` for the completion report. The skills that drive or close an SDD run are updated so the store is the only path notes travel.
 
+It also closes two fix-loop gaps found in the same run: a fix could reuse an earlier cycle's snapshot or skip one entirely, and a fix the reviewers flagged as recurring or fix-caused could be logged as trivial. Either one stops `fix-count` from counting and the two-fix cap from firing, whoever drives the task.
+
 ## 2. Goals
 
 - Every note kind has a typed entry, a defined consumer and a defined end of life.
@@ -16,6 +18,7 @@ SDD's orchestrator holds cross-task knowledge (notes owed to later tasks, standi
 - The completion report is built from `ledger.py report`; nothing that must be reported can be deleted unreported.
 - The stage map is recorded, and overlapping footprints within a stage are refused.
 - Concurrent writers cannot interleave or race the store's read-check-append commands.
+- Every fix has its own snapshot, and a fix the reviewers flagged as recurring or fix-caused is counted as non-trivial, so the two-fix cap fires on the ledger's evidence rather than the driver's discipline.
 
 ## 3. Non-goals
 
@@ -90,6 +93,12 @@ Task-scoped rulings are unchanged (`append --type progress --task N --note "user
 
 `task_brief.py` drops `--note` (argparse rejects it). It reads the store's log during its read-only validation phase; a malformed log fails the brief loudly with nothing written. Superseded or retired notes are never embedded. With no required notes, "Cross-task notes" renders `(none)` and the disclosures section is omitted.
 
+### 4.8 Fix-loop integrity
+
+- **One snapshot per fix.** A finished coder fix record (cycle 2 or later, `done` or `done_with_concerns`) carries `baseline`: the tree from its dispatch's `Fix baseline:` line. `check` refuses the record when no snapshot of that tree exists for the record's task, or when an earlier cycle of the same record already used that baseline. A fix resumed after `needs_context` or `blocked` keeps its cycle and its baseline, so it passes; two coders fixing the same cycle (another language, an escalated consumer) may share one. History entries for coder records carry the baseline.
+- **Flagged fixes are non-trivial.** `snapshot` without `--non-trivial` refuses while any of the task's current reviewer records has a non-empty `recurring` or `introduced_by_fix`, naming those records. The remedy is a routed non-trivial fix: a decision doc (which may exclude a finding already escalated) or a logged ruling. The fix then counts toward `fix-count`, and the cap applies.
+- Neither check depends on who drives the task.
+
 ## 5. Architecture
 
 - `ledger.py` remains the single authority for the store: it owns every new entry type, the derivations (required, delivered, active, open), the gates, the lock and both views. Derivations are pure functions over the log and records, exported for `task_brief.py`.
@@ -116,6 +125,10 @@ All new entries carry `"at"`: UTC ISO-8601 to the second. Existing entry types a
 - `stage`: positive int stage; non-empty file list; paths normalized (posix normpath, no leading `./`). The latest `stage` entry per task wins.
 - `handle`: task is a positive int or `"final"`; the latest per (task, role) wins.
 - `progress` and `resolution` keep their shapes; `progress.task` additionally accepts `"run"`.
+
+### 6.1a Coder record field
+
+A coder record gains `"baseline": "<tree>"`. At load (`open`, `read`, `shapes`) it is optional and, when present, must be a non-empty string, so records written before the upgrade stay valid. At `check` it is required on a finished fix record (cycle 2 or later, `done` or `done_with_concerns`) and validated against the log as in 4.8. Every coder contract (the three coder agents and the fallback implementer prompt) shows the field and says it is the dispatch's `Fix baseline:` tree, never a tree the coder made.
 
 ### 6.2 Commands
 
@@ -146,7 +159,7 @@ Every command that appends to or deletes from the store (`append`, `note`, `note
 - `progress.jsonl` stays append-only; no command rewrites or truncates it except `clear`.
 - Every refusal appends nothing and writes nothing.
 - A failed brief writes neither a brief file nor a delivery entry.
-- Existing entry types, record schemas, ids, and every existing command's behavior on stores without new entries are unchanged; existing tests keep passing.
+- Existing entry types, ids, and every existing command's behavior on stores without new entries are unchanged, except the two fix-loop checks of 4.8; record schemas change only by the optional-at-load `baseline` field.
 - The stale-store and close-gate-remediation recognition in SDD's Durable Progress (close rounds and the `close-gate remediation r1:` note) is unaffected by new entry types.
 - `load_progress_log` still fails loudly on the first malformed line; new readers inherit that.
 - No skill or script prose calls ledger scripts by a relative `scripts/` path (`tests/test_scripts_path.py`).
@@ -164,6 +177,7 @@ Every command that appends to or deletes from the store (`append`, `note`, `note
 - **`--note` removed from `task_brief.py`.** An ad-hoc note path would reopen the silent miss and compete with the store.
 - **Checkpoints are narrative, newest wins.** They hold only what the store cannot derive; history stays in the log.
 - **Guarded `clear`.** Today it silently deletes everything; the guard turns loss into a user confirmation.
+- **Fix-loop checks in the ledger, not the driver.** The motivating run had fixes with no snapshot or a reused one, and fixes logged as trivial right after reviewers flagged regressions, under both the session orchestrator and a task runner, so the cap never fired. The checks key on evidence the ledger already holds (the record's baseline, the reviewers' `recurring` and `introduced_by_fix`). Rejected: a count rule (snapshots ≥ cycles − 1), which needs no new field but cannot tell a reused baseline from a fresh one; leaving it to prose, which already failed.
 
 ## 9. Acceptance criteria
 
@@ -181,7 +195,10 @@ Every command that appends to or deletes from the store (`append`, `note`, `note
 - `task_brief.py` rejects `--note`; a failing brief (any validation error, malformed log) writes no file and no delivery; a successful one logs a delivery listing exactly the embedded ids.
 - `read` renders every new entry type; `open` lists undelivered notes, open disclosures and open questions and nothing else new.
 - Two processes appending concurrently to one store produce only whole, valid lines, and two concurrent gated commands cannot both pass a check that only one should.
-- Every existing test passes unchanged.
+- A cycle-2 fix record without `baseline` fails `check`; one naming a tree with no snapshot for its task fails; a cycle-3 record reusing its cycle-2 baseline fails; a resumed `needs_context` fix at the same cycle and baseline passes; python and rust coders sharing one cycle's baseline both pass; a pre-upgrade cycle-2 record without `baseline` still loads in `open`.
+- `snapshot` without `--non-trivial` is refused while a current reviewer record of the task has non-empty `recurring` or `introduced_by_fix`, and allowed once those lists are empty; with `--non-trivial` and a route it proceeds and `fix-count` increments.
+- Every coder contract shows `baseline`, and the contract-drift test covers it.
+- Every existing test passes, except tests that relied on a trivial snapshot after a flagged review or a fix record without `baseline`, which are updated to the new rules.
 
 ## 10. Validation strategy
 
@@ -194,4 +211,5 @@ Behavioral unit tests per entry type, gate, view and refusal, driven through the
 - executing-plans: `notes --task N --deliver` at task start; files notes the same way.
 - finishing-a-development-branch: `ledger.py report` before store cleanup, carrying follow-ups and disclosures into the PR body or summary.
 - remediating-issues and coherent-change: "log the north-star as a follow-up" means a `follow-up` note inside an SDD run.
+- Coder agents and `implementer-prompt.md`: the `baseline` field in the typed record and its bullet. SDD's fix-baseline and fix-cap passages state that `check` and `snapshot` now enforce them.
 - Docs: `execution-mechanics.md`, README's ledger bullets, a ledger command reference page, the skills reference; CHANGELOG 0.10.0.
