@@ -204,10 +204,10 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 - **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.sdd/` at the repo toplevel (per-worktree, self-gitignored) via `scripts/task_brief.py`, `scripts/review-package`, and `scripts/ledger.py`, with implementer and reviewer reports written as typed records validated against a shared contract; dispatches pass file paths, never pasted text or diffs.
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
 - **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `ledger.py append` (called through `$SDD_SCRIPTS`, the skill's absolute scripts directory); a controller that loses context after compaction resumes from `ledger.py run-state` instead of re-running finished work. TodoWrite stays the live view.
-- **Run notes.** The orchestrator's cross-task knowledge is typed notes in the same store (`ledger.py note`): notes for later tasks and standing rules that briefs carry automatically, disclosures and questions that block their owner task or the close, follow-ups, its own judgment calls, and checkpoints. Completion refuses a task with an undelivered note, and `ledger.py report` builds the completion report from the store.
+- **Run notes.** The orchestrator's cross-task knowledge is typed notes in the same store (`ledger.py note`): notes for later tasks and standing rules that briefs carry automatically, disclosures and questions that block their owner task or the close, follow-ups, its own judgment calls, and checkpoints. Completion refuses a task with an undelivered note, and `ledger.py report` builds the completion report from the store. Every command that writes the store holds a lock on it, and `clear` won't drop open follow-ups, disclosures or questions unless you confirm the loss.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
-- **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage. Trivial findings go straight to the coder; non-trivial ones first get a per-task decision doc from `remediating-issues`, unless the plan's `Cases:` line already settles them (research once, defended choice per finding, no approval pause). The doc is a typed record `ledger.py check` verifies, and a non-trivial fix's baseline snapshot refuses to start without one that passes. From cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster, enforced by `ledger.py check`), and re-reviewers judge it against that stated cause. Fixes go back to the original coder (`SendMessage`) when it's reachable, are self-reviewed against the quality reviewer's checklist, and must map every hunk of the fix diff (`hunk_map`, read with `ledger.py diff-since` against a pre-fix `snapshot`, limited to the task's files) and verify every changed symbol's consumers (`consumers_checked`); reviewers flag fix regressions in `introduced_by_fix`. Case coverage is planned, not discovered: each plan task's `Cases:` line (enforced by `task_brief.py`) lists every case its rule covers, the spec reviewer checks each has a test, and findings name their rule's whole class so one fix covers every sibling. A `recurring` finding (same class, same site, across cycles), not merely a new one, forces the next decision doc to replace the failed mechanism. A task gets at most two non-trivial fix attempts (`ledger.py fix-count`): a non-trivial finding still open after them goes to the user, briefed with the decision docs. Trivial leftovers never escalate. Before any review, `ledger.py labels` checks the coder's added lines for review-process labels (task and finding ids, cycle numbers, commit hashes) and sends hits straight back, and `ledger.py stats` shows each task's verdicts cycle by cycle.
-- **The close round.** `verification-before-completion` dispatches its design, intent, and mutation gates together and triages once; the non-trivial findings go to `remediating-issues` as one close-gate batch (decision doc with your approval → `lean-plan` → SDD, no `lean-spec`). Round 2 re-checks at the same report paths, and anything non-trivial left after it goes to the user. `ledger.py close-round --expect N` enforces the two-round cap and refuses a round the store disagrees with, so a stale store can't start a new run at round 2.
+- **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage. Trivial findings go straight to the coder; non-trivial ones first get a per-task decision doc from `remediating-issues`, unless the plan's `Cases:` line already settles them (research once, defended choice per finding, no approval pause). The doc is a typed record `ledger.py check` verifies, and a non-trivial fix's baseline snapshot refuses to start without one that passes. From cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster, enforced by `ledger.py check`), and re-reviewers judge it against that stated cause. Fixes go back to the original coder (`SendMessage`) when it's reachable, are self-reviewed against the quality reviewer's checklist, and must map every hunk of the fix diff (`hunk_map`, read with `ledger.py diff-since` against a pre-fix `snapshot`, limited to the task's files) and verify every changed symbol's consumers (`consumers_checked`); reviewers flag fix regressions in `introduced_by_fix`. Case coverage is planned, not discovered: each plan task's `Cases:` line (enforced by `task_brief.py`) lists every case its rule covers, the spec reviewer checks each has a test, and findings name their rule's whole class so one fix covers every sibling. A `recurring` finding (same class, same site, across cycles), not merely a new one, forces the next decision doc to replace the failed mechanism. Each fix starts from its own snapshot: a finished fix record names its `baseline`, and `check` refuses one with no snapshot for the task or one an earlier cycle already used. While a reviewer flags `recurring` or `introduced_by_fix`, `snapshot` refuses a trivial fix or one settled by the `Cases:` line, so a flagged fix always counts. A task gets at most two non-trivial fix attempts (`ledger.py fix-count`): a non-trivial finding still open after them goes to the user, briefed with the decision docs, two routes for the next fix (a fresh researched decision or a fix the user names) and the option of an opus coder. Trivial leftovers never escalate. Before any review, `ledger.py labels` checks the coder's added lines for review-process labels (task and finding ids, cycle numbers, commit hashes) and sends hits straight back, and `ledger.py stats` shows each task's verdicts cycle by cycle.
+- **The close round.** `verification-before-completion` dispatches its design, intent, and mutation gates together and triages once; the non-trivial findings go to `remediating-issues` as one close-gate batch (decision doc with your approval → `lean-plan` → SDD, no `lean-spec`). Round 2 re-checks at the same report paths, and anything non-trivial left after it goes to the user. `ledger.py close-round --expect N` enforces the two-round cap and refuses a round the store disagrees with, so a stale store can't start a new run at round 2. It also refuses while a disclosure or question is still open, so the close settles them first.
 
 ## The determined-change engine
 
@@ -295,8 +295,8 @@ One coder per task. Dispatched by `subagent-driven-development` (`executing-plan
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|
-| `python-coder` | sonnet | `.py` | — | General Python implementation with review principles |
-| `pytorch-coder` | sonnet | `.py` | torch, lightning | PyTorch/Lightning implementation with Lightning-first conventions + general Python patterns |
+| `python-coder` | sonnet | `.py`, `.ipynb` | — | General Python implementation with review principles |
+| `pytorch-coder` | sonnet | `.py`, `.ipynb` | torch, lightning | PyTorch/Lightning implementation with Lightning-first conventions + general Python patterns |
 | `rust-coder` | sonnet | `.rs` | — | Rust implementation with review principles |
 
 ### Quality Review Agents (additive — all matching fire)
@@ -305,8 +305,8 @@ Dispatched per task alongside the spec reviewer; both verdicts are triaged once.
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|
-| `python-quality-reviewer` | opus | `.py` | — | General Python principle adherence + bug detection |
-| `pytorch-quality-reviewer` | opus | `.py` | torch, lightning | Lightning conventions + silent training bugs + reproducibility |
+| `python-quality-reviewer` | opus | `.py`, `.ipynb` | — | General Python principle adherence + bug detection |
+| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` | torch, lightning | Lightning conventions + silent training bugs + reproducibility |
 | `rust-quality-reviewer` | opus | `.rs` | — | Rust principle adherence + bug detection |
 
 In a PyTorch project, `.py` files get **both** `python-quality-reviewer` and `pytorch-quality-reviewer`. If findings conflict, pytorch takes precedence.
@@ -317,8 +317,8 @@ Dispatched before each commit and as a final full-diff pass at plan end.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-review-lite` | inherit | `.py` | Idiom checklist + linter, returns clean/block/escalate |
-| `rust-review-lite` | inherit | `.rs` | Idiom checklist + clippy, returns clean/block/escalate |
+| `python-review-lite` | sonnet | `.py` | Idiom checklist + linter, returns clean/block/escalate |
+| `rust-review-lite` | sonnet | `.rs` | Idiom checklist + clippy, returns clean/block/escalate |
 
 ### Senior Review Agents (additive — all matching fire)
 
@@ -326,7 +326,7 @@ Dispatched by `verification-before-completion` as the heavyweight, read-only gat
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `python-design-reviewer` | opus | `.py` | Senior Python cohesion/API-design findings, returns PASS/CONCERNS |
+| `python-design-reviewer` | opus | `.py`, `.ipynb` | Senior Python cohesion/API-design findings, returns PASS/CONCERNS |
 | `rust-design-reviewer` | opus | `.rs` | Senior Rust cohesion/API-design findings, returns PASS/CONCERNS |
 
 ### Conformance Agents (language-agnostic, dispatched explicitly)
@@ -354,7 +354,7 @@ Dispatched by the `bug-hunt` skill.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `bug-hunter` | inherit | per dispatch | Adversarial edge-case test writer, never fixes |
+| `bug-hunter` | opus | per dispatch | Adversarial edge-case test writer, never fixes |
 
 ### Mutation Gate Agent
 
@@ -385,11 +385,15 @@ Dependency resolution checks project files (`pyproject.toml`, `requirements.txt`
 
 ## Model Selection
 
-| Model | When |
-|-------|------|
-| **Haiku** | Isolated functions, clear spec, 1-2 files, mechanical changes |
-| **Sonnet** | Multi-file coordination, integration concerns, pattern matching |
-| **Opus** | Architecture decisions, design judgment, reviews, broad codebase understanding |
+Each role has a fixed model, pinned in its agent's frontmatter; the orchestrator passes no `model` override.
+
+| Model | Roles |
+|-------|-------|
+| **Sonnet** | Coders (`*-coder`, and `general-purpose` used as an implementer), `*-review-lite` |
+| **Opus** | Spec, quality and design reviewers, `intent-reviewer`, `mutation-tester`, `bug-hunter`, the `remediating-issues` research agent |
+| **Haiku** | `claim-checker` |
+
+Design judgment lives in the decision doc and the brief, so a coder implements choices already made. A coder runs on opus only by your ruling, which the fix-cap escalation and a blocked coder both offer; `ledger.py check` refuses a finished coder record above sonnet unless that ruling is logged for its task.
 
 Announce the model and agent on every dispatch: "Dispatching sonnet python-coder agent for Task 3 (add utility function)"
 

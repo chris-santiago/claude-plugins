@@ -12,7 +12,7 @@ Neither cost is free, so the choice has to be principled rather than habitual.
 
 **Dispatch when the task's context is recoverable from artifacts; stay in-session when the *why* lives only in the conversation.**
 
-A fresh subagent reconstructs its understanding from what it can read — the brief, the spec, the repo. That works when the relevant context is *externalized* into those artifacts. It fails silently when the deciding context exists only in the back-and-forth you just had with the user and never made it to a file. So the orchestrator has a standing obligation: **don't dispatch context you've only externalized in your head.** Either write the *why* into the brief, or keep the task in-session.
+A fresh subagent reconstructs its understanding from what it can read — the brief, the spec, the repo. That works when the relevant context is *externalized* into those artifacts. It fails silently when the deciding context exists only in the back-and-forth you just had with the user and never made it to a file. So the orchestrator has a standing obligation: **don't dispatch context you've only externalized in your head.** Either write the *why* into the brief, or keep the task in-session. The orchestrator's own cross-task knowledge follows the same rule: it lives in the run's store as typed notes, not in its context or a notes file of its own (see [Run notes](execution-mechanics.md#run-notes)).
 
 ## Why the lean spec is what makes dispatch safe
 
@@ -26,7 +26,7 @@ That makes intent a **required element** of every dispatch, not an optional nice
 
 ## Pointer-based handoff
 
-Briefs are reference sheets, not restatements of the spec. They carry pointers — "the contract built in Task 3 lives here," "section 5 governs this call," the landing symbol — and trust the coder to trace the chain by reading. The one thing pointers can't capture is intent, which is why intent is stated explicitly while everything else is referenced. This keeps the orchestrator's context lean and the dispatch honest: a fresh agent gets its brief, the interfaces it touches, the constraints, and the goal — nothing more. The file-based machinery that implements this is described in [Execution mechanics](execution-mechanics.md).
+Briefs are reference sheets, not restatements of the spec. They carry pointers — "the contract built in Task 3 lives here," "section 5 governs this call," the landing symbol — and trust the coder to trace the chain by reading. A cross-task pointer is filed in the store as a task-note, and `task_brief.py` embeds it, so it never depends on the orchestrator remembering to carry it. The one thing pointers can't capture is intent, which is why intent is stated explicitly while everything else is referenced. This keeps the orchestrator's context lean and the dispatch honest: a fresh agent gets its brief, the interfaces it touches, the constraints, and the goal — nothing more. The file-based machinery that implements this is described in [Execution mechanics](execution-mechanics.md).
 
 ## The integrator side
 

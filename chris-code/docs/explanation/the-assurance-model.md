@@ -15,7 +15,7 @@ chris-code runs a lot of review gates. It's tempting to read a green pipeline as
 
 Steps 3, 5, and 6 are independent read-only reviews of the same committed HEAD, so they are dispatched together as one **close round**, with the Step 4 trace done alongside, and every finding is triaged once. Trivial findings are fixed inline; the non-trivial set goes through `remediating-issues` as one batch, and a second round re-checks only what that remediation could have changed. The cap is two rounds: whatever non-trivial work survives goes to you. [The close round](execution-mechanics.md#the-close-round) has the details.
 
-A **PASS is not "nothing to do."** A gate can pass while carrying findings, and **PASS-with-findings is not clean**: each finding is verified real (via `receiving-code-review` — neither reflexively obeyed nor dismissed), then in-scope findings are fixed *in this change* and only a genuinely separable, larger improvement is deferred. Shipping an in-scope finding as "TODO: later" defeats the gate. The rest of this page is about *what those six steps do and don't prove*.
+A **PASS is not "nothing to do."** A gate can pass while carrying findings, and **PASS-with-findings is not clean**: each finding is verified real (via `receiving-code-review` — neither reflexively obeyed nor dismissed), then in-scope findings are fixed *in this change* and only a genuinely separable, larger improvement is deferred (filed as a follow-up note and listed in the completion report). Shipping an in-scope finding as "TODO: later" defeats the gate. The rest of this page is about *what those six steps do and don't prove*.
 
 ## More passes raise recall, not residual assurance
 

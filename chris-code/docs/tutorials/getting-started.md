@@ -35,10 +35,10 @@ Read the spec when prompted. It should be short; if it reads like a coding walkt
 
 1. dispatches the matching **coder agent** (`python-coder` / `rust-coder` / `pytorch-coder`) with a brief that carries the task's *why*,
 2. runs **spec review** (did it build what was asked?) and **quality review** (is the code sound?) together,
-3. triages their findings once and, if there are any, sends the coder one batched fix,
+3. triages their findings once: trivial ones go straight back to the coder in one batched fix, while non-trivial ones (and anything a reviewer flags as recurring or caused by a fix) first get a decision doc researched by a `remediating-issues` agent; after two non-trivial fixes, the next one comes to you,
 4. runs the **commit-lite gate** (idioms + linter) before each commit.
 
-You'll see each dispatch announced with its model and agent. Independent tasks run in parallel; tasks that touch the same files are serialized automatically.
+You'll see each dispatch announced with its model and agent. Each role's model is fixed: coders run on sonnet and reviewers on opus, and a coder moves to opus only if you rule it. Independent tasks run in parallel; tasks that touch the same files are serialized automatically.
 
 ## Step 4: Verify before "done"
 
@@ -51,13 +51,13 @@ When all tasks are in, `verification-before-completion` runs a six-step gate:
 5. **Intent re-check** — a spec-blind `intent-reviewer` compares the shipped behavior to your frozen intent ledger
 6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change
 
-Tests and lints run first. Steps 3, 5, and 6 then run together as one **close round**, with the requirements trace done alongside, and their findings are triaged once: small ones are fixed on the spot, bigger ones that belong in this change are fixed as one batch and re-checked in a second round, and separable improvements are logged as follow-ups. If something is still open after two rounds, it comes to you.
+Tests and lints run first. Steps 3, 5, and 6 then run together as one **close round**, with the requirements trace done alongside, and their findings are triaged once: small ones are fixed on the spot, bigger ones that belong in this change are fixed as one batch and re-checked in a second round, and separable improvements are filed as follow-ups. Before a round, it asks you any open questions the run filed and lands any doc disclosures still owed. If something is still open after two rounds, it comes to you. When it passes, the completion report is built from the run's store: your rulings, the follow-ups, and where each disclosure landed.
 
 A green run is not "nothing to do" — read any findings it surfaces.
 
 ## Step 5: Finish the branch
 
-`finishing-a-development-branch` presents your integration options — merge, open a PR, keep the branch, or discard — and handles worktree cleanup.
+`finishing-a-development-branch` presents your integration options (merge, open a PR, keep the branch, or discard), lists the run's open follow-ups so they outlive the run's store, and handles worktree cleanup.
 
 ## What you've done
 

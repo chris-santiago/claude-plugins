@@ -493,7 +493,7 @@
           <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">6</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change.</p></div></div>
         </div>
-        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Before a round, open questions go to you and owed doc disclosures land. Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you. The completion report is built from the run's store (<span class="mono">ledger.py report</span>), not memory.</p>
       </div>
       <div class="usecard">
         <h4>Why more passes ≠ more proof</h4>
@@ -576,7 +576,7 @@
     <div class="sec-head">
       <p class="eyebrow">The 15 agents · where the weight goes</p>
       <h2>For every agent that writes code, four exist only to check it.</h2>
-      <p>Fifteen dedicated agents auto-dispatch by file type. Three are coders; the other twelve test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
+      <p>Fifteen dedicated agents auto-dispatch by file type. Three are coders; the other twelve test, review, or verify. The plugin spends its agent budget on assurance, not authorship. Each role's model is pinned: coders and commit-lite gates on sonnet; reviewers, <span class="mono">mutation-tester</span>, <span class="mono">bug-hunter</span> and the research agent on opus; <span class="mono">claim-checker</span> on haiku. A coder goes to opus only by your ruling.</p>
     </div>
     <div class="ratio reveal" style="margin-bottom:34px">
       <div class="ratio-viz">
@@ -625,7 +625,7 @@
       </div>
       <div class="usecard" style="border-top:4px solid var(--assure)">
         <h4>The decision chain — JSON records, agent to orchestrator</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">Every coder and reviewer also writes a small typed record: a status from a per-role enum, plus the fields control flow consumes — <span class="mono">duplication_pending</span>, <span class="mono">cannot_verify</span>, <span class="mono">new_shared_symbols</span>. The orchestrator steers by querying <span class="mono">ledger.py</span> views (<span class="mono">open</span>, <span class="mono">completed</span>, <span class="mono">shapes</span>), never by scanning prose for sentinels.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">Every coder and reviewer also writes a small typed record: a status from a per-role enum, plus the fields control flow consumes — <span class="mono">duplication_pending</span>, <span class="mono">cannot_verify</span>, <span class="mono">new_shared_symbols</span>. The orchestrator steers by querying <span class="mono">ledger.py</span> views (<span class="mono">run-state</span>, <span class="mono">open</span>, <span class="mono">completed</span>, <span class="mono">shapes</span>, <span class="mono">notes</span>, <span class="mono">fix-count</span>), never by scanning prose for sentinels.</p>
         <p class="pull">Prose is for minds; records are for steering.</p>
       </div>
     </div>
@@ -643,14 +643,14 @@
       </div>
       <div class="usecard" style="border-top:4px solid var(--assure)">
         <h4>State survives context loss</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0">Completions are typed entries (<span class="mono">ledger.py completed</span>), open items resolve by content-derived ids copied verbatim, and shared shapes auto-carry into every later brief with no manual step. After compaction, the orchestrator rebuilds from the store — data, not recollection.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:0">Completions are typed entries (<span class="mono">ledger.py completed</span>), open items resolve by content-derived ids copied verbatim, and shared shapes auto-carry into every later brief with no manual step. Cross-task knowledge is filed as typed notes (task-note, run-note, disclosure, question, follow-up, disposition, checkpoint) that briefs embed, and a task can't complete while it owes one. After compaction, <span class="mono">ledger.py run-state</span> shows the stage map, task states, owed notes and the agent to continue: data, not recollection.</p>
       </div>
     </div>
 
     <div class="ledger" style="margin-top:30px">
       <p class="lbl">The fix loop — tuned on a measured 25-round wave</p>
       <h4>Failed reviews recurse with discipline, not ping-pong.</h4>
-      <p>Spec and quality verdicts <b>accumulate</b> before any fix is dispatched, then the whole batch is <b>triaged once</b>: trivial findings go straight to the coder; non-trivial ones first get a per-task <b>decision doc</b> (<span class="mono">remediating-issues</span>, per-task variant) unless the task's <span class="mono">Cases:</span> line already settles them. One batched fix follows, sent to the original coder via <span class="mono">SendMessage</span> when it's reachable, against a <b>fix baseline</b> (<span class="mono">ledger.py snapshot</span> / <span class="mono">diff-since</span>) so re-reviewers see the fix's hunks alone. From cycle 2 it must carry a <b>diagnosis</b> (root cause, end-state, why the findings resolve as a cluster) plus a <span class="mono">hunk_map</span> and <span class="mono">consumers_checked</span>, all enforced by <span class="mono">ledger.py check</span>. Reviewers flag <b>recurrence</b> (same finding class, same site, across cycles; <em>not</em> merely new findings, which are often healthy discovery) and <span class="mono">introduced_by_fix</span>; recurrence forces a decision doc that picks a different mechanism. A non-trivial finding still open after two non-trivial fixes escalates to you, briefed with the decision docs; trivial-only leftovers never escalate.</p>
+      <p>Spec and quality verdicts <b>accumulate</b> before any fix is dispatched, then the whole batch is <b>triaged once</b>: trivial findings go straight to the coder; non-trivial ones (including anything flagged recurring or introduced by a fix) first get a per-task <b>decision doc</b>, a typed record written by an opus <span class="mono">remediating-issues</span> research agent (never the orchestrator) and verified by <span class="mono">ledger.py check</span>, unless the task's <span class="mono">Cases:</span> line already settles them. One batched fix follows, sent to the original coder via <span class="mono">SendMessage</span> when it's reachable, against a <b>fix baseline</b> (<span class="mono">ledger.py snapshot</span> / <span class="mono">diff-since</span>) so re-reviewers see the fix's hunks alone. Every fix takes its own baseline, and a non-trivial one names its route (decision, <span class="mono">Cases:</span> line, or your ruling). From cycle 2 it must carry a <b>diagnosis</b> (root cause, end-state, why the findings resolve as a cluster) plus a <span class="mono">hunk_map</span> and <span class="mono">consumers_checked</span>, all enforced by <span class="mono">ledger.py check</span>. Reviewers flag <b>recurrence</b> (same finding class, same site, across cycles; <em>not</em> merely new findings, which are often healthy discovery) and <span class="mono">introduced_by_fix</span>; recurrence forces a decision doc that picks a different mechanism. A non-trivial finding still open after two non-trivial fixes escalates to you, briefed with the decision docs and two routes for the next fix (a fresh researched decision or a fix you name), plus the option of an opus coder; trivial-only leftovers never escalate.</p>
     </div>
   </div>
 </section>
@@ -778,8 +778,8 @@
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
           <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality → commit-lite review.</li>
-          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once.</li>
-          <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
+          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once. Open questions and owed disclosures settle first, and the completion report comes from the run's store.</li>
+          <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard. The run's open follow-ups are reported before the store and worktree are cleaned up.</li>
         </ol>
       </div>
     </div>
