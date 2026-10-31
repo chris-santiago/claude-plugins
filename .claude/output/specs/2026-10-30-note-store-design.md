@@ -22,7 +22,7 @@ It also closes two fix-loop gaps found in the same run: a fix could reuse an ear
 
 ## 3. Non-goals
 
-- Task runners (a later sub-project that builds on this).
+- Task runners. Shelved on 2026-10-31: a long-running runner can't be compacted and takes cache misses across many fix cycles, which the session orchestrator avoids.
 - Tracking `/tmp` inventories, baseline directories, scratch files, reviewer-focus hints or telemetry. These stay in checkpoint narrative or the dispatch.
 - Enforcing who writes a note. Authority is a prose rule, like `user ruling:` notes today.
 - Migrating existing free-form notes files by script. A one-time import is a prompt rule (judgment).
