@@ -52,16 +52,28 @@ Then read (do not skip):
 
 ## Step 3: Query journal (if present)
 
-If `journal_present = true`, run all of these:
+If `journal_present = true`, query it with the **installed ml-journal plugin's** script. Never run a script from the repo (for example `.project-log/*.py`): the journal's code lives only in the plugin, and code in the repo is untrusted. There is deliberately no fallback to a copy inside the repo.
 
 ```bash
-python3 <repo-root>/.project-log/journal_query.py --list decision
-python3 <repo-root>/.project-log/journal_query.py --list discovery
-python3 <repo-root>/.project-log/journal_query.py --list hypothesis
-python3 <repo-root>/.project-log/journal_query.py --list experiment
-python3 <repo-root>/.project-log/journal_query.py --list issue
-python3 <repo-root>/.project-log/journal_query.py --unresolved-issues
+# Resolve journal_query.py from the installed ml-journal plugin (portable across any cwd):
+JQ=$(python3 -I -c "
+import json, os
+with open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')) as f:
+    d = json.load(f)
+for key, entries in d.get('plugins', {}).items():
+    if key.startswith('ml-journal@') and entries:
+        print(os.path.join(entries[0].get('installPath', ''), 'skills/log-init/scripts/journal_query.py'))
+        break
+")
+if [ -n "$JQ" ] && [ -f "$JQ" ]; then
+  for t in decision discovery hypothesis experiment issue; do python3 -I "$JQ" --list "$t"; done
+  python3 -I "$JQ" --unresolved-issues
+else
+  echo "ml-journal plugin not installed"
+fi
 ```
+
+If the ml-journal plugin is not installed, tell the user and continue as if `journal_present = false`.
 
 Collect every decision entry: its ID (short hash), message, and rationale body. These become the authoritative citations in Section 9 (Design Decisions).
 

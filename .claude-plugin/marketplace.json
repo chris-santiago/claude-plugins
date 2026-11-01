@@ -18,8 +18,8 @@
     {
       "name": "ml-lab",
       "source": "./ml-lab",
-      "description": "Structured ML hypothesis investigation — adversarial debate (default) or ensemble critique, empirical testing, peer review, coherence audit, and README rewrite.",
-      "version": "2.1.0",
+      "description": "Structured ML hypothesis investigation — ensemble critique (default) or adversarial debate, empirical testing, peer review, coherence audit, and README rewrite.",
+      "version": "2.1.1",
       "license": "MIT",
       "keywords": ["ml", "hypothesis-testing", "agents", "research"]
     },
@@ -27,7 +27,7 @@
       "name": "ml-journal",
       "source": "./ml-journal",
       "description": "Persistent project journal — session checkpoints, structured audit trail, research narrative synthesis.",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "license": "MIT",
       "keywords": ["journal", "session-continuity", "research", "audit-trail"]
     }

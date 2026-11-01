@@ -2,43 +2,39 @@
 """
 journal_query.py — Read and query .project-log/journal.jsonl
 
-Usage:
-    python3 .project-log/journal_query.py --latest-checkpoint
-    python3 .project-log/journal_query.py --status
-    python3 .project-log/journal_query.py --list issue [--since 7d]
-    python3 .project-log/journal_query.py --list decision
-    python3 .project-log/journal_query.py --unresolved-issues
-    python3 .project-log/journal_query.py --entry <id-prefix>
-    python3 .project-log/journal_query.py --recent 10
+This plugin copy is the only journal code that runs; repos hold data only.
+Run from anywhere inside the repo (the journal is found via the git root):
+
+Usage (Q = python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py"):
+    Q --latest-checkpoint
+    Q --status
+    Q --list issue [--since 7d]
+    Q --list decision
+    Q --unresolved-issues
+    Q --entry <id-prefix>
+    Q --recent 10
 """
 
 import argparse
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
+# `python3 -I` (3.11+) drops the script directory from sys.path; add it back so
+# the plugin's own sibling module resolves. Nothing from the repo is imported.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from journal_common import journal_path, repo_root, warn_if_legacy  # noqa: E402
+
 
 # --- Helpers ---
 
-def get_journal_path():
-    try:
-        root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        return os.path.join(root, ".project-log", "journal.jsonl")
-    except subprocess.CalledProcessError:
-        sys.exit("ERROR: Not inside a git repository.")
-
-
-def load_entries(journal_path):
-    if not os.path.exists(journal_path):
-        sys.exit("ERROR: journal.jsonl not found. Run /journal-init to set up.")
+def load_entries(path):
+    if not os.path.exists(path):
+        sys.exit("ERROR: journal.jsonl not found. Run /log-init to set up.")
     entries = []
-    with open(journal_path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for i, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -354,8 +350,9 @@ def main():
     parser.add_argument("--since", default=None, help="Filter by recency: 7d, 24h, 60m")
 
     args = parser.parse_args()
-    journal_path = get_journal_path()
-    entries = load_entries(journal_path)
+    root = repo_root()
+    warn_if_legacy(root)
+    entries = load_entries(journal_path(root))
 
     if args.latest_checkpoint:
         cmd_latest_checkpoint(entries)

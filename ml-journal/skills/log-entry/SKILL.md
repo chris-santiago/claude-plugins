@@ -7,7 +7,7 @@ description: Log a typed entry to the project journal. Use when the user says "l
 
 Run `git rev-parse --show-toplevel` to find repo root.
 
-Check that `<repo-root>/.project-log/journal.jsonl` exists. If not, tell the user to run `/journal-init` first and stop.
+Check that `<repo-root>/.project-log/journal.jsonl` exists. If not, tell the user to run `/log-init` first and stop.
 
 ## Step 1: Infer entry type
 
@@ -62,7 +62,7 @@ Extract relevant field values from the conversation. Do not invent details not p
 **Log directly** (no confirmation):
 - `issue`, `resolution`, `lesson`, `memo`
 
-Note: `git` entries are handled exclusively by `/journal-commit` (which always confirms). Do not pass `git` type through this skill.
+Note: `git` entries are handled exclusively by `/log-commit` (which always confirms). Do not pass `git` type through this skill.
 
 Show proposed entry as a readable block before confirming, e.g.:
 ```
@@ -77,7 +77,7 @@ Alternatives: Mean pooling, attention pooling
 Build the `journal_log.py` invocation with appropriate flags for the type and extracted fields. List fields (tags, key_decisions, open_threads) should be passed as comma-separated strings.
 
 ```bash
-python3 <repo-root>/.project-log/journal_log.py \
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
   --type <type> \
   --description "..." \
   [--field "value"] ...

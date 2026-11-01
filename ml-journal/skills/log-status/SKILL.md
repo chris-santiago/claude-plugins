@@ -7,14 +7,16 @@ description: Show a quick summary of the current project journal state — last 
 
 Run `git rev-parse --show-toplevel` to find repo root.
 
-If `.project-log/journal.jsonl` does not exist, say: "No journal found in this repo. Run `/journal-init` to set one up." Stop.
+If `.project-log/journal.jsonl` does not exist, say: "No journal found in this repo. Run `/log-init` to set one up." Stop.
 
 ## Step 2: Run status query
 
 ```bash
-python3 <repo-root>/.project-log/journal_query.py --status
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --status
 ```
 
 ## Step 3: Surface output
 
-Display the formatted output as-is. No further action needed.
+Display the formatted output as-is.
+
+If the command also printed a `legacy ml-journal layout` note, relay it and suggest running `/log-init` to upgrade. Hooks may be blocked in this environment, in which case this note is the only place the user sees it.

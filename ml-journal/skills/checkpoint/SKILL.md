@@ -7,7 +7,7 @@ description: Save a session checkpoint to the project journal. Captures current 
 
 Run `git rev-parse --show-toplevel` to find repo root.
 
-Check that `<repo-root>/.project-log/journal.jsonl` exists. If not, tell the user to run `/journal-init` first and stop.
+Check that `<repo-root>/.project-log/journal.jsonl` exists. If not, tell the user to run `/log-init` first and stop.
 
 ## Step 1: Get git state
 
@@ -58,7 +58,7 @@ Do not write anything until confirmed.
 ## Step 4: Write checkpoint
 
 ```bash
-python3 <repo-root>/.project-log/journal_log.py \
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
   --type checkpoint \
   --in-progress "..." \
   --pending-decisions "..." \

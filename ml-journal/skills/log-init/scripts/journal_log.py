@@ -2,19 +2,26 @@
 """
 journal_log.py — Append a typed entry to .project-log/journal.jsonl
 
+This plugin copy is the only journal code that runs; repos hold data only.
+Run from anywhere inside the repo (the journal is found via the git root):
+
 Usage:
-    python3 .project-log/journal_log.py --type issue --description "..." --severity high --tags "a,b" --context "..."
-    python3 .project-log/journal_log.py --type decision --description "..." --rationale "..." --alternatives "..."
+    python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type issue --description "..." --severity high
+    python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type decision --description "..." --rationale "..."
     ... (see REQUIRED_FIELDS for all types)
 """
 
 import argparse
 import json
 import os
-import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
+
+# `python3 -I` (3.11+) drops the script directory from sys.path; add it back so
+# the plugin's own sibling module resolves. Nothing from the repo is imported.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from journal_common import journal_path, repo_root, warn_if_legacy  # noqa: E402
 
 
 # --- Schema ---
@@ -56,29 +63,7 @@ VALID_SCOPES     = {"active", "future"}
 LIST_FIELDS = {"tags", "files_changed", "key_decisions", "open_threads"}
 
 
-def get_repo_name():
-    try:
-        root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        return os.path.basename(root)
-    except subprocess.CalledProcessError:
-        return "unknown"
-
-
-def get_journal_path():
-    try:
-        root = subprocess.check_output(
-            ["git", "rev-parse", "--show-toplevel"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        return os.path.join(root, ".project-log", "journal.jsonl")
-    except subprocess.CalledProcessError:
-        sys.exit("ERROR: Not inside a git repository.")
-
-
-def build_entry(args):
+def build_entry(args, project):
     entry_type = args.type
 
     if entry_type not in REQUIRED_FIELDS:
@@ -89,12 +74,26 @@ def build_entry(args):
         "id":         str(uuid.uuid4()),
         "timestamp":  datetime.now(timezone.utc).isoformat(),
         "type":       entry_type,
-        "project":    get_repo_name(),
+        "project":    project,
         "session_id": os.environ.get("CLAUDE_SESSION_ID") or str(os.getppid()),
     }
 
     # Collect all known fields for this type
     all_fields = REQUIRED_FIELDS[entry_type] + OPTIONAL_FIELDS.get(entry_type, [])
+
+    # Reject fields passed that are not valid for this type
+    all_possible = set()
+    for fields in list(REQUIRED_FIELDS.values()) + list(OPTIONAL_FIELDS.values()):
+        all_possible.update(fields)
+    invalid = [
+        f for f in all_possible
+        if f not in all_fields and getattr(args, f, None) is not None
+    ]
+    if invalid:
+        sys.exit(
+            f"ERROR: Field(s) not valid for type '{entry_type}': {', '.join(sorted(invalid))}. "
+            f"Valid fields: {', '.join(sorted(all_fields))}"
+        )
 
     for field in all_fields:
         raw = getattr(args, field.replace("-", "_"), None)
@@ -127,7 +126,9 @@ def build_entry(args):
 
 def append_entry(journal_path, entry):
     os.makedirs(os.path.dirname(journal_path), exist_ok=True)
-    with open(journal_path, "a", encoding="utf-8") as f:
+    # O_NOFOLLOW backs up the symlink check in journal_common.journal_path().
+    fd = os.open(journal_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -147,9 +148,11 @@ def main():
 
     args = parser.parse_args()
 
-    journal_path = get_journal_path()
-    entry = build_entry(args)
-    append_entry(journal_path, entry)
+    root = repo_root()
+    warn_if_legacy(root)
+    path = journal_path(root)
+    entry = build_entry(args, project=os.path.basename(root))
+    append_entry(path, entry)
 
     print(f"Logged [{entry['type']}] {entry['id'][:8]} at {entry['timestamp'][:19]}Z")
 

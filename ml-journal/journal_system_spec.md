@@ -31,7 +31,7 @@ One file per repo. Each line is a complete, valid JSON object. Never modified af
 ### `.project-log/.gitignore`
 
 ```
-# nothing — journal.jsonl and scripts are tracked
+# nothing: journal.jsonl is tracked (the repo holds no journal scripts)
 ```
 
 No daemon logs to ignore since there is no daemon.
@@ -181,7 +181,7 @@ No daemon logs to ignore since there is no daemon.
 
 ## Python Scripts
 
-All scripts are standalone Python (stdlib only), run via `python3`. Located in `.project-log/`.
+All scripts are stdlib-only Python, run as `python3 -I`. They live only in the plugin under `skills/log-init/scripts/` and share one plugin-local helper, `journal_common.py` (repo root, journal path, symlink refusal). They are never copied into a repo.
 
 ### `journal_log.py`
 
@@ -189,7 +189,7 @@ All scripts are standalone Python (stdlib only), run via `python3`. Located in `
 
 **Interface:**
 ```bash
-python3 .project-log/journal_log.py \
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
   --type issue \
   --description "GRU last hidden state pooling outperforms mean pooling" \
   --severity high \
@@ -209,12 +209,12 @@ python3 .project-log/journal_log.py \
 
 **Interface:**
 ```bash
-python3 .project-log/journal_query.py --latest-checkpoint
-python3 .project-log/journal_query.py --status
-python3 .project-log/journal_query.py --list issue --since 7d
-python3 .project-log/journal_query.py --list decision
-python3 .project-log/journal_query.py --unresolved-issues
-python3 .project-log/journal_query.py --entry <id>
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --latest-checkpoint
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --status
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list issue --since 7d
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list decision
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --unresolved-issues
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --entry <id>
 ```
 
 Outputs human-readable formatted text for surface-to-console use. Skills never parse the output — they pass it through to the user as-is.
@@ -225,23 +225,23 @@ Outputs human-readable formatted text for surface-to-console use. Skills never p
 
 Skills are the judgment layer. Claude reads context, determines type and field values, constructs the appropriate script invocation. Scripts handle all mechanical correctness.
 
-### `/journal-init`
+### `/log-init`
 
-**Trigger:** user says `/journal-init` or "set up journal for this project"
+**Trigger:** user says `/log-init`, "set up journal for this project", or "upgrade the journal"
+
+The repo holds data only. All journal code runs from the plugin; `/log-init` never copies scripts into the repo. Mechanical work is done by `journal_setup.py` (`inspect`, `init`, `upgrade [--dry-run]`, `add-sections [--dry-run]`).
 
 **Steps:**
-1. `git rev-parse --show-toplevel` — find repo root
-2. Check if `.project-log/` already exists — warn if so, ask before proceeding
-3. Create `.project-log/` directory
-4. Create empty `.project-log/journal.jsonl`
-5. Copy `journal_log.py` and `journal_query.py` into `.project-log/`
-6. Confirm: "Journal initialized at `.project-log/journal.jsonl`"
+1. `journal_setup.py inspect`: report journal state, legacy copies, and `CLAUDE.md` journal sections
+2. Legacy layout (older ml-journal copied `journal_log.py` / `journal_query.py` into `.project-log/`): preview with `upgrade --dry-run` (including a diff of any `CLAUDE.md` rewrite), then on confirmation `upgrade` deletes the copies and replaces the managed `CLAUDE.md` sections that call them. Managed sections that differ from the template without calling a legacy script are user customizations and are left alone. `journal.jsonl` is never touched. Other `CLAUDE.md` lines that run legacy scripts are reported, not edited. A symlinked `CLAUDE.md` is never read or edited (it is reported and skipped).
+3. No journal: on confirmation `init` creates `.project-log/journal.jsonl` (never truncates), then a `memo` verification entry is logged
+4. Offer to append absent managed `CLAUDE.md` sections (`add-sections`), from `skills/log-init/assets/claude-md-sections.md`
 
-One-time per repo.
+Idempotent: re-running on a current repo changes nothing.
 
 ---
 
-### `/journal-entry`
+### `/log-entry`
 
 **Trigger:** "log this", "record this", "log this issue / decision / discovery / experiment / post mortem", or any phrasing indicating something should be captured
 
@@ -250,7 +250,7 @@ One-time per repo.
 2. Extract relevant field values from conversation.
 3. For types requiring confirmation (`decision`, `post_mortem`, `experiment`, `summary`, `checkpoint`): show proposed entry, ask "► Log this? (y/n)"
 4. For low-stakes types (`issue`, `resolution`, `discovery`, `hypothesis`, `lesson`, `memo`): run directly, show result after.
-5. Construct and run `python3 .project-log/journal_log.py --type <type> [fields...]`
+5. Construct and run `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type <type> [fields...]`
 6. Surface confirmation output to user.
 
 **Type inference heuristics:**
@@ -265,7 +265,7 @@ One-time per repo.
 
 ---
 
-### `/journal-commit`
+### `/log-commit`
 
 **Trigger:** "commit", "git commit", "/jcommit", or user indicates work is ready to commit
 
@@ -277,7 +277,7 @@ One-time per repo.
    a. `git add -A` (or targeted add if user specified files)
    b. `git commit -m "<message>"`
    c. Capture commit hash from output
-   d. `python3 .project-log/journal_log.py --type git --commit-hash <hash> --message "<message>" --branch <branch> --files-changed <files> --diff-summary "<summary>"`
+   d. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type git --commit-hash <hash> --message "<message>" --branch <branch> --files-changed <files> --diff-summary "<summary>"`
 5. Confirm: "Committed `<hash>` and logged to journal."
 
 ---
@@ -297,7 +297,7 @@ One-time per repo.
    - `open_threads` — structured list of unresolved items
    - `git_state` — omit if clean on main
 4. Show draft. Ask "► Write checkpoint? (y/n)"
-5. `python3 .project-log/journal_log.py --type checkpoint [fields...]`
+5. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type checkpoint [fields...]`
 6. Confirm: "Checkpoint written. Run `/compact` when ready."
 
 ---
@@ -307,7 +307,7 @@ One-time per repo.
 **Trigger:** "/resume", "what were we working on", "load last checkpoint", session start with existing journal
 
 **Steps:**
-1. `python3 .project-log/journal_query.py --latest-checkpoint`
+1. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --latest-checkpoint`
 2. Surface formatted output to console
 3. Ask: "How would you like to proceed?"
 
@@ -315,12 +315,12 @@ If no checkpoint exists: "No checkpoint found in journal. Starting fresh."
 
 ---
 
-### `/journal-status`
+### `/log-status`
 
-**Trigger:** "/journal-status", "journal status", "where are we", "what's open"
+**Trigger:** "/log-status", "journal status", "where are we", "what's open"
 
 **Steps:**
-1. `python3 .project-log/journal_query.py --status`
+1. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --status`
 2. Surface output. No further action.
 
 **Status output covers:**
@@ -331,23 +331,23 @@ If no checkpoint exists: "No checkpoint found in journal. Starting fresh."
 
 ---
 
-### `/journal-list`
+### `/log-list`
 
 **Trigger:** "show recent [type]", "list [decisions / issues / experiments / ...]", "what issues have we logged"
 
 **Steps:**
 1. Determine requested type and time window from user phrasing
-2. `python3 .project-log/journal_query.py --list <type> [--since <N>d]`
+2. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list <type> [--since <N>d]`
 3. Surface output.
 
 ---
 
-### `/journal-summarize`
+### `/log-summarize`
 
 **Trigger:** "summarize [decisions / issues / experiments]", "what decisions have we made", "give me a summary of open issues"
 
 **Steps:**
-1. `python3 .project-log/journal_query.py --list <type>` — get all entries of requested type
+1. `python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list <type>` — get all entries of requested type
 2. Claude synthesizes prose summary from the structured output
 3. Surface summary. Offer to log as `summary` type entry.
 
@@ -386,12 +386,12 @@ If no checkpoint exists: "No checkpoint found in journal. Starting fresh."
 
 ## Consultation Patterns
 
-The journal is a source of truth, not only an append log. Query it proactively:
+The journal is a source of truth, not only an append log, so query it proactively. The managed `CLAUDE.md` sections express these patterns through skills, never script paths, because `CLAUDE.md` is repo content, where `${CLAUDE_PLUGIN_ROOT}` is unavailable.
 
 ### Before Planning
 Before drafting any non-trivial plan:
-1. `python3 .project-log/journal_query.py --unresolved-issues` — surface active blockers
-2. `python3 .project-log/journal_query.py --list decision --since 7d` — surface recent decisions that constrain the approach
+1. `/log-list issue`: open (unresolved) issues, the active blockers
+2. `/log-list decision` for the last 7 days: recent decisions that constrain the approach
 
 ### Cross-Reference in Plans and Instructions
 When a plan step is informed by or constrained by a journal entry, include the short ID:
@@ -399,46 +399,50 @@ When a plan step is informed by or constrained by a journal entry, include the s
 - This creates a traceable thread from planning documents back to diagnostic history
 
 ### Decisions as Constraints
-A `decision` entry represents a resolved choice. Retrieve full context before re-opening:
-`python3 .project-log/journal_query.py --entry <id>`
+A `decision` entry represents a resolved choice. Retrieve its full entry (`/log-list` with the short ID) before re-opening it.
 
 ---
 
-## Hooks (Optional)
+## Hooks
 
-Hooks are **not registered by default** — the system functions fully via explicit skill invocation. Install only if your environment permits hooks (e.g., personal machines). Use `.claude/settings.local.json` (per-machine, gitignored) rather than `.claude/settings.json` (tracked) so the configuration is not committed.
-
-To enable:
+The plugin registers both hooks on install via `hooks/hooks.json`. Commands resolve through `${CLAUDE_PLUGIN_ROOT}`, so they work in any repo where the plugin is enabled, not only this one. The system still functions fully via explicit skill invocation where hooks are not permitted (`disableAllHooks`, or the managed `allowManagedHooksOnly`). Nothing depends on a hook running: the legacy-layout upgrade note the SessionStart hook shows is also printed to stderr by `journal_query.py` and `journal_log.py` (`journal_common.warn_if_legacy`), and `/resume` and `/log-status` relay it. Both hooks exit silently in repos without a journal, so registering them globally is safe.
 
 ```json
 {
   "hooks": {
-    "PreCompact": [{ "type": "command", "command": "bash plugins/ml-journal/journal-precompact.sh" }],
-    "SessionStart": [{ "type": "command", "command": "bash plugins/ml-journal/journal-session-start.sh" }]
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/journal-precompact.sh" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/journal-session-start.sh" }] }]
   }
 }
 ```
 
-### PreCompact hook (preferred) / PostCompact fallback
+### Untrusted working tree
 
-**PreCompact** fires while full conversation context is available — richer checkpoint synthesis. **PostCompact** fires after compaction from the compaction summary — degraded but better than nothing.
+The hooks fire in every repo the plugin is enabled for, so they treat the working tree as untrusted:
 
-Verify PreCompact is an available hook type in Claude Code before implementing. Fall back to PostCompact if not.
+- They run only the plugin's bundled scripts with `python3 -I`, never `.project-log/*.py`. The shared `hooks/journal-hook-lib.sh` locates those scripts and the repo's journal.
+- The scripts refuse a symlinked `.project-log/` or `journal.jsonl` (`journal_common.py`), so a hostile repo cannot redirect a read or append to a file outside it. The hooks then exit silently.
+- PreCompact runs `git status` with `-c core.fsmonitor=false`, so a repo-supplied fsmonitor command never executes.
+
+`jq` is optional. Without it, SessionStart exits silently and PreCompact falls back to `trigger: auto`.
+
+### PreCompact hook
 
 Hook behavior:
 1. `git rev-parse --show-toplevel` — detect repo
 2. Check for `.project-log/journal.jsonl` — exit silently if not found (repo not initialized)
-3. Synthesize checkpoint fields from context (PreCompact) or compaction summary from stdin JSON (PostCompact)
-4. `python3 .project-log/journal_log.py --type checkpoint [fields...]` — no confirmation, context is being lost
+3. Read `trigger` and `custom_instructions` from stdin JSON; record branch (or `detached@<sha>`) and changed paths from `git status --porcelain -z`
+4. `python3 -I <plugin>/skills/log-init/scripts/journal_log.py --type checkpoint [fields...]` — no confirmation, context is being lost. Hooks always run the plugin's bundled scripts, never `.project-log/*.py`: they fire in every repo the plugin is enabled for, so code in the working tree is untrusted
 5. Exit silently on success
 
 ### SessionStart hook
 
 1. `git rev-parse --show-toplevel` — detect repo
 2. Check for `.project-log/journal.jsonl` — exit silently if not found
-3. `python3 .project-log/journal_query.py --latest-checkpoint`
-4. Emit JSON with `additionalContext` injecting checkpoint as session context
-5. Exit silently if no checkpoint exists
+3. `python3 -I <plugin>/skills/log-init/scripts/journal_query.py --latest-checkpoint` (bundled copy, for the same reason)
+4. If the repo has the legacy layout (`journal_log.py` or `journal_query.py` present in `.project-log/`), add a note telling the user to run `/log-init` to upgrade. Existence check only; the legacy files are never run.
+5. Emit JSON `{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ...}}` with the checkpoint and/or the legacy note (a top-level `additionalContext` is not part of the hook schema and is dropped)
+6. Exit silently if there is neither a checkpoint nor a legacy note
 
 ### Hook graceful degradation
 
@@ -472,14 +476,14 @@ All hooks:
 
 1. `journal_log.py` — core writer, test with manual invocations for each type
 2. `journal_query.py` — reader, test `--status`, `--latest-checkpoint`, `--list`
-3. `/journal-init` skill — wires setup
-4. `/journal-entry` skill — main logging path
+3. `/log-init` skill — wires setup
+4. `/log-entry` skill — main logging path
 5. `/checkpoint` and `/resume` skills — session continuity
-6. `/journal-commit` skill — git + log in one step
-7. `/journal-status`, `/journal-list`, `/journal-summarize` skills — query layer
+6. `/log-commit` skill — git + log in one step
+7. `/log-status`, `/log-list`, `/log-summarize` skills — query layer
 8. `/research-note` skill — session-scoped formatted note
 9. `/research-report` skill — full research report synthesis
-9. Hooks — optional, add last
+10. Hooks (`hooks/hooks.json`, registered automatically on plugin install)
 
 ---
 
@@ -495,7 +499,7 @@ All hooks:
 ## Edge Cases
 
 - **Not in a git repo:** all hooks and skills detect this and exit/stop silently
-- **`.project-log/` not initialized:** hooks exit silently; skills prompt to run `/journal-init`
+- **`.project-log/` not initialized:** hooks exit silently; skills prompt to run `/log-init`
 - **Concurrent sessions:** append operations are atomic under PIPE_BUF; entries are small enough
 - **Auto vs manual checkpoints:** auto (hook) entries carry same schema as manual — no labeling difference needed since `session_id` distinguishes them
-- **Out-of-Claude commits:** not captured — acceptable tradeoff for simplicity. User can run `/journal-entry` manually to backfill a `git` entry if needed.
+- **Out-of-Claude commits:** not captured — acceptable tradeoff for simplicity. User can run `/log-entry` manually to backfill a `git` entry if needed.

@@ -7,7 +7,7 @@ description: Stage, commit, and log to the project journal in one step. Use when
 
 Run `git rev-parse --show-toplevel` to find repo root.
 
-If `.project-log/journal.jsonl` does not exist, say: "No journal found. Run `/journal-init` first." Stop.
+If `.project-log/journal.jsonl` does not exist, say: "No journal found. Run `/log-init` first." Stop.
 
 ## Step 1: Understand what's changed
 
@@ -70,7 +70,7 @@ Do not run git or write to journal until confirmed.
 Write the journal entry **before** committing so it can be included in the same commit:
 
 ```bash
-python3 <repo-root>/.project-log/journal_log.py \
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
   --type git \
   --message "<message>" \
   --branch <branch> \

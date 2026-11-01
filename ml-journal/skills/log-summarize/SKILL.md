@@ -7,7 +7,7 @@ description: Synthesize a prose summary of all journal entries of a requested ty
 
 Run `git rev-parse --show-toplevel` to find repo root.
 
-If `.project-log/journal.jsonl` does not exist, say: "No journal found in this repo. Run `/journal-init` to set one up." Stop.
+If `.project-log/journal.jsonl` does not exist, say: "No journal found in this repo. Run `/log-init` to set one up." Stop.
 
 ## Step 2: Determine type
 
@@ -20,7 +20,7 @@ If ambiguous, ask.
 ## Step 3: Load entries (single type)
 
 ```bash
-python3 <repo-root>/.project-log/journal_query.py --list <type>
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list <type>
 ```
 
 If no entries of that type: say so and stop.
@@ -30,7 +30,7 @@ If no entries of that type: say so and stop.
 Infer N from the user's phrasing (e.g. "last 10", "recent 5"). Default to 10 if unspecified.
 
 ```bash
-python3 <repo-root>/.project-log/journal_query.py --recent <N>
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --recent <N>
 ```
 
 ## Step 4: Synthesize prose summary
@@ -56,7 +56,7 @@ After the synthesis, offer: "Want me to log this as a `summary` entry in the jou
 
 If yes, run:
 ```bash
-python3 <repo-root>/.project-log/journal_log.py \
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
   --type summary \
   --description "<one-sentence summary>" \
   --key-decisions "<comma-separated key points if decision type>" \

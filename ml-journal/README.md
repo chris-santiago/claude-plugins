@@ -20,22 +20,15 @@ claude plugin install ml-journal@ml-lab
 /log-init
 ```
 
-**Manual option 1 — copy the plugin directory into your repo:**
+**From a local copy of the plugin directory:**
 
 ```bash
 cp -r plugins/ml-journal /your/repo/plugins/ml-journal
 ```
 
-Then register it in your repo's `.claude-plugin/marketplace.json` and run `claude plugin install ml-journal@your-repo`. Skills are auto-discovered from `plugins/ml-journal/skills/`.
+Then register it in your repo's `.claude-plugin/marketplace.json` and run `claude plugin install ml-journal@your-repo`.
 
-**Manual option 2 — copy skills directly into `~/.claude/skills/`:**
-
-```bash
-# Copy all skills into your global Claude Code skills directory
-cp -r plugins/ml-journal/skills/* ~/.claude/skills/
-```
-
-Skills copied to `~/.claude/skills/` are available globally across all repos without any plugin install step. The `report-drafter` agent is loaded automatically from the plugin cache when installed via option 1. Run `/log-init` in any repo to initialize the journal.
+ml-journal must be installed as a plugin. Skills and hooks locate their scripts through `${CLAUDE_PLUGIN_ROOT}`, so copying the skills alone into `~/.claude/skills/` does not work.
 
 ---
 
@@ -125,7 +118,7 @@ flowchart TB
 
 | Skill | Description |
 |---|---|
-| `/log-init` | One-time repo setup — creates `.project-log/`, installs scripts, verifies with a test entry |
+| `/log-init` | Repo setup: creates `.project-log/journal.jsonl` and verifies with a test entry; also upgrades repos set up by older versions |
 | `/log-entry` | Main logging path — infers entry type from conversation context, extracts fields, writes to journal |
 | `/checkpoint` | Save session state for handoff to future sessions or post-compact recovery |
 | `/resume` | Load and display the most recent checkpoint |
@@ -182,32 +175,30 @@ Light entries are logged immediately. Medium entries (including discoveries and 
 
 ## Scripts
 
-Both scripts are stdlib-only Python (no external dependencies). They are installed into `.project-log/` by `/log-init` and can be invoked directly.
+The scripts are stdlib-only Python (no external dependencies) and live only in the plugin, under `skills/log-init/scripts/`. A repo holds data only: `/log-init` never copies scripts into it, and skills and hooks always run the plugin's copy. The scripts refuse a symlinked `.project-log/` or `journal.jsonl`.
 
-- **`journal_log.py`** — Validates fields, constructs envelope (`id`, `timestamp`, `type`, `project`, `session_id`), appends entry to `journal.jsonl`
-- **`journal_query.py`** — Read operations: `--status`, `--latest-checkpoint`, `--list TYPE [--since Nd]`, `--unresolved-issues`, `--resolved-issues`, `--entry ID_PREFIX`, `--recent N [--since Nd]`
+- **`journal_log.py`**: Validates fields (including rejecting fields not valid for the type), constructs envelope (`id`, `timestamp`, `type`, `project`, `session_id`), appends entry to `journal.jsonl`
+- **`journal_query.py`**: Read operations: `--status`, `--latest-checkpoint`, `--list TYPE [--since Nd]`, `--unresolved-issues`, `--resolved-issues`, `--entry ID_PREFIX`, `--recent N [--since Nd]`
+- **`journal_setup.py`**: Used by `/log-init`: `inspect`, `init`, `upgrade [--dry-run]`, `add-sections [--dry-run]`
+- **`journal_common.py`**: Shared repo and journal path resolution
 
-The journal is a plain JSONL file — one JSON object per line. Query it directly without any skill:
+To run a query from a shell, use the plugin's copy. Its install directory is the `installPath` for `ml-journal` in `~/.claude/plugins/installed_plugins.json`. Run from anywhere inside the repo:
 
 ```bash
-# Show journal state
-python3 .project-log/journal_query.py --status
+Q="<installPath>/skills/log-init/scripts/journal_query.py"
 
-# List decisions from the last week
-python3 .project-log/journal_query.py --list decision --since 7d
-
-# List all unresolved issues
-python3 .project-log/journal_query.py --unresolved-issues
-
-# List resolved issues with their linked resolutions
-python3 .project-log/journal_query.py --resolved-issues
-
-# Show the 10 most recent entries across all types
-python3 .project-log/journal_query.py --recent 10
-
-# Show the 5 most recent entries from the last 7 days
-python3 .project-log/journal_query.py --recent 5 --since 7d
+python3 -I "$Q" --status                     # journal state
+python3 -I "$Q" --list decision --since 7d   # decisions from the last week
+python3 -I "$Q" --unresolved-issues          # open issues
+python3 -I "$Q" --resolved-issues            # resolved issues with linked resolutions
+python3 -I "$Q" --recent 5 --since 7d        # 5 most recent entries from the last 7 days
 ```
+
+The journal itself is a plain JSONL file (one JSON object per line), so `jq` or any JSON tool can read it directly.
+
+### Upgrading from an older ml-journal
+
+Older versions copied `journal_log.py` and `journal_query.py` into each repo's `.project-log/` and pointed `CLAUDE.md` at them. Those copies are no longer used. A session in such a repo shows a note to upgrade; run `/log-init`. It shows a preview (with a diff of any `CLAUDE.md` change), then removes the copies and rewrites the journal sections it manages in `CLAUDE.md` that still call them. Sections you have customized are left alone, and `journal.jsonl` is untouched.
 
 ## Example Output
 
@@ -225,30 +216,22 @@ python3 .project-log/journal_query.py --recent 5 --since 7d
   open_threads:        baseline ceiling effect, rubric alignment with v4
 ```
 
-## Hooks (Optional)
+## Hooks
 
-Two hook scripts enable automatic checkpoint/resume without manual invocation.
+Two hooks enable automatic checkpoint/resume without manual invocation. The plugin registers them on install via `hooks/hooks.json`; there is nothing to add to your settings.
 
 | Hook | Script | Behavior |
 |---|---|---|
-| PreCompact | `journal-precompact.sh` | Auto-writes a checkpoint before `/compact` |
-| SessionStart | `journal-session-start.sh` | Injects latest checkpoint as session context |
-
-To enable, add to `.claude/settings.local.json` (per-machine, gitignored):
-
-```json
-{
-  "hooks": {
-    "PreCompact": [{ "type": "command", "command": "bash plugins/ml-journal/journal-precompact.sh" }],
-    "SessionStart": [{ "type": "command", "command": "bash plugins/ml-journal/journal-session-start.sh" }]
-  }
-}
-```
+| PreCompact | `hooks/journal-precompact.sh` | Auto-writes a checkpoint before `/compact` |
+| SessionStart | `hooks/journal-session-start.sh` | Injects latest checkpoint as session context |
 
 **Gotchas:**
-- Hooks are per-machine — `.claude/settings.local.json` is gitignored and does not sync to teammates. Each developer must configure separately.
+- Both hooks exit silently in repos without `.project-log/journal.jsonl`. They only act after `/log-init`.
+- The hooks never run code from the repo: they use the plugin's bundled scripts and refuse a symlinked `.project-log/` or journal.
+- `SessionStart` needs `jq` on `PATH`; without it the hook stays silent.
+- If you previously added these hooks to `.claude/settings.local.json` by hand, remove them. Plugin hooks run in addition to settings hooks, so keeping both writes duplicate checkpoints.
 - `SessionStart` only injects a checkpoint if one exists. The first session in a new repo will see no injection.
-- If your Claude Code environment does not permit hooks, use skills explicitly instead (`/checkpoint` before `/compact`, `/resume` at session start).
+- Some organizations block hooks (`disableAllHooks`, or the managed `allowManagedHooksOnly`). There the plugin still installs and every skill works, but the two hooks don't run. Use the skills instead: `/checkpoint` before `/compact`, `/resume` at session start. The legacy-layout upgrade note also reaches you without hooks, from `/resume` and `/log-status`.
 
 ## Troubleshooting
 
@@ -258,7 +241,7 @@ To enable, add to `.claude/settings.local.json` (per-machine, gitignored):
 
 **`journal_query.py` skips a line with a warning** — A journal entry is malformed (e.g., manually edited). Malformed lines are skipped; all other entries remain accessible. Inspect with `grep -n "^{" .project-log/journal.jsonl | tail -20` to find the bad line.
 
-**Hooks don't fire** — Confirm your Claude Code environment supports hooks and that `.claude/settings.local.json` exists on the current machine with the correct paths.
+**Hooks don't fire** — Confirm the ml-journal plugin is enabled (`/plugin`), that your Claude Code environment permits hooks, and that the repo has been initialized with `/log-init`.
 
 ## Files
 
@@ -269,9 +252,13 @@ plugins/ml-journal/
   skills/
     log-init/
       SKILL.md
-      scripts/
-        journal_log.py            # bundled copy — installed into .project-log/ on /log-init
+      assets/
+        claude-md-sections.md     # managed CLAUDE.md journal sections
+      scripts/                    # the only journal code; never copied into repos
+        journal_log.py
         journal_query.py
+        journal_setup.py          # /log-init: inspect, init, upgrade, add-sections
+        journal_common.py         # shared repo/journal path resolution
     log-entry/SKILL.md
     checkpoint/SKILL.md
     resume/SKILL.md
@@ -283,7 +270,17 @@ plugins/ml-journal/
     research-report/SKILL.md
   agents/
     report-drafter.md             # agent — drafts RESEARCH_REPORT.md (dispatched by /research-report)
-  journal-precompact.sh           # optional PreCompact hook
-  journal-session-start.sh        # optional SessionStart hook
+  hooks/
+    hooks.json                    # registers both hooks on plugin install
+    journal-precompact.sh         # PreCompact hook
+    journal-session-start.sh      # SessionStart hook
+    journal-hook-lib.sh           # shared setup (repo/journal detection, legacy-layout check)
+  tests/
+    conftest.py                   # shared scratch-repo fixtures
+    test_hooks.py                 # hooks: output schema, paths, legacy notice, untrusted repos
+    test_scripts.py               # journal_log / journal_query: validation, symlink refusal
+    test_setup.py                 # journal_setup: init, inspect, upgrade, add-sections
+    test_no_repo_local_scripts.py # relapse guard: no repo-local script references
+                                  # run: uv run --with pytest pytest plugins/ml-journal/tests
   journal_system_spec.md          # internal system specification
 ```

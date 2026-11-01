@@ -1,124 +1,56 @@
 ---
 name: log-init
-description: Initialize the project journal system in the current git repo. Creates .project-log/ directory, journal.jsonl, and installs journal_log.py and journal_query.py. Use when the user says /log-init, "set up journal", "initialize journal", or "set up project logging". Only needs to be run once per repo.
+description: Initialize the project journal in the current git repo, or upgrade a repo set up with an older ml-journal (scripts copied into .project-log/). Creates .project-log/journal.jsonl only; all journal code runs from the plugin. Use when the user says /log-init, "set up journal", "initialize journal", "set up project logging", or "upgrade the journal".
 ---
 
-## Step 1: Find repo root
-
-Run `git rev-parse --show-toplevel`.
-
-If this fails (not a git repo), tell the user and stop.
-
-## Step 2: Check for existing setup
-
-Check if `<repo-root>/.project-log/journal.jsonl` already exists.
-
-If it does, tell the user the journal is already initialized and show the entry count:
-```bash
-wc -l <repo-root>/.project-log/journal.jsonl
-```
-Ask if they want to continue anyway. Stop if they say no.
-
-## Step 3: Locate script source
-
-The scripts are bundled with this skill. Confirm both exist before proceeding:
-- `${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py`
-- `${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py`
-
-If they are missing, tell the user to reinstall the plugin and stop.
-
-## Step 4: Confirm before creating anything
-
-Tell the user what will be created:
-- `.project-log/` directory
-- `.project-log/journal.jsonl` (empty)
-- `.project-log/journal_log.py` (copied from skill)
-- `.project-log/journal_query.py` (copied from skill)
-
-Ask: `► Create these files in <repo-root>? (y/n)`
-
-Do not create anything until confirmed.
-
-## Step 5: Create files
+All journal code runs from the plugin; a repo holds data only (`.project-log/journal.jsonl`). In the steps below, `SETUP` means:
 
 ```bash
-mkdir -p <repo-root>/.project-log
-touch <repo-root>/.project-log/journal.jsonl
-cp ${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py <repo-root>/.project-log/
-cp ${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py <repo-root>/.project-log/
-chmod +x <repo-root>/.project-log/journal_log.py
-chmod +x <repo-root>/.project-log/journal_query.py
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_setup.py"
 ```
 
-## Step 6: Verify
+## Step 1: Inspect
+
+Run `SETUP inspect`. If it fails because this is not a git repo, tell the user and stop.
+
+The JSON report gives `journal_exists`, `legacy_copies`, `needs_upgrade`, and `claude_md` (`exists`, `symlinked`, `stale_sections`, `customized_sections`, `current_sections`, `absent_sections`, `unmanaged_refs`).
+
+## Step 2: Upgrade a legacy repo
+
+If `needs_upgrade` is true: run `SETUP upgrade --dry-run` and show its output, including the diff. Explain in one line: older ml-journal copied its scripts into `.project-log/`; they are no longer used, and the journal data is not touched. Ask: `► Apply this upgrade? (y/n)`. On yes, run `SETUP upgrade` and show its output.
+
+If `needs_upgrade` is false but `claude_md.unmanaged_refs` is not empty, there is nothing to apply; just list those lines.
+
+Either way, `report` lines and `unmanaged_refs` are `CLAUDE.md` lines the upgrade does not edit. Tell the user to fix them by hand: they should call a journal skill (e.g. `/log-list`) instead of a script. If `claude_md.symlinked` is true, `CLAUDE.md` is a symlink, which the upgrade never reads or edits; say so, and suggest the user check its target by hand.
+
+## Step 3: Initialize a new journal
+
+Skip if `journal_exists` is true.
+
+Tell the user `.project-log/journal.jsonl` will be created, and ask: `► Create it in <repo-root>? (y/n)`. On yes:
 
 ```bash
-python3 <repo-root>/.project-log/journal_log.py --type memo --description "Journal initialized"
-python3 <repo-root>/.project-log/journal_query.py --status
+SETUP init
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type memo --description "Journal initialized"
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --status
 ```
 
-If either fails, show the error and stop.
+If any command fails, show the error and stop.
 
-## Step 6.5: Offer proactive logging rules for CLAUDE.md
+## Step 4: Offer CLAUDE.md journal sections
 
-Check if `<repo-root>/CLAUDE.md` exists.
+Skip if `claude_md.exists` is false or `claude_md.absent_sections` is empty.
 
-If it does not exist, skip this step silently.
-
-If it exists, check whether it already contains a `## Journal — Proactive Logging` section:
-```bash
-grep -q "## Journal — Proactive Logging" <repo-root>/CLAUDE.md && echo "exists" || echo "absent"
+Ask:
+```
+► Add journal sections to your CLAUDE.md?
+  They tell Claude to consult the journal before planning, use /log-commit for
+  commits, and propose logging decisions, discoveries, issues, resolutions,
+  lessons, and results as they happen. You still confirm every entry. (y/n)
 ```
 
-If already present, skip.
+On yes, run `SETUP add-sections` and show its output.
 
-If absent, ask:
-```
-► Add proactive journal logging rules to your CLAUDE.md?
-  This tells Claude to propose logging decisions, discoveries, issues,
-  resolutions, lessons, and experiment results as they happen in conversation.
-  You still confirm every entry. (y/n)
-```
+## Step 5: Confirm
 
-If yes, append the following section to `<repo-root>/CLAUDE.md`:
-
-```markdown
-## Journal — Consultation Before Planning
-
-Before drafting any non-trivial plan, query the journal:
-1. `python3 .project-log/journal_query.py --unresolved-issues` — surface active blockers
-2. `python3 .project-log/journal_query.py --list decision --since 7d` — surface recent decisions that constrain the approach
-
-When a plan step is informed by a journal entry, cite the short ID inline (e.g. `[→ issue 71af7634]`). A `decision` entry is a resolved constraint — retrieve full context before re-opening: `python3 .project-log/journal_query.py --entry <id>`.
-
-## Journal — Committing
-
-The word **"commit"** means the **ml-journal `/log-commit` skill** — not bare `git commit`, not any other commit helper. The skill stages files, synthesizes a commit message, creates the commit, and writes a `git` journal entry in one step. Never use a different commit path in this project.
-
-## Journal — Proactive Logging
-
-When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.
-
-**Auto-propose these types:**
-
-| Pattern | Type | When |
-|---------|------|------|
-| User confirms a direction | `decision` | After "I agree", "let's do X", "go with that" |
-| Unexpected finding | `discovery` | When exploration changes understanding or approach |
-| Bug/inconsistency found | `issue` | After identifying and explaining a problem |
-| Bug fixed and verified | `resolution` | After fix confirmed working |
-| Root cause understood | `lesson` | After explaining *why* something broke — ask "should I log this as a lesson?" |
-| Results interpreted | `experiment` | When verdict is clear |
-| Major phase or block of work completes | `summary` | After finishing an experiment version, resolving a cluster of issues, or wrapping a multi-step investigation |
-
-**Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`, `memo`.
-
-**Rules:** One proposal per event. Don't re-propose if declined. Chain issue→resolution→lesson at completion, not as three interruptions.
-```
-
-## Step 7: Confirm
-
-Tell the user:
-- Journal initialized at `.project-log/journal.jsonl`
-- One initialization entry logged
-- Available skills: `/log-entry`, `/checkpoint`, `/resume`, `/log-status`, `/log-list`, `/log-summarize`, `/log-commit`, `/research-note`, `/research-report`
+Tell the user what was done (upgraded, initialized, or already current), and list the available skills: `/log-entry`, `/checkpoint`, `/resume`, `/log-status`, `/log-list`, `/log-summarize`, `/log-commit`, `/research-note`, `/research-report`.

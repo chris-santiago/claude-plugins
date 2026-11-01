@@ -384,7 +384,7 @@ Log `subagent`/`receive_defender_r2` with `meta` containing `{"round": N, "is_fi
 
 ```bash
 # Resolve derive_verdict.py from the installed ml-lab plugin (portable across any cwd):
-DV=$(python3 -c "
+DV=$(python3 -I -c "
 import json, os
 with open(os.path.expanduser('~/.claude/plugins/installed_plugins.json')) as f:
     d = json.load(f)
