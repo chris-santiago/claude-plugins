@@ -13,6 +13,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PLUGIN_ROOT / "skills" / "log-init" / "scripts"
 JOURNAL_LOG = SCRIPTS_DIR / "journal_log.py"
 JOURNAL_QUERY = SCRIPTS_DIR / "journal_query.py"
+JOURNAL_SETUP = SCRIPTS_DIR / "journal_setup.py"
 
 
 def git(repo: Path, *args: str) -> None:
@@ -40,6 +41,26 @@ def _isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the user's global/system git config (signing, fsmonitor, renames) out of the tests."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+@pytest.fixture(autouse=True)
+def plugin_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A fresh, empty plugin data dir exported as CLAUDE_PLUGIN_DATA, so the user's real one never leaks in."""
+    data = tmp_path / "plugin-data"
+    data.mkdir()
+    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(data))
+    return data
+
+
+@pytest.fixture
+def trust(plugin_data: Path) -> Callable[[Path], None]:
+    """Trust a repo's journal on this machine, the way /log-init does."""
+
+    def _trust(repo: Path) -> None:
+        result = run_script(JOURNAL_SETUP, repo, "--data-dir", str(plugin_data), "trust")
+        assert result.returncode == 0, result.stderr
+
+    return _trust
 
 
 @pytest.fixture

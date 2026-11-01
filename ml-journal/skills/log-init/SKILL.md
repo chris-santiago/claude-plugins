@@ -6,14 +6,16 @@ description: Initialize the project journal in the current git repo, or upgrade 
 All journal code runs from the plugin; a repo holds data only (`.project-log/journal.jsonl`). In the steps below, `SETUP` means:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_setup.py"
+python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_setup.py" --data-dir "${CLAUDE_PLUGIN_DATA}"
 ```
+
+`--data-dir` points at the plugin's data directory, which holds this machine's list of trusted journals. Only trusted journals have their checkpoints loaded automatically at session start.
 
 ## Step 1: Inspect
 
 Run `SETUP inspect`. If it fails because this is not a git repo, tell the user and stop.
 
-The JSON report gives `journal_exists`, `legacy_copies`, `needs_upgrade`, and `claude_md` (`exists`, `symlinked`, `stale_sections`, `customized_sections`, `current_sections`, `absent_sections`, `unmanaged_refs`).
+The JSON report gives `journal_exists`, `trusted`, `legacy_copies`, `needs_upgrade`, and `claude_md` (`exists`, `symlinked`, `stale_sections`, `customized_sections`, `current_sections`, `absent_sections`, `unmanaged_refs`).
 
 ## Step 2: Upgrade a legacy repo
 
@@ -37,7 +39,19 @@ python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --st
 
 If any command fails, show the error and stop.
 
-## Step 4: Offer CLAUDE.md journal sections
+`SETUP init` also trusts the new journal on this machine, since the user just created it, unless the repo's git history already has a journal (one could arrive with a checkout). Relay its output.
+
+## Step 4: Trust an existing journal
+
+Skip if `trusted` is true, or if `SETUP init` printed `trusted:` in Step 3.
+
+The journal already existed, or exists in the repo's git history (for example, a cloned repo, a new machine, or a repo set up before trust was added). Explain in one line that checkpoint text comes from the repo, so only trust journals written by the user or people they trust. Ask:
+```
+► Trust this repo's journal on this machine? Its latest checkpoint will then load automatically at session start. (y/n)
+```
+On yes, run `SETUP trust` and show its output. On no, say checkpoints will not load automatically and `/resume` will ask before showing one.
+
+## Step 5: Offer CLAUDE.md journal sections
 
 Skip if `claude_md.exists` is false or `claude_md.absent_sections` is empty.
 
@@ -51,6 +65,6 @@ Ask:
 
 On yes, run `SETUP add-sections` and show its output.
 
-## Step 5: Confirm
+## Step 6: Confirm
 
-Tell the user what was done (upgraded, initialized, or already current), and list the available skills: `/log-entry`, `/checkpoint`, `/resume`, `/log-status`, `/log-list`, `/log-summarize`, `/log-commit`, `/research-note`, `/research-report`.
+Tell the user what was done (upgraded, initialized, trusted, or already current), and list the available skills: `/log-entry`, `/checkpoint`, `/resume`, `/log-status`, `/log-list`, `/log-summarize`, `/log-commit`, `/research-note`, `/research-report`.

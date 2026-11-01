@@ -7,6 +7,7 @@ Run from anywhere inside the repo (the journal is found via the git root):
 
 Usage (Q = python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py"):
     Q --latest-checkpoint
+    Q --latest-checkpoint --trusted-only --data-dir "${CLAUDE_PLUGIN_DATA}"
     Q --status
     Q --list issue [--since 7d]
     Q --list decision
@@ -25,7 +26,9 @@ from collections import defaultdict
 # `python3 -I` (3.11+) drops the script directory from sys.path; add it back so
 # the plugin's own sibling module resolves. Nothing from the repo is imported.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from journal_common import journal_path, repo_root, warn_if_legacy  # noqa: E402
+from journal_common import (  # noqa: E402
+    UNTRUSTED_EXIT, UNTRUSTED_NOTICE, is_trusted, journal_path, repo_root, warn_if_legacy,
+)
 
 
 # --- Helpers ---
@@ -89,6 +92,10 @@ def is_resolved(issue_id, resolved_prefixes):
 
 
 # --- Query functions ---
+
+def has_checkpoint(entries):
+    return any(e.get("type") == "checkpoint" for e in entries)
+
 
 def cmd_latest_checkpoint(entries):
     checkpoints = [e for e in entries if e.get("type") == "checkpoint"]
@@ -348,13 +355,21 @@ def main():
     group.add_argument("--recent",            metavar="N", type=int,
                        help="Show the N most recent entries across all types")
     parser.add_argument("--since", default=None, help="Filter by recency: 7d, 24h, 60m")
+    parser.add_argument("--trusted-only", action="store_true",
+                        help="With --latest-checkpoint: withhold the checkpoint (exit 3) unless this repo is trusted")
+    parser.add_argument("--data-dir", default=None, help="Plugin data dir holding the trust list")
 
     args = parser.parse_args()
+    if args.trusted_only and not args.latest_checkpoint:
+        parser.error("--trusted-only is only valid with --latest-checkpoint")
     root = repo_root()
     warn_if_legacy(root)
     entries = load_entries(journal_path(root))
 
     if args.latest_checkpoint:
+        if args.trusted_only and has_checkpoint(entries) and not is_trusted(root, args.data_dir):
+            print(UNTRUSTED_NOTICE)
+            sys.exit(UNTRUSTED_EXIT)
         cmd_latest_checkpoint(entries)
     elif args.status:
         cmd_status(entries)

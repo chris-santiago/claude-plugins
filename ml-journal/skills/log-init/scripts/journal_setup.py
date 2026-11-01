@@ -7,8 +7,10 @@ and pointed CLAUDE.md at them. Now the plugin's scripts are the only journal
 code that runs; a repo holds data only (.project-log/journal.jsonl).
 
 Usage (S = python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_setup.py"):
-    S inspect                    # JSON report: journal, legacy copies, CLAUDE.md sections
-    S init                       # create .project-log/journal.jsonl if absent (never truncates)
+    S [--data-dir D] inspect     # JSON report: journal, trusted, legacy copies, CLAUDE.md sections
+    S [--data-dir D] init        # create .project-log/journal.jsonl if absent (never truncates);
+                                 # a journal it creates is also trusted for session-start checkpoints
+    S --data-dir D trust         # trust this repo's existing journal on this machine
     S upgrade [--dry-run]        # delete legacy copies, rewrite managed sections that call them
     S add-sections [--dry-run]   # append managed CLAUDE.md sections that are absent
 
@@ -16,6 +18,9 @@ Managed CLAUDE.md sections are the level-2 headings in assets/claude-md-sections
 `upgrade` rewrites only managed sections that call a legacy script; a managed
 section that merely differs from the template is a user customization and is
 left alone. Line endings (LF or CRLF) are preserved.
+
+D is the plugin data dir (skills pass "${CLAUDE_PLUGIN_DATA}"). Trust is recorded
+there, outside the repo; without it, checkpoints are not loaded automatically.
 """
 
 import argparse
@@ -23,12 +28,15 @@ import difflib
 import json
 import os
 import re
+import subprocess
 import sys
 
 # `python3 -I` drops the script directory from sys.path; add it back so the
 # plugin's own sibling module resolves. Nothing from the repo is imported.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from journal_common import journal_path, legacy_copies, log_dir, repo_root  # noqa: E402
+from journal_common import (  # noqa: E402
+    JOURNAL_NAME, LOG_DIR_NAME, is_trusted, journal_path, legacy_copies, log_dir, repo_root, trust_repo,
+)
 
 LEGACY_REF = re.compile(r"\.project-log/journal_\w+\.py")
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "claude-md-sections.md")
@@ -119,7 +127,7 @@ def _with_newline(text, nl):
     return text.replace("\n", nl) if nl != "\n" else text
 
 
-def inspect_repo(root):
+def inspect_repo(root, data_dir=None):
     template = template_sections()
     journal = journal_path(root)
     legacy = legacy_copies(root)
@@ -155,6 +163,7 @@ def inspect_repo(root):
     return {
         "repo_root": root,
         "journal_exists": os.path.isfile(journal),
+        "trusted": is_trusted(root, data_dir),
         "legacy_copies": legacy,
         "claude_md": md,
         "needs_upgrade": bool(legacy or md["stale_sections"]),
@@ -189,17 +198,48 @@ def upgraded_lines(lines, template):
 # --- Commands -------------------------------------------------------------------
 
 
-def cmd_inspect(root, _args):
-    print(json.dumps(inspect_repo(root), indent=2, ensure_ascii=False))
+def journal_in_history(root):
+    """True if any ref has ever tracked the journal, or if that can't be determined.
+
+    Such a journal can arrive with a checkout, so creating an empty one here is
+    not grounds for trusting the repo automatically.
+    """
+    result = subprocess.run(
+        ["git", "rev-list", "--all", "-1", "--", f"{LOG_DIR_NAME}/{JOURNAL_NAME}"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    return result.returncode != 0 or bool(result.stdout.strip())
 
 
-def cmd_init(root, _args):
+def cmd_inspect(root, args):
+    print(json.dumps(inspect_repo(root, args.data_dir), indent=2, ensure_ascii=False))
+
+
+def cmd_init(root, args):
     journal = journal_path(root)
     os.makedirs(log_dir(root), exist_ok=True)
     existed = os.path.exists(journal)
     # O_NOFOLLOW backs up the symlink refusal in journal_path(); no O_TRUNC, ever.
     os.close(os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o644))
     print(f"{'exists' if existed else 'created'} {os.path.relpath(journal, root)}")
+    if existed:
+        return  # an existing journal may be someone else's; trusting it is an explicit act
+    if journal_in_history(root):
+        print("not trusted: this repo's git history already has a journal, so trusting it is a separate step")
+    elif args.data_dir:
+        trust_repo(root, args.data_dir)
+        print("trusted: this repo's journal is trusted on this machine; checkpoints load at session start")
+    else:
+        print("not trusted: no plugin data directory, so checkpoints will not auto-load at session start")
+
+
+def cmd_trust(root, args):
+    if not os.path.isfile(journal_path(root)):
+        sys.exit("ERROR: No journal in this repo; run /log-init first.")
+    if trust_repo(root, args.data_dir):
+        print("trusted: this repo's journal is trusted on this machine; checkpoints load at session start")
+    else:
+        print("already trusted: this repo's journal was already trusted on this machine")
 
 
 def cmd_upgrade(root, args):
@@ -269,13 +309,14 @@ def cmd_add_sections(root, args):
     write_lines(path, [f"{text}{nl}{nl}{addition}" if text else addition])
 
 
-COMMANDS = {"inspect": cmd_inspect, "init": cmd_init, "upgrade": cmd_upgrade, "add-sections": cmd_add_sections}
+COMMANDS = {"inspect": cmd_inspect, "init": cmd_init, "trust": cmd_trust, "upgrade": cmd_upgrade, "add-sections": cmd_add_sections}
 
 
 def main():
     parser = argparse.ArgumentParser(description="Initialize or upgrade the project journal layout.")
     parser.add_argument("command", choices=sorted(COMMANDS))
     parser.add_argument("--dry-run", action="store_true", help="Show what would change; change nothing")
+    parser.add_argument("--data-dir", default=None, help="Plugin data dir holding the trust list")
     args = parser.parse_args()
     COMMANDS[args.command](repo_root(), args)
 

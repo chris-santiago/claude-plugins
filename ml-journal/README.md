@@ -32,7 +32,7 @@ ml-journal must be installed as a plugin. Skills and hooks locate their scripts 
 
 ---
 
-`/log-init` creates `.project-log/` at the repo root, copies the query scripts, and writes a verification entry.
+`/log-init` creates `.project-log/journal.jsonl` at the repo root, writes a verification entry, and trusts the new journal on this machine so its checkpoints load at session start.
 
 ## Architecture
 
@@ -179,8 +179,8 @@ The scripts are stdlib-only Python (no external dependencies) and live only in t
 
 - **`journal_log.py`**: Validates fields (including rejecting fields not valid for the type), constructs envelope (`id`, `timestamp`, `type`, `project`, `session_id`), appends entry to `journal.jsonl`
 - **`journal_query.py`**: Read operations: `--status`, `--latest-checkpoint`, `--list TYPE [--since Nd]`, `--unresolved-issues`, `--resolved-issues`, `--entry ID_PREFIX`, `--recent N [--since Nd]`
-- **`journal_setup.py`**: Used by `/log-init`: `inspect`, `init`, `upgrade [--dry-run]`, `add-sections [--dry-run]`
-- **`journal_common.py`**: Shared repo and journal path resolution
+- **`journal_setup.py`**: Used by `/log-init`: `inspect`, `init`, `trust`, `upgrade [--dry-run]`, `add-sections [--dry-run]`; `--data-dir` names the plugin data directory holding the trust list
+- **`journal_common.py`**: Shared repo and journal path resolution, and the trust list
 
 To run a query from a shell, use the plugin's copy. Its install directory is the `installPath` for `ml-journal` in `~/.claude/plugins/installed_plugins.json`. Run from anywhere inside the repo:
 
@@ -223,7 +223,7 @@ Two hooks enable automatic checkpoint/resume without manual invocation. The plug
 | Hook | Script | Behavior |
 |---|---|---|
 | PreCompact | `hooks/journal-precompact.sh` | Auto-writes a checkpoint before `/compact` |
-| SessionStart | `hooks/journal-session-start.sh` | Injects latest checkpoint as session context |
+| SessionStart | `hooks/journal-session-start.sh` | Injects the latest checkpoint as session context, in repos this machine trusts |
 
 **Gotchas:**
 - Both hooks exit silently in repos without `.project-log/journal.jsonl`. They only act after `/log-init`.
@@ -231,6 +231,8 @@ Two hooks enable automatic checkpoint/resume without manual invocation. The plug
 - `SessionStart` needs `jq` on `PATH`; without it the hook stays silent.
 - If you previously added these hooks to `.claude/settings.local.json` by hand, remove them. Plugin hooks run in addition to settings hooks, so keeping both writes duplicate checkpoints.
 - `SessionStart` only injects a checkpoint if one exists. The first session in a new repo will see no injection.
+- SessionStart loads a checkpoint only from a journal this machine trusts. `/log-init` trusts a journal it creates and asks before trusting one that already exists (a clone, a new machine, or a repo set up by an older version). Elsewhere the hook shows a short notice instead of the checkpoint text, because that text comes from the repo and could contain instructions written by anyone who commits to it. The trust list lives in the plugin's data directory (`~/.claude/plugins/data/<plugin>-<marketplace>/trusted-repos.json`), outside every repo, and is keyed by the repo's git directory, so its worktrees share trust. Upgrading from 0.4 or earlier: run `/log-init` once in each repo to trust its journal. Uninstalling the plugin deletes the data directory, so trust starts over.
+- `/resume` in a repo whose journal isn't trusted asks before showing the checkpoint, which also covers environments where hooks are blocked.
 - Some organizations block hooks (`disableAllHooks`, or the managed `allowManagedHooksOnly`). There the plugin still installs and every skill works, but the two hooks don't run. Use the skills instead: `/checkpoint` before `/compact`, `/resume` at session start. The legacy-layout upgrade note also reaches you without hooks, from `/resume` and `/log-status`.
 
 ## Troubleshooting
