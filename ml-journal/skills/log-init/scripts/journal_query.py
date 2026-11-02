@@ -2,12 +2,12 @@
 """
 journal_query.py — Read and query .project-log/journal.jsonl
 
-This plugin copy is the only journal code that runs; repos hold data only.
+This installed copy is the only journal code that runs; repos hold data only.
 Run from anywhere inside the repo (the journal is found via the git root):
 
-Usage (Q = python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py"):
+Usage (Q = python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py"):
     Q --latest-checkpoint
-    Q --latest-checkpoint --trusted-only --data-dir "${CLAUDE_PLUGIN_DATA}"
+    Q --latest-checkpoint --trusted-only
     Q --status
     Q --list issue [--since 7d]
     Q --list decision
@@ -24,7 +24,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 # `python3 -I` (3.11+) drops the script directory from sys.path; add it back so
-# the plugin's own sibling module resolves. Nothing from the repo is imported.
+# the installed sibling module resolves. Nothing from the repo is imported.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from journal_common import (  # noqa: E402
     UNTRUSTED_EXIT, UNTRUSTED_NOTICE, is_trusted, journal_path, repo_root, warn_if_legacy,
@@ -357,7 +357,7 @@ def main():
     parser.add_argument("--since", default=None, help="Filter by recency: 7d, 24h, 60m")
     parser.add_argument("--trusted-only", action="store_true",
                         help="With --latest-checkpoint: withhold the checkpoint (exit 3) unless this repo is trusted")
-    parser.add_argument("--data-dir", default=None, help="Plugin data dir holding the trust list")
+    parser.add_argument("--data-dir", default=None, help="Dir holding the trust list (default: per-user store)")
 
     args = parser.parse_args()
     if args.trusted_only and not args.latest_checkpoint:

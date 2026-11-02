@@ -27,7 +27,7 @@
       "name": "ml-journal",
       "source": "./ml-journal",
       "description": "Persistent project journal — session checkpoints, structured audit trail, research narrative synthesis.",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "license": "MIT",
       "keywords": ["journal", "session-continuity", "research", "audit-trail"]
     }

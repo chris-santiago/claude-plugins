@@ -10,7 +10,9 @@ from pathlib import Path
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS_DIR = PLUGIN_ROOT / "skills" / "log-init" / "scripts"
+SKILLS_DIR = PLUGIN_ROOT / "skills"
+SCRIPTS_DIR = SKILLS_DIR / "log-init" / "scripts"
+HOOKS_DIR = SKILLS_DIR / "log-init" / "hooks"
 JOURNAL_LOG = SCRIPTS_DIR / "journal_log.py"
 JOURNAL_QUERY = SCRIPTS_DIR / "journal_query.py"
 JOURNAL_SETUP = SCRIPTS_DIR / "journal_setup.py"
@@ -44,20 +46,33 @@ def _isolated_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def plugin_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A fresh, empty plugin data dir exported as CLAUDE_PLUGIN_DATA, so the user's real one never leaks in."""
-    data = tmp_path / "plugin-data"
-    data.mkdir()
-    monkeypatch.setenv("CLAUDE_PLUGIN_DATA", str(data))
+def claude_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An empty Claude config dir, so `inspect` never reads the user's real settings."""
+    config = tmp_path / "claude-config"
+    config.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    return config
+
+
+@pytest.fixture(autouse=True)
+def trust_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The default trust store dir, moved into tmp via XDG_DATA_HOME so the user's real one never leaks in.
+
+    CLAUDE_PLUGIN_DATA is removed: plugin and manual installs share one store, so nothing may depend on it.
+    """
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
+    data = tmp_path / "xdg" / "ml-journal"
+    data.mkdir(parents=True)
     return data
 
 
 @pytest.fixture
-def trust(plugin_data: Path) -> Callable[[Path], None]:
-    """Trust a repo's journal on this machine, the way /log-init does."""
+def trust(trust_dir: Path) -> Callable[[Path], None]:
+    """Trust a repo's journal on this machine, the way /log-init does (default store, no --data-dir)."""
 
     def _trust(repo: Path) -> None:
-        result = run_script(JOURNAL_SETUP, repo, "--data-dir", str(plugin_data), "trust")
+        result = run_script(JOURNAL_SETUP, repo, "trust")
         assert result.returncode == 0, result.stderr
 
     return _trust

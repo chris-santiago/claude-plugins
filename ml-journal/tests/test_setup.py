@@ -340,24 +340,24 @@ def _inspect_with(repo: Path, data_dir: Path) -> dict:
     return json.loads(result.stdout)
 
 
-def test_init_new_journal_trusts_repo(repo: Path, plugin_data: Path) -> None:
-    result = _setup(repo, "--data-dir", str(plugin_data), "init")
+def test_init_new_journal_trusts_repo(repo: Path, trust_dir: Path) -> None:
+    result = _setup(repo, "--data-dir", str(trust_dir), "init")
     assert result.returncode == 0, result.stderr
     assert "trusted" in result.stdout
-    assert _is_trusted(repo, plugin_data)
-    (entry,) = _store(plugin_data)["repos"].values()
+    assert _is_trusted(repo, trust_dir)
+    (entry,) = _store(trust_dir)["repos"].values()
     assert entry["worktree"] == str(repo.resolve()) or entry["worktree"] == str(repo)
     assert entry["trusted_at"]
 
 
-def test_init_existing_journal_does_not_trust(journal_repo: Path, plugin_data: Path) -> None:
-    result = _setup(journal_repo, "--data-dir", str(plugin_data), "init")
+def test_init_existing_journal_does_not_trust(journal_repo: Path, trust_dir: Path) -> None:
+    result = _setup(journal_repo, "--data-dir", str(trust_dir), "init")
     assert result.returncode == 0, result.stderr
-    assert not (plugin_data / "trusted-repos.json").exists()
-    assert not _is_trusted(journal_repo, plugin_data)
+    assert not (trust_dir / "trusted-repos.json").exists()
+    assert not _is_trusted(journal_repo, trust_dir)
 
 
-def test_init_does_not_auto_trust_when_history_has_a_journal(repo: Path, plugin_data: Path) -> None:
+def test_init_does_not_auto_trust_when_history_has_a_journal(repo: Path, trust_dir: Path) -> None:
     """A journal on another branch would arrive with a checkout, so trust must be asked for, not implied."""
     git(repo, "switch", "-q", "-c", "other")
     (repo / ".project-log").mkdir()
@@ -366,58 +366,60 @@ def test_init_does_not_auto_trust_when_history_has_a_journal(repo: Path, plugin_
     git(repo, "commit", "-q", "-m", "journal on another branch")
     git(repo, "switch", "-q", "main")
     assert not (repo / ".project-log").exists()
-    result = _setup(repo, "--data-dir", str(plugin_data), "init")
+    result = _setup(repo, "--data-dir", str(trust_dir), "init")
     assert result.returncode == 0, result.stderr
     assert "created" in result.stdout and "not trusted" in result.stdout
-    assert not _is_trusted(repo, plugin_data)
+    assert not _is_trusted(repo, trust_dir)
 
 
-def test_trust_refuses_borrowed_git_dir(journal_repo: Path, plugin_data: Path, tmp_path: Path) -> None:
+def test_trust_refuses_borrowed_git_dir(journal_repo: Path, trust_dir: Path, tmp_path: Path) -> None:
     """Trusting a tree whose .git file points at another repo's git dir would record that repo's key."""
     hostile = tmp_path / "hostile"
     (hostile / ".project-log").mkdir(parents=True)
     (hostile / ".project-log" / "journal.jsonl").write_text("")
     (hostile / ".git").write_text(f"gitdir: {journal_repo / '.git'}\n")
-    result = _setup(hostile, "--data-dir", str(plugin_data), "trust")
+    result = _setup(hostile, "--data-dir", str(trust_dir), "trust")
     assert result.returncode != 0
     assert "not a registered worktree" in result.stderr
-    assert not (plugin_data / "trusted-repos.json").exists()
+    assert not (trust_dir / "trusted-repos.json").exists()
 
 
-def test_init_without_data_dir_creates_but_does_not_trust(repo: Path) -> None:
+def test_init_without_data_dir_trusts_in_default_store(repo: Path, trust_dir: Path) -> None:
     result = _setup(repo, "init")
     assert result.returncode == 0, result.stderr
     assert (repo / ".project-log" / "journal.jsonl").exists()
-    assert "auto-load" in result.stdout and "plugin data directory" in result.stdout
+    assert result.stdout.splitlines()[-1].startswith("trusted:")
+    assert len(_store(trust_dir)["repos"]) == 1
 
 
-def test_trust_subcommand_new_then_already(journal_repo: Path, plugin_data: Path) -> None:
-    first = _setup(journal_repo, "--data-dir", str(plugin_data), "trust")
+def test_trust_subcommand_new_then_already(journal_repo: Path, trust_dir: Path) -> None:
+    first = _setup(journal_repo, "--data-dir", str(trust_dir), "trust")
     assert first.returncode == 0 and first.stdout.startswith("trusted")
-    second = _setup(journal_repo, "trust", "--data-dir", str(plugin_data))
+    second = _setup(journal_repo, "trust", "--data-dir", str(trust_dir))
     assert second.returncode == 0 and second.stdout.startswith("already trusted")
-    assert len(_store(plugin_data)["repos"]) == 1
+    assert len(_store(trust_dir)["repos"]) == 1
 
 
-def test_trust_requires_journal(repo: Path, plugin_data: Path) -> None:
-    result = _setup(repo, "--data-dir", str(plugin_data), "trust")
+def test_trust_requires_journal(repo: Path, trust_dir: Path) -> None:
+    result = _setup(repo, "--data-dir", str(trust_dir), "trust")
     assert result.returncode != 0 and "/log-init" in result.stderr
-    assert not (plugin_data / "trusted-repos.json").exists()
+    assert not (trust_dir / "trusted-repos.json").exists()
 
 
 @pytest.mark.parametrize("data_dir", [[], ["--data-dir", ""]])
-def test_trust_requires_data_dir(journal_repo: Path, data_dir: list[str]) -> None:
+def test_trust_without_data_dir_uses_default_store(journal_repo: Path, trust_dir: Path, data_dir: list[str]) -> None:
     result = _setup(journal_repo, *data_dir, "trust")
-    assert result.returncode != 0 and "no plugin data directory" in result.stderr
+    assert result.returncode == 0 and result.stdout.startswith("trusted"), result.stderr
+    assert len(_store(trust_dir)["repos"]) == 1
 
 
-def test_trust_refuses_symlinked_journal(journal_repo: Path, outside_file: Path, plugin_data: Path) -> None:
+def test_trust_refuses_symlinked_journal(journal_repo: Path, outside_file: Path, trust_dir: Path) -> None:
     journal = journal_repo / ".project-log" / "journal.jsonl"
     journal.unlink()
     journal.symlink_to(outside_file)
-    result = _setup(journal_repo, "--data-dir", str(plugin_data), "trust")
+    result = _setup(journal_repo, "--data-dir", str(trust_dir), "trust")
     assert result.returncode != 0 and "symlink" in result.stderr
-    assert not (plugin_data / "trusted-repos.json").exists()
+    assert not (trust_dir / "trusted-repos.json").exists()
 
 
 def test_trust_creates_missing_data_dir(journal_repo: Path, tmp_path: Path) -> None:
@@ -426,8 +428,13 @@ def test_trust_creates_missing_data_dir(journal_repo: Path, tmp_path: Path) -> N
     assert (data / "trusted-repos.json").exists()
 
 
-def test_inspect_reports_trusted(journal_repo: Path, plugin_data: Path) -> None:
-    assert _inspect_with(journal_repo, plugin_data)["trusted"] is False
-    _setup(journal_repo, "--data-dir", str(plugin_data), "trust")
-    assert _inspect_with(journal_repo, plugin_data)["trusted"] is True
-    assert _inspect(journal_repo)["trusted"] is False, "no --data-dir means no trust"
+def test_inspect_reports_trusted(journal_repo: Path, trust_dir: Path) -> None:
+    assert _inspect_with(journal_repo, trust_dir)["trusted"] is False
+    _setup(journal_repo, "--data-dir", str(trust_dir), "trust")
+    assert _inspect_with(journal_repo, trust_dir)["trusted"] is True
+    assert _inspect(journal_repo)["trusted"] is True, "no --data-dir means the default store, which trust_dir is"
+
+
+def test_explicit_data_dir_is_separate_from_default_store(journal_repo: Path, tmp_path: Path) -> None:
+    _setup(journal_repo, "--data-dir", str(tmp_path / "other"), "trust")
+    assert _inspect(journal_repo)["trusted"] is False

@@ -9,7 +9,8 @@ Run with: uv run --with pytest pytest plugins/ml-journal/tests -v
 Covers:
   1. SessionStart emits hookSpecificOutput.additionalContext with real newlines.
   2. PreCompact records changed paths whole (new name for renames, spaces intact).
-  3. hooks/hooks.json registers both hooks via ${CLAUDE_PLUGIN_ROOT}.
+  3. hooks/hooks.json registers both hooks via ${CLAUDE_PLUGIN_ROOT}; the scripts
+     themselves live in skills/log-init/hooks/ so a manual skills copy has them.
   4. The hooks fire in every repo, so they never execute code from the working
      tree and never write through a symlinked journal.
   5. Repos still on the legacy layout (scripts copied into .project-log/) are
@@ -24,11 +25,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import PLUGIN_ROOT, git, journal_entries
+from conftest import HOOKS_DIR, PLUGIN_ROOT, git, journal_entries
 
-_HOOKS_DIR = PLUGIN_ROOT / "hooks"
-_SESSION_START = _HOOKS_DIR / "journal-session-start.sh"
-_PRECOMPACT = _HOOKS_DIR / "journal-precompact.sh"
+_SESSION_START = HOOKS_DIR / "journal-session-start.sh"
+_PRECOMPACT = HOOKS_DIR / "journal-precompact.sh"
 _LEGACY_SCRIPTS = ("journal_log.py", "journal_query.py")
 
 WriteCheckpoint = Callable[[Path, str], None]
@@ -162,13 +162,16 @@ def test_untrusted_repo_gets_notice_not_checkpoint_text(
     assert "HOSTILE" not in result.stdout
 
 
-def test_session_start_without_plugin_data_env_fails_closed(
-    journal_repo: Path, write_checkpoint: WriteCheckpoint, trust: Trust
+def test_session_start_ignores_plugin_data_env(
+    journal_repo: Path, write_checkpoint: WriteCheckpoint, trust: Trust, tmp_path: Path
 ) -> None:
+    """Trust lives in one per-user store for plugin and manual installs; CLAUDE_PLUGIN_DATA plays no part."""
     trust(journal_repo)
-    write_checkpoint(journal_repo, _HOSTILE)
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PLUGIN_DATA"}
-    _assert_untrusted_context(_context(_run_hook(_SESSION_START, journal_repo, env=env)))
+    write_checkpoint(journal_repo, "MARKER-trusted")
+    empty = tmp_path / "unrelated-plugin-data"
+    empty.mkdir()
+    env = {**os.environ, "CLAUDE_PLUGIN_DATA": str(empty)}
+    assert "MARKER-trusted" in _context(_run_hook(_SESSION_START, journal_repo, env=env))
 
 
 def test_untrusted_repo_without_checkpoint_is_silent(journal_repo: Path) -> None:
@@ -381,7 +384,7 @@ def test_precompact_ignores_repo_fsmonitor(journal_repo: Path) -> None:
 
 
 def test_hooks_json_registers_both_hooks_in_nested_shape() -> None:
-    config = json.loads((_HOOKS_DIR / "hooks.json").read_text())
+    config = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json").read_text())
     events = config["hooks"]
     expected = {"PreCompact": _PRECOMPACT, "SessionStart": _SESSION_START}
     assert set(events) == set(expected)

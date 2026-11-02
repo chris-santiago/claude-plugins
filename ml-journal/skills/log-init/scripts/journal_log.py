@@ -2,12 +2,12 @@
 """
 journal_log.py — Append a typed entry to .project-log/journal.jsonl
 
-This plugin copy is the only journal code that runs; repos hold data only.
+This installed copy is the only journal code that runs; repos hold data only.
 Run from anywhere inside the repo (the journal is found via the git root):
 
 Usage:
-    python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type issue --description "..." --severity high
-    python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" --type decision --description "..." --rationale "..."
+    python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_log.py" --type issue --description "..." --severity high
+    python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_log.py" --type decision --description "..." --rationale "..."
     ... (see REQUIRED_FIELDS for all types)
 """
 
@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 # `python3 -I` (3.11+) drops the script directory from sys.path; add it back so
-# the plugin's own sibling module resolves. Nothing from the repo is imported.
+# the installed sibling module resolves. Nothing from the repo is imported.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from journal_common import journal_path, repo_root, warn_if_legacy  # noqa: E402
 

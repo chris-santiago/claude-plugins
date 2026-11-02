@@ -3,24 +3,27 @@
 journal_setup.py — Initialize a repo's journal, or upgrade it from the legacy layout.
 
 The legacy layout copied journal_log.py / journal_query.py into .project-log/
-and pointed CLAUDE.md at them. Now the plugin's scripts are the only journal
+and pointed CLAUDE.md at them. Now the installed skills' scripts are the only journal
 code that runs; a repo holds data only (.project-log/journal.jsonl).
 
-Usage (S = python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_setup.py"):
-    S [--data-dir D] inspect     # JSON report: journal, trusted, legacy copies, CLAUDE.md sections
-    S [--data-dir D] init        # create .project-log/journal.jsonl if absent (never truncates);
+Usage (S = python3 -I "${CLAUDE_SKILL_DIR}/scripts/journal_setup.py", from the log-init skill):
+    S inspect [--plugin-root R]  # JSON report: journal, trusted, legacy copies, CLAUDE.md sections,
+                                 # hook registration (R non-empty means a plugin install)
+    S init                       # create .project-log/journal.jsonl if absent (never truncates);
                                  # a journal it creates is also trusted for session-start checkpoints
-    S --data-dir D trust         # trust this repo's existing journal on this machine
+    S trust                      # trust this repo's existing journal on this machine
     S upgrade [--dry-run]        # delete legacy copies, rewrite managed sections that call them
     S add-sections [--dry-run]   # append managed CLAUDE.md sections that are absent
+    S hook-config                # print settings.json hooks for a manual (non-plugin) install
 
 Managed CLAUDE.md sections are the level-2 headings in assets/claude-md-sections.md.
 `upgrade` rewrites only managed sections that call a legacy script; a managed
 section that merely differs from the template is a user customization and is
 left alone. Line endings (LF or CRLF) are preserved.
 
-D is the plugin data dir (skills pass "${CLAUDE_PLUGIN_DATA}"). Trust is recorded
-there, outside the repo; without it, checkpoints are not loaded automatically.
+Trust is recorded outside the repo, in the per-user store from
+journal_common.default_data_dir(). `--data-dir D` overrides it (tests); an empty
+D means the default, so a stale skill copy that passes an unset variable still works.
 """
 
 import argparse
@@ -28,12 +31,14 @@ import difflib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
 # `python3 -I` drops the script directory from sys.path; add it back so the
-# plugin's own sibling module resolves. Nothing from the repo is imported.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# installed sibling module resolves. Nothing from the repo is imported.
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPTS_DIR)
 from journal_common import (  # noqa: E402
     JOURNAL_NAME, LOG_DIR_NAME, is_trusted, journal_path, legacy_copies, log_dir, repo_root, trust_repo,
 )
@@ -212,7 +217,9 @@ def journal_in_history(root):
 
 
 def cmd_inspect(root, args):
-    print(json.dumps(inspect_repo(root, args.data_dir), indent=2, ensure_ascii=False))
+    report = inspect_repo(root, args.data_dir)
+    report["hooks"] = hook_registration(root, args.plugin_root)
+    print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 def cmd_init(root, args):
@@ -226,11 +233,9 @@ def cmd_init(root, args):
         return  # an existing journal may be someone else's; trusting it is an explicit act
     if journal_in_history(root):
         print("not trusted: this repo's git history already has a journal, so trusting it is a separate step")
-    elif args.data_dir:
+    else:
         trust_repo(root, args.data_dir)
         print("trusted: this repo's journal is trusted on this machine; checkpoints load at session start")
-    else:
-        print("not trusted: no plugin data directory, so checkpoints will not auto-load at session start")
 
 
 def cmd_trust(root, args):
@@ -309,16 +314,66 @@ def cmd_add_sections(root, args):
     write_lines(path, [f"{text}{nl}{nl}{addition}" if text else addition])
 
 
-COMMANDS = {"inspect": cmd_inspect, "init": cmd_init, "trust": cmd_trust, "upgrade": cmd_upgrade, "add-sections": cmd_add_sections}
+# Event -> script in ../hooks/. The plugin registers the same pairs in hooks/hooks.json.
+HOOK_SCRIPTS = {"PreCompact": "journal-precompact.sh", "SessionStart": "journal-session-start.sh"}
+
+
+def settings_files(root):
+    """User then project Claude settings files that could register hooks."""
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    dirs = [config, os.path.join(root, ".claude")]
+    return [os.path.join(d, name) for d in dirs for name in ("settings.json", "settings.local.json")]
+
+
+def hook_registration(root, plugin_root):
+    """How the ml-journal hooks are registered: by the plugin, and/or by hand in settings files.
+
+    plugin_root is the plugin-root variable as /log-init passes it: Claude Code substitutes
+    it only in plugin skills, so a non-empty value means the plugin registered the hooks.
+    A settings file counts if it names the SessionStart hook script.
+    """
+    marker = HOOK_SCRIPTS["SessionStart"]
+    found = []
+    for path in settings_files(root):
+        try:
+            with open(path, encoding="utf-8") as f:
+                if marker in f.read():
+                    found.append(path)
+        except OSError:
+            continue
+    return {"plugin": bool(plugin_root), "settings": found}
+
+
+def cmd_hook_config(_root, _args):
+    """Print the settings.json "hooks" block that runs this copy's hook scripts.
+
+    For manual installs, where no plugin registers them. Paths are absolute and
+    shell-quoted, and keep any symlink in this script's path so they survive a re-copy.
+    """
+    hooks_dir = os.path.join(os.path.dirname(SCRIPTS_DIR), "hooks")
+    config = {
+        event: [{"hooks": [{"type": "command", "command": shlex.quote(os.path.join(hooks_dir, script))}]}]
+        for event, script in HOOK_SCRIPTS.items()
+    }
+    print(json.dumps({"hooks": config}, indent=2))
+
+
+COMMANDS = {
+    "inspect": cmd_inspect, "init": cmd_init, "trust": cmd_trust, "upgrade": cmd_upgrade,
+    "add-sections": cmd_add_sections, "hook-config": cmd_hook_config,
+}
+NO_REPO_COMMANDS = {"hook-config"}
 
 
 def main():
     parser = argparse.ArgumentParser(description="Initialize or upgrade the project journal layout.")
     parser.add_argument("command", choices=sorted(COMMANDS))
     parser.add_argument("--dry-run", action="store_true", help="Show what would change; change nothing")
-    parser.add_argument("--data-dir", default=None, help="Plugin data dir holding the trust list")
+    parser.add_argument("--data-dir", default=None, help="Dir holding the trust list (default: per-user store)")
+    parser.add_argument("--plugin-root", default="", help="inspect: the plugin root, empty outside a plugin")
     args = parser.parse_args()
-    COMMANDS[args.command](repo_root(), args)
+    root = None if args.command in NO_REPO_COMMANDS else repo_root()
+    COMMANDS[args.command](root, args)
 
 
 if __name__ == "__main__":

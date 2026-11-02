@@ -1,12 +1,13 @@
 """journal_common.py — Repo and journal path resolution shared by the ml-journal scripts.
 
-The repo is untrusted: the scripts run from the plugin, never from the repo,
+The repo is untrusted: the scripts run from the installed skills, never from the repo,
 and refuse a symlinked .project-log/ or journal.jsonl, which a hostile repo
 could commit to redirect reads and writes to a file outside it.
 
 Checkpoint text comes from the repo, so it is shown automatically only for
-repos this machine has trusted. The trust list is a JSON file in the plugin
-data dir, never in the repo.
+repos this machine has trusted. The trust list is a JSON file in a per-user
+data dir (default_data_dir()), never in the repo. It is the same file whether
+ml-journal is installed as a plugin or copied in as plain skills.
 """
 
 import json
@@ -24,6 +25,7 @@ LEGACY_NOTICE = (
     "NOTE: this repo uses the legacy ml-journal layout (journal scripts copied into "
     ".project-log/). Those copies are no longer used; run /log-init to upgrade."
 )
+DATA_DIR_NAME = "ml-journal"
 TRUST_STORE_NAME = "trusted-repos.json"
 TRUST_SCHEMA = 1
 UNTRUSTED_EXIT = 3  # journal_query.py --trusted-only: checkpoint withheld
@@ -113,6 +115,18 @@ def _is_own_worktree(root, key):
     return os.path.realpath(root) in registered_worktrees(key)
 
 
+def default_data_dir():
+    """The per-user dir holding the trust list: $XDG_DATA_HOME/ml-journal, else ~/.local/share/ml-journal.
+
+    Plugin and manual (skills-only) installs share it, so it never depends on env
+    only a plugin gets. A relative XDG_DATA_HOME is ignored, per the XDG spec.
+    """
+    base = os.environ.get("XDG_DATA_HOME", "")
+    if not os.path.isabs(base):
+        base = os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, DATA_DIR_NAME)
+
+
 def trust_store_path(data_dir):
     return os.path.join(data_dir, TRUST_STORE_NAME)
 
@@ -132,22 +146,20 @@ def _load_store(data_dir):
     return repos
 
 
-def is_trusted(root, data_dir):
-    """True only if data_dir holds a well-formed store listing this repo, and root is
-    a registered worktree of it. Never raises for a bad store."""
-    if not data_dir:
-        return False
-    repos = _load_store(data_dir)
+def is_trusted(root, data_dir=None):
+    """True only if the store (data_dir, or the default) is well-formed and lists this
+    repo, and root is a registered worktree of it. Never raises for a bad store."""
+    repos = _load_store(data_dir or default_data_dir())
     if not repos:
         return False
     key = trust_key(root)
     return key in repos and _is_own_worktree(root, key)
 
 
-def trust_repo(root, data_dir):
-    """Add this repo to the trust list. Return True if newly added, False if already trusted."""
-    if not data_dir:
-        sys.exit("ERROR: no plugin data directory; cannot record trust (CLAUDE_PLUGIN_DATA is unset).")
+def trust_repo(root, data_dir=None):
+    """Add this repo to the trust list (data_dir, or the default). Return True if newly
+    added, False if already trusted."""
+    data_dir = data_dir or default_data_dir()
     repos = _load_store(data_dir)
     if repos is None:
         sys.exit(

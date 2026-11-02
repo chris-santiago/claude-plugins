@@ -2,13 +2,13 @@
 # journal-session-start.sh — Inject latest checkpoint as session context on startup
 #
 # Fires on SessionStart hook.
-# If the repo's journal has a checkpoint and this machine trusts the repo (trust
-# list in $CLAUDE_PLUGIN_DATA), emits it as additionalContext so Claude sees it
-# at session open. For an untrusted repo the checkpoint text comes from the repo
-# and is never injected; a fixed notice is emitted instead. If the repo still
-# uses the legacy layout (scripts copied into .project-log/), adds a note to
-# upgrade via /log-init. Exits silently if not in a repo, or there is no
-# checkpoint, untrusted notice, or legacy note.
+# If the repo's journal has a checkpoint and this machine trusts the repo
+# (per-user trust list; see default_data_dir() in journal_common.py), emits it
+# as additionalContext so Claude sees it at session open. For an untrusted repo
+# the checkpoint text comes from the repo and is never injected; a fixed notice
+# is emitted instead. If the repo still uses the legacy layout (scripts copied
+# into .project-log/), adds a note to upgrade via /log-init. Exits silently if
+# not in a repo, or there is no checkpoint, untrusted notice, or legacy note.
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ journal_hook_init
 # Exit 3 means a checkpoint exists but the repo is untrusted: discard the output.
 UNTRUSTED=0
 STATUS=0
-CHECKPOINT_OUTPUT="$(python3 -I "$SCRIPTS_DIR/journal_query.py" --latest-checkpoint --trusted-only --data-dir "${CLAUDE_PLUGIN_DATA:-}" 2>/dev/null)" || STATUS=$?
+CHECKPOINT_OUTPUT="$(python3 -I "$SCRIPTS_DIR/journal_query.py" --latest-checkpoint --trusted-only 2>/dev/null)" || STATUS=$?
 case "$STATUS" in
     0) ;;
     3) UNTRUSTED=1; CHECKPOINT_OUTPUT="" ;;

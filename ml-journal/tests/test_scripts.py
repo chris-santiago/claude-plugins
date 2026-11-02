@@ -138,27 +138,27 @@ def _trusted_query(repo: Path, data_dir: Path | str, *extra: str):
 
 
 def test_trusted_only_withholds_untrusted_checkpoint(
-    journal_repo: Path, write_checkpoint, plugin_data: Path
+    journal_repo: Path, write_checkpoint, trust_dir: Path
 ) -> None:
     write_checkpoint(journal_repo, _HOSTILE)
-    result = _trusted_query(journal_repo, plugin_data)
+    result = _trusted_query(journal_repo, trust_dir)
     assert result.returncode == 3
     assert "NOT LOADED" in result.stdout and "/log-init" in result.stdout
     assert "HOSTILE" not in result.stdout + result.stderr
 
 
 def test_trusted_only_prints_trusted_checkpoint(
-    journal_repo: Path, write_checkpoint, plugin_data: Path, trust
+    journal_repo: Path, write_checkpoint, trust_dir: Path, trust
 ) -> None:
     trust(journal_repo)
     write_checkpoint(journal_repo, _HOSTILE)
-    result = _trusted_query(journal_repo, plugin_data)
+    result = _trusted_query(journal_repo, trust_dir)
     assert result.returncode == 0, result.stderr
     assert _HOSTILE in result.stdout
 
 
-def test_trusted_only_untrusted_without_checkpoint_is_quiet(journal_repo: Path, plugin_data: Path) -> None:
-    result = _trusted_query(journal_repo, plugin_data)
+def test_trusted_only_untrusted_without_checkpoint_is_quiet(journal_repo: Path, trust_dir: Path) -> None:
+    result = _trusted_query(journal_repo, trust_dir)
     assert (result.returncode, result.stdout.strip()) == (0, "No checkpoint found in journal.")
 
 
@@ -168,25 +168,28 @@ def test_without_trusted_only_checkpoint_still_prints(journal_repo: Path, write_
     assert result.returncode == 0 and _HOSTILE in result.stdout
 
 
-def test_trusted_only_requires_latest_checkpoint(journal_repo: Path, plugin_data: Path) -> None:
-    result = run_script(JOURNAL_QUERY, journal_repo, "--list", "issue", "--trusted-only", "--data-dir", str(plugin_data))
+def test_trusted_only_requires_latest_checkpoint(journal_repo: Path, trust_dir: Path) -> None:
+    result = run_script(JOURNAL_QUERY, journal_repo, "--list", "issue", "--trusted-only", "--data-dir", str(trust_dir))
     assert result.returncode == 2
     assert "--trusted-only" in result.stderr
 
 
-def test_empty_data_dir_arg_is_untrusted(journal_repo: Path, write_checkpoint) -> None:
+def test_empty_data_dir_arg_uses_default_store(journal_repo: Path, write_checkpoint, trust) -> None:
+    """A stale skill copy may still pass --data-dir "${CLAUDE_PLUGIN_DATA}", which expands to "" outside a plugin."""
     write_checkpoint(journal_repo, _HOSTILE)
+    assert _trusted_query(journal_repo, "").returncode == 3
+    trust(journal_repo)
     result = _trusted_query(journal_repo, "")
-    assert result.returncode == 3 and "HOSTILE" not in result.stdout
+    assert result.returncode == 0 and _HOSTILE in result.stdout
 
 
 @pytest.mark.parametrize("store", ["not json {", "[]", '{"repos": []}', '{"schema": 1, "repos": {"k": 1}}'])
 def test_malformed_store_is_untrusted_and_never_overwritten(
-    journal_repo: Path, write_checkpoint, plugin_data: Path, store: str
+    journal_repo: Path, write_checkpoint, trust_dir: Path, store: str
 ) -> None:
-    (plugin_data / "trusted-repos.json").write_text(store)
+    (trust_dir / "trusted-repos.json").write_text(store)
     write_checkpoint(journal_repo, _HOSTILE)
-    assert _trusted_query(journal_repo, plugin_data).returncode == 3
-    result = run_script(JOURNAL_SETUP, journal_repo, "--data-dir", str(plugin_data), "trust")
+    assert _trusted_query(journal_repo, trust_dir).returncode == 3
+    result = run_script(JOURNAL_SETUP, journal_repo, "--data-dir", str(trust_dir), "trust")
     assert result.returncode != 0 and "trusted-repos.json" in result.stderr
-    assert (plugin_data / "trusted-repos.json").read_text() == store
+    assert (trust_dir / "trusted-repos.json").read_text() == store

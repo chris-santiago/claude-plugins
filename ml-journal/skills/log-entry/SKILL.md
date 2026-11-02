@@ -77,7 +77,7 @@ Alternatives: Mean pooling, attention pooling
 Build the `journal_log.py` invocation with appropriate flags for the type and extracted fields. List fields (tags, key_decisions, open_threads) should be passed as comma-separated strings.
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_log.py" \
   --type <type> \
   --description "..." \
   [--field "value"] ...

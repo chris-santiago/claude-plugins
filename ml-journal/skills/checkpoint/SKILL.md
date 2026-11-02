@@ -58,7 +58,7 @@ Do not write anything until confirmed.
 ## Step 4: Write checkpoint
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py" \
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_log.py" \
   --type checkpoint \
   --in-progress "..." \
   --pending-decisions "..." \

@@ -26,21 +26,21 @@ From the user's request, determine the time window:
 Whether or not a summary exists, also gather:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --latest-checkpoint
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --unresolved-issues
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --latest-checkpoint
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --unresolved-issues
 git log --oneline --since="<N> days ago"
 ```
 
 If no existing summary in context, query all relevant types for the scope window:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list decision --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list discovery --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list experiment --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list issue --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list resolution --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list hypothesis --since <scope>
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list lesson --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list decision --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list discovery --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list experiment --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list issue --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list resolution --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list hypothesis --since <scope>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list lesson --since <scope>
 ```
 
 If all queries return empty and there is no existing summary, tell the user there is nothing to note for the requested scope and stop.

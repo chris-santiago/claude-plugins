@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/journal-precompact.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/log-init/hooks/journal-precompact.sh"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/journal-session-start.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/log-init/hooks/journal-session-start.sh"
           }
         ]
       }

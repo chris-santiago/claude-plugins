@@ -28,7 +28,23 @@ cp -r plugins/ml-journal /your/repo/plugins/ml-journal
 
 Then register it in your repo's `.claude-plugin/marketplace.json` and run `claude plugin install ml-journal@your-repo`.
 
-ml-journal must be installed as a plugin. Skills and hooks locate their scripts through `${CLAUDE_PLUGIN_ROOT}`, so copying the skills alone into `~/.claude/skills/` does not work.
+**Without the plugin system (skills only):**
+
+Some organizations block plugin installs but allow skills. ml-journal works there too, because every skill finds its scripts through `${CLAUDE_SKILL_DIR}`, which Claude Code sets for plugin and personal skills alike.
+
+```bash
+# From a clone of this repo: copy (or symlink) every skill folder, and the agent, into your user config
+mkdir -p ~/.claude/skills ~/.claude/agents
+cp -r plugins/ml-journal/skills/* ~/.claude/skills/
+cp plugins/ml-journal/agents/report-drafter.md ~/.claude/agents/
+
+# Optional: print the hooks block for auto-checkpoint and auto-resume
+python3 -I ~/.claude/skills/log-init/scripts/journal_setup.py hook-config
+```
+
+Merge the printed `hooks` block into `~/.claude/settings.json`; it holds absolute paths to the hook scripts in your copy. Without hooks, everything still works: run `/checkpoint` before `/compact` and `/resume` at session start.
+
+Keep the folder names as shipped. The scripts and hooks live in `log-init/`, and the other skills find them at `../log-init/`; renaming a folder also leaves its skill name (`name:` in its SKILL.md) unchanged. To update: if you symlinked, `git pull` is enough; if you copied, delete the ml-journal folders and copy them again, so files removed upstream don't linger. Then run `/log-init`, which tells you whether the hooks are registered.
 
 ---
 
@@ -175,14 +191,14 @@ Light entries are logged immediately. Medium entries (including discoveries and 
 
 ## Scripts
 
-The scripts are stdlib-only Python (no external dependencies) and live only in the plugin, under `skills/log-init/scripts/`. A repo holds data only: `/log-init` never copies scripts into it, and skills and hooks always run the plugin's copy. The scripts refuse a symlinked `.project-log/` or `journal.jsonl`.
+The scripts are stdlib-only Python (no external dependencies) and live only in the installed skills, under `skills/log-init/scripts/`. A repo holds data only: `/log-init` never copies scripts into it, and skills and hooks always run the installed copy. The scripts refuse a symlinked `.project-log/` or `journal.jsonl`.
 
 - **`journal_log.py`**: Validates fields (including rejecting fields not valid for the type), constructs envelope (`id`, `timestamp`, `type`, `project`, `session_id`), appends entry to `journal.jsonl`
 - **`journal_query.py`**: Read operations: `--status`, `--latest-checkpoint`, `--list TYPE [--since Nd]`, `--unresolved-issues`, `--resolved-issues`, `--entry ID_PREFIX`, `--recent N [--since Nd]`
-- **`journal_setup.py`**: Used by `/log-init`: `inspect`, `init`, `trust`, `upgrade [--dry-run]`, `add-sections [--dry-run]`; `--data-dir` names the plugin data directory holding the trust list
+- **`journal_setup.py`**: Used by `/log-init`: `inspect` (also reports how the hooks are registered, given `--plugin-root`), `init`, `trust`, `upgrade [--dry-run]`, `add-sections [--dry-run]`, and `hook-config` (prints `settings.json` hooks for a skills-only install); `--data-dir` overrides the trust list location
 - **`journal_common.py`**: Shared repo and journal path resolution, and the trust list
 
-To run a query from a shell, use the plugin's copy. Its install directory is the `installPath` for `ml-journal` in `~/.claude/plugins/installed_plugins.json`. Run from anywhere inside the repo:
+To run a query from a shell, use the installed copy. For a plugin install, its directory is the `installPath` for `ml-journal` in `~/.claude/plugins/installed_plugins.json`; for a skills-only install, use `Q=~/.claude/skills/log-init/scripts/journal_query.py`. Run from anywhere inside the repo:
 
 ```bash
 Q="<installPath>/skills/log-init/scripts/journal_query.py"
@@ -218,20 +234,20 @@ Older versions copied `journal_log.py` and `journal_query.py` into each repo's `
 
 ## Hooks
 
-Two hooks enable automatic checkpoint/resume without manual invocation. The plugin registers them on install via `hooks/hooks.json`; there is nothing to add to your settings.
+Two hooks enable automatic checkpoint/resume without manual invocation. The plugin registers them on install via `hooks/hooks.json`; there is nothing to add to your settings. A skills-only install registers them by hand (see [Installation](#installation)). The scripts live in `skills/log-init/hooks/` so that a copy of the skill folders includes them.
 
 | Hook | Script | Behavior |
 |---|---|---|
-| PreCompact | `hooks/journal-precompact.sh` | Auto-writes a checkpoint before `/compact` |
-| SessionStart | `hooks/journal-session-start.sh` | Injects the latest checkpoint as session context, in repos this machine trusts |
+| PreCompact | `skills/log-init/hooks/journal-precompact.sh` | Auto-writes a checkpoint before `/compact` |
+| SessionStart | `skills/log-init/hooks/journal-session-start.sh` | Injects the latest checkpoint as session context, in repos this machine trusts |
 
 **Gotchas:**
 - Both hooks exit silently in repos without `.project-log/journal.jsonl`. They only act after `/log-init`.
-- The hooks never run code from the repo: they use the plugin's bundled scripts and refuse a symlinked `.project-log/` or journal.
+- The hooks never run code from the repo: they use the scripts installed next to them and refuse a symlinked `.project-log/` or journal.
 - `SessionStart` needs `jq` on `PATH`; without it the hook stays silent.
-- If you previously added these hooks to `.claude/settings.local.json` by hand, remove them. Plugin hooks run in addition to settings hooks, so keeping both writes duplicate checkpoints.
+- If you added these hooks to a settings file by hand (in an older setup, or from `hook-config` for a skills-only install), remove them when you install the plugin. Plugin hooks run in addition to settings hooks, so keeping both writes duplicate checkpoints. `/log-init` warns when it finds both.
 - `SessionStart` only injects a checkpoint if one exists. The first session in a new repo will see no injection.
-- SessionStart loads a checkpoint only from a journal this machine trusts. `/log-init` trusts a journal it creates and asks before trusting one that already exists (a clone, a new machine, or a repo set up by an older version). Elsewhere the hook shows a short notice instead of the checkpoint text, because that text comes from the repo and could contain instructions written by anyone who commits to it. The trust list lives in the plugin's data directory (`~/.claude/plugins/data/<plugin>-<marketplace>/trusted-repos.json`), outside every repo, and is keyed by the repo's git directory, so its worktrees share trust. Upgrading from 0.4 or earlier: run `/log-init` once in each repo to trust its journal. Uninstalling the plugin deletes the data directory, so trust starts over.
+- SessionStart loads a checkpoint only from a journal this machine trusts. `/log-init` trusts a journal it creates and asks before trusting one that already exists (a clone, a new machine, or a repo set up by an older version). Elsewhere the hook shows a short notice instead of the checkpoint text, because that text comes from the repo and could contain instructions written by anyone who commits to it. The trust list is `~/.local/share/ml-journal/trusted-repos.json` (`$XDG_DATA_HOME/ml-journal/` instead when `XDG_DATA_HOME` is an absolute path), outside every repo and shared by plugin and skills-only installs. It is keyed by the repo's git directory, so its worktrees share trust. Upgrading from 0.5 (which kept the list in the plugin's data directory) or earlier: run `/log-init` once in each repo to trust its journal. Delete the file to reset trust.
 - `/resume` in a repo whose journal isn't trusted asks before showing the checkpoint, which also covers environments where hooks are blocked.
 - Some organizations block hooks (`disableAllHooks`, or the managed `allowManagedHooksOnly`). There the plugin still installs and every skill works, but the two hooks don't run. Use the skills instead: `/checkpoint` before `/compact`, `/resume` at session start. The legacy-layout upgrade note also reaches you without hooks, from `/resume` and `/log-status`.
 
@@ -259,8 +275,12 @@ plugins/ml-journal/
       scripts/                    # the only journal code; never copied into repos
         journal_log.py
         journal_query.py
-        journal_setup.py          # /log-init: inspect, init, upgrade, add-sections
-        journal_common.py         # shared repo/journal path resolution
+        journal_setup.py          # /log-init: inspect, init, trust, upgrade, add-sections, hook-config
+        journal_common.py         # shared repo/journal path resolution, trust list
+      hooks/                      # inside the skill so a skills-only copy carries them
+        journal-precompact.sh     # PreCompact hook
+        journal-session-start.sh  # SessionStart hook
+        journal-hook-lib.sh       # shared setup (repo/journal detection, legacy-layout check)
     log-entry/SKILL.md
     checkpoint/SKILL.md
     resume/SKILL.md
@@ -273,16 +293,14 @@ plugins/ml-journal/
   agents/
     report-drafter.md             # agent — drafts RESEARCH_REPORT.md (dispatched by /research-report)
   hooks/
-    hooks.json                    # registers both hooks on plugin install
-    journal-precompact.sh         # PreCompact hook
-    journal-session-start.sh      # SessionStart hook
-    journal-hook-lib.sh           # shared setup (repo/journal detection, legacy-layout check)
+    hooks.json                    # registers both hooks on plugin install (skills-only: hook-config)
   tests/
     conftest.py                   # shared scratch-repo fixtures
     test_hooks.py                 # hooks: output schema, paths, legacy notice, untrusted repos
     test_scripts.py               # journal_log / journal_query: validation, symlink refusal
     test_setup.py                 # journal_setup: init, inspect, upgrade, add-sections
     test_no_repo_local_scripts.py # relapse guard: no repo-local script references
+    test_portable_install.py      # plugin vs skills-only: paths, copied/symlinked hooks, trust store
                                   # run: uv run --with pytest pytest plugins/ml-journal/tests
   journal_system_spec.md          # internal system specification
 ```

@@ -14,7 +14,7 @@ If `.project-log/journal.jsonl` does not exist, say: "No journal found in this r
 When the user (or a `CLAUDE.md` rule) asks for a specific entry by its short ID, show the full entry, go to Step 5, and skip Steps 3–4:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --entry <id-prefix>
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --entry <id-prefix>
 ```
 
 ## Step 3: Determine type and time window
@@ -37,13 +37,13 @@ If the type is ambiguous or not specified, ask: "Which entry type? (issue / reso
 **Special case — issues:** When type is `issue` and no time qualifier is given, use `--unresolved-issues` to show only open (unresolved) issues:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --unresolved-issues
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --unresolved-issues
 ```
 
 For all other types, or when a time qualifier is given with `issue`:
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --list <type> [--since <Nd|Nh>]
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --list <type> [--since <Nd|Nh>]
 ```
 
 ## Step 5: Surface output

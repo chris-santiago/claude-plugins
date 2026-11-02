@@ -12,7 +12,7 @@ If `.project-log/journal.jsonl` does not exist, say: "No journal found in this r
 ## Step 2: Run status query
 
 ```bash
-python3 -I "${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py" --status
+python3 -I "${CLAUDE_SKILL_DIR}/../log-init/scripts/journal_query.py" --status
 ```
 
 ## Step 3: Surface output
