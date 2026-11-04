@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-03
+
+### Changed
+- **The quality reviewers run outside SDD.** `python-quality-reviewer`, `rust-quality-reviewer` and `pytorch-quality-reviewer` refused any dispatch without a record path and a scripts path, so a review dispatched on its own got a refusal instead of a verdict. A dispatch with no record path and no store artifacts now runs standalone: the reviewer reviews the files or diff it's given, skips the record, and returns its review inline. A dispatch that carries store artifacts but lacks either path is still refused as malformed.
+
 ## [0.10.0] - 2026-10-30 — Run notes in the store
 
 A long SDD run's cross-task knowledge had no durable home, so an orchestrator improvised a free-form notes file. It grew without bound, nothing in it was ever marked done, and it dropped items: a standing test recipe fell out of later briefs twice, notes filed after their target's brief was built reached the coder only by luck, and changelog debts had no owner. The same run showed the fix cap never firing: fixes reused an earlier cycle's snapshot or skipped one, and fixes were logged as trivial right after reviewers flagged regressions, so `fix-count` stayed at two through seven cycles. This release moves that knowledge into typed ledger entries the briefs, gates and reports read, and makes the fix count rest on evidence.
