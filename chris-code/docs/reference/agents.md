@@ -4,7 +4,7 @@ chris-code ships 15 dedicated agents — the layer superpowers doesn't have. The
 
 ## Typed records
 
-Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents — writes its JSON record to a dispatch-supplied path, never one it computes itself. The naming convention behind that path: `task-<N>-<agent-name>.json`, keyed by the agent's registered name rather than its role, so additive same-role agents (e.g. both quality reviewers firing on one PyTorch task) never collide. The whole-change commit gate, which has no task number, uses `final-<agent-name>.json` instead, and such records carry `"task": "final"`. The completion close extends that stem: a close-gate remediation run's whole-change gate uses `final-r2-<agent-name>.json` (so it doesn't inherit the original gate's cycle), a close round's test-only fix and the commit gate on its inline fixes use `final-close-r<N>-<agent-name>.json`, and a fix from your ruling after round 2 (and its commit gate) uses `final-close-ruling-<agent-name>.json`. In every case the dispatch-supplied path defines record identity; these stems are the convention the orchestrator follows when computing it, not something an agent works out on its own. Each role's payload contract is documented under its own section, below.
+Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents — writes its JSON record to a dispatch-supplied path, never one it computes itself. The orchestrator takes every such path from `ledger.py path` (see [Ledger commands](ledger.md)). Records are keyed by scope and by the agent's registered name rather than its role, so additive same-role agents (e.g. both quality reviewers firing on one PyTorch task) never collide, and whole-change gate records carry `"task": "final"`. The dispatch-supplied path defines record identity; an agent never works it out on its own. Each role's payload contract is documented under its own section, below.
 
 ## Shared review disciplines
 
@@ -89,7 +89,7 @@ They verify the coder actually followed the principles it claims to internalize,
 
 ## Review-lite agents (additive — all matching fire)
 
-Dispatched as the whole-change gate at plan end, over the full `BASE..HEAD` diff, and usable standalone as a pre-commit guardrail. Inside the pipeline each task's commit is checked by the scripted `ledger.py gate` (labels, lint and the task's `Verify:` command) instead, so review-lite no longer runs per task.
+Dispatched as the whole-change gate at plan end, over the full `BASE..HEAD` diff, and usable standalone as a pre-commit guardrail. Inside the pipeline each task's commit is gated by `ledger.py commit` (labels, lint and the task's `Verify:` command) instead, so review-lite no longer runs per task.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
