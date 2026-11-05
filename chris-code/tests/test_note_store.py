@@ -558,7 +558,7 @@ class TestRunState(DeliveryTestCase):
 
     def test_an_empty_store_renders_every_section(self):
         out = self._state()
-        for heading in ("## Stages", "## Non-trivial fixes in flight", "## Notes owed",
+        for heading in ("## Stages", "## Rounds", "## Notes owed",
                         "## Open disclosures and questions", "## Blocking items",
                         "## Agent handles", "## Latest checkpoint"):
             self.assertIn(heading, out)
@@ -585,7 +585,7 @@ class TestRunState(DeliveryTestCase):
         self.assertIn("task 2 (in flight): b.py", out)
         self.assertIn("task 3 (not started): a.py", out)
         self.assertIn("## Unstaged tasks\n- task 7 (in flight)", out)
-        self.assertIn("- task 2: 0", out)
+        self.assertIn("- task 2: (no triage yet)", out)
         self.assertIn(f"- task 2: [{late}]", out)
         self.assertIn(f"- task 3 (not started): [{future}]", out)
         self.assertIn(f"- [{q}] question owned by the close", out)

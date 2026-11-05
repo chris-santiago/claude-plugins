@@ -31,10 +31,10 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py stage --task N --stage K --files PATH... [--store DIR]
        python3 ledger.py handle --task N|final --role NAME --agent ID [--store DIR]
        python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
-       python3 ledger.py snapshot --task N --label "..." [--non-trivial (--decision RECORD | --settled-by cases|ruling)] [--store DIR]
+       python3 ledger.py triage --task N|final [--store DIR]
+       python3 ledger.py snapshot --task N --label "..." [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
        python3 ledger.py findings <decision-path> [--store DIR]
-       python3 ledger.py fix-count --task N [--store DIR]
        python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
@@ -45,9 +45,12 @@ remediating-issues' per-task variant). Beyond its own shape, `check`
 verifies it against the store and the repo: it accounts for every
 finding on every reviewer record in its scope (task-N, final, or
 final-r2, from the file names), reconciles with every decision written
-before it, and cites precedents that exist. A
-non-trivial `snapshot` takes one (or names why none is owed), so a fix
-cannot start from a decision nobody researched.
+before it, and cites precedents that exist. Only a holistic round has
+one, and its fix implements it case by case.
+
+The review-fix loop's routing is computed, not declared: `triage` reads a
+task's tagged findings and its coder's evidence, applies the rules in
+triage.py, and logs the step. A fix's `check` holds it to that step.
 
 Importable API: see __all__ below — the module's public query/validate/
 render surface (data classes, `get_store_dir`, the `load_*`/`compute_*`/
@@ -91,7 +94,8 @@ __all__ = [
     "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
-    "non_trivial_fix_count", "check_record", "finding_ids", "find_baseline",
+    "check_record", "finding_ids", "find_baseline", "fix_round",
+    "triage_inputs", "triage_entries", "latest_triage", "task_footprint",
     "store_lock", "NOTE_KINDS", "note_id", "notes_from_log", "open_notes",
     "required_notes", "delivered_note_ids", "undelivered_notes", "owned_open_notes",
     "tasks_in_flight", "record_delivery", "stage_map", "latest_handles",
@@ -218,9 +222,6 @@ DECISION_STEM_RE = re.compile(r"^(?P<scope>task-\d+|final-r2|final)-decision-c(?
 ESCALATION_KIND = "escalation"
 RULING_PREFIX = "user ruling:"
 PRECEDENT_RE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
-# Why a non-trivial fix owes no decision record: the brief's Cases: line
-# already settles it, or the user ruled on it.
-SETTLED_BY = ("cases", "ruling")
 # Coders run on sonnet. Opus only under the user's ruling for the task,
 # logged as a progress note with this prefix.
 CODER_MODEL = "sonnet"
@@ -1058,7 +1059,7 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             lines.append(f"- resolves `{entry.get('resolves')}`: {entry.get('note', '')}")
         elif entry.get("type") == "snapshot":
             lines.append(f"- task {entry.get('task')} snapshot `{entry.get('tree')}`: "
-                          f"{entry.get('label', '')} ({_route_text(entry)})")
+                          f"{entry.get('label', '')}")
         elif entry.get("type") == "close_round":
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
@@ -1323,8 +1324,9 @@ def render_run_state(log: list[dict], records: list[Record]) -> str:
         lines += ["", "## Unstaged tasks"]
         lines += [f"- task {task} ({state(task)})" for task in unstaged]
 
-    lines += ["", "## Non-trivial fixes in flight"]
-    lines += ([f"- task {task}: {non_trivial_fix_count(log, task)}" for task in in_flight]
+    lines += ["", "## Rounds"]
+    lines += ([f"- task {task}: " + (" → ".join(e["kind"] for e in triage_entries(log, task))
+                                     or "(no triage yet)") for task in in_flight]
               or ["(no task in flight)"])
 
     lines += ["", "## Notes owed"]
@@ -1806,121 +1808,16 @@ def _warn_submodules(repo: Path) -> None:
               "captured by snapshot/diff-since; check them by hand.", file=sys.stderr)
 
 
-def cmd_snapshot(store_dir: Path, task: int | str, label: str, tree: str | Callable[[], str],
-                 non_trivial: bool = False, decision: str | None = None,
-                 settled_by: str | None = None) -> None:
+def cmd_snapshot(store_dir: Path, task: int | str, label: str,
+                 tree: str | Callable[[], str]) -> None:
     """Record a fix baseline as a typed progress entry (so it survives
-    compaction) and print the tree id for the dispatch. `non_trivial`
-    marks a fix whose batch has a non-trivial finding: those are what the
-    escalation cap counts (see non_trivial_fix_count). Such a fix names
-    its route: a decision record for this task that passes `check`, or
-    why none is owed (`settled_by`). `tree` may be a callable, so a
-    refused route writes no git objects."""
+    compaction) and print the tree id for the dispatch. The fix's round
+    comes from the triage entry before it, not from the snapshot."""
     with store_lock(store_dir):
-        _check_flagged_fix_route(store_dir, task, non_trivial, settled_by)
-        route = _fix_route(store_dir, task, non_trivial, decision, settled_by)
         tree = tree() if callable(tree) else tree
-        entry = {"type": "snapshot", "task": task, "label": label, "tree": tree}
-        if non_trivial:
-            entry["non_trivial"] = True
-            entry.update(route)
-        _append_progress(store_dir, entry)
+        _append_progress(store_dir, {"type": "snapshot", "task": task, "label": label,
+                                     "tree": tree})
     print(tree)
-
-
-def _check_flagged_fix_route(store_dir: Path, task: int | str, non_trivial: bool,
-                             settled_by: str | None) -> None:
-    """A recurring finding or one the last fix introduced is never trivial,
-    and the brief's Cases: line can't settle it either: a recurrence needs
-    a new mechanism and a regression needs its cause found. So while a
-    reviewer record of the task flags one, the next fix is non-trivial and
-    routed by a decision record or the user's ruling, and it counts toward
-    the cap."""
-    if non_trivial and settled_by != "cases":
-        return
-    flagged = sorted(rec.stem for rec in load_records(store_dir)
-                     if rec.ok and rec.data.get("role") in REVIEWER_ROLES
-                     and _scope(rec.stem) in _task_scopes(task)
-                     and (rec.data.get("recurring") or rec.data.get("introduced_by_fix")))
-    if flagged:
-        raise RecordError(f"{flagged} flag recurring or fix-introduced findings, which are "
-                          "never trivial and never settled by the Cases: line: take this "
-                          "snapshot with --non-trivial and --decision, or --settled-by ruling")
-
-
-def _fix_route(store_dir: Path, task: int | str, non_trivial: bool,
-               decision: str | None, settled_by: str | None) -> dict:
-    if not non_trivial:
-        if decision or settled_by:
-            raise RecordError("--decision and --settled-by route a non-trivial fix; "
-                              "add --non-trivial")
-        return {}
-    if bool(decision) == bool(settled_by):
-        raise RecordError("a non-trivial fix needs exactly one of --decision <record> "
-                          f"or --settled-by {'|'.join(SETTLED_BY)}")
-    if settled_by:
-        if settled_by not in SETTLED_BY:
-            raise RecordError(f"--settled-by: got {settled_by!r}, allowed set: {list(SETTLED_BY)}")
-        if settled_by == "ruling" and not _ruling_logged(load_progress_log(store_dir), task):
-            raise RecordError(f"--settled-by ruling: no ruling is logged for task {task!r}; "
-                              f"log it first (a progress note or an escalation's resolution "
-                              f"starting \"{RULING_PREFIX}\")")
-        return {"settled_by": settled_by}
-    path = _resolve_check_path(decision, str(store_dir))
-    if path.parent.resolve() != store_dir.resolve():
-        raise RecordError(f"{path}: a decision record must be in the store it answers "
-                          f"({store_dir})")
-    data = check_record(path)
-    if data["role"] != "decision":
-        raise RecordError(f"{path}: role {data['role']!r} is not a decision record")
-    if task != data["task"]:
-        raise RecordError(f"{path}: decides task {data['task']!r}, not task {task!r}")
-    if not any(c["kind"] == "fix" for c in data["choices"]):
-        raise RecordError(f"{path}: every choice escalates; there is nothing to fix")
-    digest = _file_sha256(path)
-    _check_reroute(load_progress_log(store_dir), task, path, digest)
-    return {"decision": path.stem, "decision_sha256": digest}
-
-
-def _check_reroute(log: list[dict], task: int | str, path: Path, digest: str) -> None:
-    """A decision routes one fix. The coder may refuse it before changing
-    anything, so a rewrite can route that same fix again (fix-count counts
-    it once), but only while it is still the task's latest fix and no close
-    round has started since; a later fix needs a new decision."""
-    routed = [i for i, e in enumerate(log) if e.get("type") == "snapshot"
-              and e.get("decision") == path.stem]
-    if not routed:
-        return
-    last = routed[-1]
-    label = log[last].get("label")
-    if any(log[i].get("decision_sha256") == digest for i in routed):
-        raise RecordError(f"{path}: unchanged since it routed fix {label!r}; a further "
-                          "fix needs a new decision")
-    if any(e.get("type") == "close_round" or (e.get("type") == "snapshot" and e.get("task") == task)
-           for e in log[last + 1:]):
-        raise RecordError(f"{path}: routed fix {label!r}, and the task has moved on since; "
-                          "a later fix needs a new decision at its own cycle")
-
-
-def _ruling_logged(log: list[dict], task: int | str) -> bool:
-    """A user ruling for `task` logged since its last fix baseline: a
-    progress note on it, or the resolution of an escalation in one of its
-    decisions. An older ruling was already acted on."""
-    scopes = _task_scopes(task)
-    snapshots = [i for i, e in enumerate(log) if e.get("type") == "snapshot" and e.get("task") == task]
-    for e in log[snapshots[-1] + 1:] if snapshots else log:
-        note = str(e.get("note", "")).lower()
-        if not note.startswith(RULING_PREFIX):
-            continue
-        if e.get("type") == "progress" and e.get("task") == task:
-            return True
-        if e.get("type") == "resolution" and _scope(str(e.get("resolves", ""))) in scopes:
-            return True
-    return False
-
-
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def find_baseline(log: list[dict], tree: str, task: int | str) -> dict:
@@ -1933,55 +1830,40 @@ def find_baseline(log: list[dict], tree: str, task: int | str) -> dict:
     return matches[-1]
 
 
+def fix_round(log: list[dict], tree: str, task: int | str) -> dict:
+    """The fix-kind triage entry that routes the fix starting from `tree`:
+    the last one logged after the task's previous snapshot and before this
+    one. Every fix starts from its own snapshot, routed by the triage
+    entry before it."""
+    scoped = _scope_log(log, task)
+    at = max((i for i, e in enumerate(scoped) if e.get("type") == "snapshot"
+              and e.get("tree") == tree and e.get("task") == task), default=None)
+    if at is None:
+        raise RecordError(f"no snapshot of tree {tree!r} for task {task!r}: a fix "
+                          "baseline comes only from `ledger.py snapshot`")
+    start = max((i for i, e in enumerate(scoped[:at]) if e.get("type") == "snapshot"
+                 and e.get("task") == task), default=-1)
+    rounds = [e for e in scoped[start + 1:at] if e.get("type") == TRIAGE_ENTRY
+              and e.get("task") == task and e.get("kind") in triage_rules.FIX_KINDS]
+    if not rounds:
+        raise RecordError(f"no triage entry routes the fix from {tree!r}: run `ledger.py "
+                          "triage` and act on the step it prints before taking the snapshot")
+    return rounds[-1]
+
+
 def cmd_baseline(store_dir: Path, tree: str, task: int | str) -> None:
-    """Print how a fix baseline was routed: `decision: <path>`,
-    `settled-by: cases|ruling`, `trivial`, or `unrecorded` (a non-trivial
-    snapshot from before routes existed). A decision must be byte-for-byte
-    the one `snapshot` checked; its coverage was checked then, and later
-    records (another task's decision, a re-review) don't reopen it."""
-    entry = find_baseline(load_progress_log(store_dir), tree, task)
-    kind, value = _route(entry)
-    if kind == "decision":
-        path = store_dir / f"{value}.json"
-        if not path.is_file() or _file_sha256(path) != entry.get("decision_sha256"):
-            raise RecordError(f"{path}: missing or changed since the snapshot checked it; "
-                              "a changed decision needs `check` and a new snapshot")
-        value = str(path)
-    print(f"{kind}: {value}" if value else kind)
-
-
-def _route(entry: dict) -> tuple[str, str]:
-    """A snapshot's route as (kind, value): decision, settled-by, trivial,
-    or unrecorded (non-trivial, from before routes were logged)."""
-    if not entry.get("non_trivial"):
-        return "trivial", ""
+    """Print the round a fix baseline starts: its kind, who re-checks it,
+    the decision doc a holistic round implements, and the findings sent."""
+    entry = fix_round(load_progress_log(store_dir), tree, task)
+    print(f"round: {entry['kind']}")
+    print(f"recheck: {entry['recheck']}")
     if entry.get("decision"):
-        return "decision", entry["decision"]
-    if entry.get("settled_by"):
-        return "settled-by", entry["settled_by"]
-    return "unrecorded", ""
-
-
-def _route_text(entry: dict) -> str:
-    return " ".join(part for part in _route(entry) if part)
-
-
-def non_trivial_fix_count(log: list[dict], task: int | str) -> int:
-    """Non-trivial fix attempts dispatched for `task`: one flagged snapshot
-    each. A resumed paused fix reuses its baseline, and trivial fixes,
-    labels bounces and reviewer re-dispatches take no flagged snapshot,
-    so none of them counts. For "final" (the whole-change gate), only
-    snapshots after the last close round count."""
-    if task == "final":
-        # A close-gate remediation run reuses the store, and its whole-change
-        # gate (final-r2-* records) starts fresh, so count from the last round.
-        starts = [i for i, e in enumerate(log) if e.get("type") == "close_round"]
-        log = log[starts[-1] + 1:] if starts else log
-    fixes = [e for e in log if e.get("type") == "snapshot"
-             and e.get("task") == task and e.get("non_trivial")]
-    # A rewritten decision re-routing a fix the coder refused is one attempt.
-    decisions = {e["decision"] for e in fixes if e.get("decision")}
-    return len(decisions) + sum(1 for e in fixes if not e.get("decision"))
+        print(f"decision: {store_dir / (entry['decision'] + '.json')}")
+    for finding in entry["findings"]:
+        if finding["tier"] not in ("defer", "held"):
+            print(f"  [{finding['id']}] {finding['tier']}: {finding['rule']}")
+    for cid in entry.get("root_causes", []):
+        print(f"  [{cid}] holistic: root cause")
 
 
 def _git_head() -> str:
@@ -2193,7 +2075,161 @@ def check_record(path: Path) -> dict:
             if repo is not None:
                 _check_open_precedents(repo, data)
                 _check_fix_labels(repo, data)
+            if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
+                _check_fix_round(path, data, repo)
     return data
+
+
+TEST_FILE_RE = re.compile(r"(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.(py|rs)$|(^|/)tests\.rs$")
+ASSERTION_RE = re.compile(r"\bassert\w*!?\s*[\s(]|\bassert_(?:eq|ne)!|pytest\.raises|\bexpect\(")
+SKIP_MARKER_RE = re.compile(r"pytest\.mark\.(?:skip|xfail)|pytest\.skip\(|unittest\.skip|#\[ignore\]")
+TEST_FUNCTION_RE = re.compile(r"^\s*(?:async\s+)?def\s+test_\w*|^\s*#\[test\]")
+
+
+def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
+    """A finished fix implements the round triage sent it: it covers each
+    sent finding once, maps its rows and decision cases to hunks it really
+    changed, writes failing tests first in a patch or ruling round, and
+    justifies edits to tests that already existed."""
+    entry = fix_round(load_progress_log(path.parent), data["baseline"], data["task"])
+    sent = [f for f in entry["findings"] if f["tier"] not in ("defer", "held")]
+    if entry["kind"] in ("patch", "polish", "ruling"):
+        _check_coverage(data, sent)
+    if entry["kind"] in ("patch", "ruling"):
+        _check_tests_first(data, [f for f in sent if f["tier"] != "note"])
+    if entry["kind"] == "holistic":
+        _check_holistic_decision(path, data, entry)
+    if repo is None:
+        return
+    # Tasks in a stage share the working tree: read only this task's files,
+    # its footprint as well as what it says it changed.
+    footprint = task_footprint(load_progress_log(path.parent), data["task"]) or set()
+    paths = sorted(footprint | {f for f in data.get("changed_files", []) if _non_empty_str(f)})
+    diff = diff_trees(repo, data["baseline"], snapshot_tree(repo), paths)
+    changed = changed_lines(diff)
+    for sweep in data.get("sweeps", []):
+        for row in sweep["rows"]:
+            if "hunk" in row and not site_touches(row["hunk"], changed):
+                raise RecordError(f"{path}: row {row['site']} claims hunk {row['hunk']}, which "
+                                  "the fix didn't change; fix it or list it already_correct")
+    for row in data.get("decision_rows", []):
+        if not site_touches(row["hunk"], changed):
+            raise RecordError(f"{path}: decision case {row['choice']}/{row['case']} claims hunk "
+                              f"{row['hunk']}, which the fix didn't change")
+    _check_flagged_rows(path, data, {f["id"] for f in sent})
+    for test in data.get("tests_first", []):
+        if "n/a" not in test and test["test"].split("::")[0] not in changed:
+            raise RecordError(f"{path}: tests_first names {test['test']}, which the fix diff "
+                              "doesn't touch; write the failing test as part of the fix")
+    _check_test_changes(path, data, diff)
+
+
+def _check_coverage(data: dict, sent: list[dict]) -> None:
+    """Each sent finding appears exactly once among the coder's sweeps,
+    contests, reach raises, and (notes only) skips."""
+    claims: dict[str, int] = {}
+    for sweep in data.get("sweeps", []):
+        for fid in sweep["findings"]:
+            claims[fid] = claims.get(fid, 0) + 1
+    for field_name in ("contested", "reach_raised", "notes_skipped"):
+        for item in data.get(field_name, []):
+            claims[item["finding"]] = claims.get(item["finding"], 0) + 1
+    missing = sorted(f["id"] for f in sent if f["id"] not in claims)
+    twice = sorted(f["id"] for f in sent if claims.get(f["id"], 0) > 1)
+    if missing:
+        raise RecordError(f"the round sent {', '.join(missing)}; cover each in a sweep, a "
+                          "contest, a reach raise, or (a note) notes_skipped")
+    if twice:
+        raise RecordError(f"{', '.join(twice)} covered more than once; each sent finding "
+                          "goes in exactly one place")
+    skipped = {i["finding"] for i in data.get("notes_skipped", [])}
+    not_notes = sorted(f["id"] for f in sent if f["id"] in skipped and f["tier"] != "note")
+    if not_notes:
+        raise RecordError(f"{', '.join(not_notes)} isn't a note, so it can't be skipped")
+
+
+def _check_tests_first(data: dict, serious: list[dict]) -> None:
+    covered = {t["finding"] for t in data.get("tests_first", [])}
+    contested = {c["finding"] for c in data.get("contested", [])}
+    missing = sorted(f["id"] for f in serious if f["id"] not in covered | contested)
+    if missing:
+        raise RecordError(f"tests_first: no entry for {', '.join(missing)}; write a failing "
+                          f"test first, or give an n/a category ({', '.join(TESTS_FIRST_NA)})")
+
+
+def _check_holistic_decision(path: Path, data: dict, entry: dict) -> None:
+    """A holistic fix implements this round's decision doc, which passes
+    `check`, and maps every case of every fix choice to a hunk."""
+    expected = entry.get("decision")
+    named = Path(data.get("decision", "")).stem
+    if named != expected:
+        raise RecordError(f"{path}: decision: got {data.get('decision')!r}; this holistic round "
+                          f"implements {expected}")
+    doc = check_record(path.parent / f"{expected}.json")
+    mapped = {(r["choice"], r["case"]) for r in data.get("decision_rows", [])}
+    unmapped = [f"{c_idx}/{k_idx}" for c_idx, choice in enumerate(doc["choices"])
+                if choice["kind"] == "fix" for k_idx in range(len(choice["cases"]))
+                if (c_idx, k_idx) not in mapped]
+    if unmapped:
+        raise RecordError(f"{path}: decision cases {', '.join(unmapped)} (choice/case) have no "
+                          "decision_rows entry mapping them to a hunk")
+
+
+def _check_flagged_rows(path: Path, data: dict, sent_ids: set[str]) -> None:
+    """Every site a reviewer flagged recurring or fix-introduced, on a sent
+    finding, is a row of the fix."""
+    rows = {row["site"] for sweep in data.get("sweeps", []) for row in sweep["rows"]}
+    scope = _scope(path.stem)
+    for rec in _scope_records(path.parent, scope).reviewers if scope else []:
+        flagged = {e.get("site") for flag in FLAG_FIELDS for e in rec.data.get(flag, [])}
+        field_name = FINDING_LIST_FIELD.get(rec.data["role"], "findings")
+        for fid, finding in finding_ids(rec, (field_name,)).items():
+            missing = sorted(s for s in finding["sites"] if s in flagged and s not in rows)
+            if fid in sent_ids and missing:
+                raise RecordError(f"{path}: {fid} was flagged at {', '.join(missing)}; list each "
+                                  "flagged site as a row")
+
+
+def _test_file_edits(diff: str) -> dict[str, set[str]]:
+    """For each test file that existed before the fix: the kinds of change
+    (changed, deleted, skipped) its removed assertions, removed test
+    functions, and added skip markers call for."""
+    edits: dict[str, set[str]] = {}
+    path, existed = None, False
+    for raw in diff.split("\n"):
+        if raw.startswith("--- "):
+            existed = raw[4:].strip() != "/dev/null"
+            continue
+        if raw.startswith("+++ "):
+            target = raw[4:].rstrip("\t")
+            path = target[2:] if target.startswith("b/") and TEST_FILE_RE.search(target[2:]) else None
+            continue
+        if path is None or not existed or raw.startswith(("@@", "\\")) or not raw:
+            continue
+        tag, text = raw[0], raw[1:]
+        if tag == "-" and TEST_FUNCTION_RE.search(text):
+            edits.setdefault(path, set()).add("deleted")
+        elif tag == "-" and ASSERTION_RE.search(text):
+            edits.setdefault(path, set()).add("changed")
+        elif tag == "+" and SKIP_MARKER_RE.search(text):
+            edits.setdefault(path, set()).add("skipped")
+    return edits
+
+
+def _check_test_changes(path: Path, data: dict, diff: str) -> None:
+    """Edits to tests that existed before the fix carry a test_changes entry
+    of the matching kind for that file. A removed assertion may be a change
+    or a deletion."""
+    declared: dict[str, set[str]] = {}
+    for change in data.get("test_changes", []):
+        declared.setdefault(change["test"].split("::")[0], set()).add(change["kind"])
+    for file, kinds in sorted(_test_file_edits(diff).items()):
+        have = declared.get(file, set())
+        for kind in sorted(kinds):
+            accepted = {"changed", "deleted"} if kind == "changed" else {kind}
+            if not have & accepted:
+                raise RecordError(f"{path}: {file} has a {kind} test the fix didn't justify; add "
+                                  f"a test_changes entry (kind {kind}) with the reason")
 
 
 # The inline executor writes its own coder record and runs on whatever
@@ -2291,9 +2327,9 @@ def _check_fix_labels(repo: Path, data: dict) -> None:
 def _check_fix_baseline(path: Path, data: dict) -> None:
     """A finished fix names the snapshot it started from, and that snapshot
     is its own: a fix that reused an earlier cycle's baseline (or had none)
-    would go uncounted by `fix-count`, and the two-fix cap would never
-    fire. A fix resumed after needs_context or blocked keeps its cycle, so
-    its baseline is still its own."""
+    would have no triage entry of its own routing it, and its diff would
+    mix in the earlier fix. A fix resumed after needs_context or blocked
+    keeps its cycle, so its baseline is still its own."""
     if data["cycle"] < 2 or data["status"] not in DIAGNOSIS_STATUSES:
         return
     baseline = data.get("baseline")
@@ -2561,6 +2597,10 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         recheck_records = _recheck_records(result, reviewers)
         entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
                  **result, "recheck_records": recheck_records, "at": _now()}
+        if result["kind"] == "holistic":
+            # The decision doc for the coder's upcoming fix cycle.
+            cycle = (coder.data["cycle"] if coder else 0) + 1
+            entry["decision"] = f"{scope_prefix(log, task)}-decision-c{cycle}"
         _append_progress(store_dir, entry)
     print(_render_triage(entry, filed_notes))
 
@@ -2864,8 +2904,6 @@ def cmd_stats(store_dir: Path) -> None:
     history = load_history(store_dir)
     if not history:
         print("No history yet: records are logged when `check` passes.")
-    _print_fix_routes(load_progress_log(store_dir))
-    if not history:
         return
     history.sort(key=lambda e: (_task_sort_key(e.get("task")), e.get("cycle") or 0,
                                 e.get("record") or ""))
@@ -2883,16 +2921,6 @@ def cmd_stats(store_dir: Path) -> None:
         flagged = [f"{e.get('record')} c{e.get('cycle') or '?'} ({e[signal]})"
                    for e in history if e.get(signal)]
         print(f"{signal}: {', '.join(flagged) if flagged else 'none'}")
-
-
-def _print_fix_routes(log: list[dict]) -> None:
-    """Each fix baseline and its route, so a non-trivial fix that skipped
-    the decision step shows up without reading the transcript."""
-    snapshots = [e for e in log if e.get("type") == "snapshot"]
-    if snapshots:
-        print("fixes:")
-    for entry in snapshots:
-        print(f"  task {entry.get('task')} {entry.get('label', '')}: {_route_text(entry)}")
 
 
 def _positive_int(value: str) -> int:
@@ -3016,20 +3044,10 @@ def build_parser() -> argparse.ArgumentParser:
                                       "print its tree id (real index untouched)")
     p_snapshot.add_argument("--task", required=True, type=_task_arg)
     p_snapshot.add_argument("--label", required=True)
-    p_snapshot.add_argument("--non-trivial", action="store_true",
-                            help="the fix batch has a non-trivial finding; counted by "
-                                 "fix-count, and needs --decision or --settled-by")
-    route = p_snapshot.add_mutually_exclusive_group()
-    route.add_argument("--decision", metavar="RECORD",
-                       help="the decision record the fix implements; must pass check")
-    route.add_argument("--settled-by", choices=SETTLED_BY,
-                       help="why no decision record is owed: the brief's Cases: line "
-                            "settles the batch, or the user ruled on it")
 
     p_baseline = sub.add_parser("baseline", parents=[store_parent],
-                                 help="print how a fix baseline was routed (decision "
-                                      "record path, settled-by, trivial), re-checking "
-                                      "its decision record")
+                                 help="print the round a fix baseline starts: its kind, "
+                                      "who re-checks it, its decision doc, its findings")
     p_baseline.add_argument("tree")
     p_baseline.add_argument("--task", required=True, type=_task_arg)
 
@@ -3044,11 +3062,6 @@ def build_parser() -> argparse.ArgumentParser:
                               help="derive the task's next step from its review, log it, file "
                                    "its deferrals, and print the dispatch to make")
     p_triage.add_argument("--task", required=True, type=_task_arg)
-
-    p_count = sub.add_parser("fix-count", parents=[store_parent],
-                              help="print how many non-trivial fixes the task has had "
-                                   "(snapshots taken with --non-trivial)")
-    p_count.add_argument("--task", required=True, type=_task_arg)
 
     p_diff = sub.add_parser("diff-since",
                              help="show what changed since a snapshot tree, new "
@@ -3155,16 +3168,13 @@ def main() -> None:
             cmd_handle(store_dir, args.task, args.role, args.agent)
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
-            cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()),
-                         args.non_trivial, args.decision, args.settled_by)
+            cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()))
         elif args.command == "baseline":
             cmd_baseline(store_dir, args.tree, args.task)
         elif args.command == "findings":
             cmd_findings(_resolve_check_path(args.decision_path, args.store))
         elif args.command == "triage":
             cmd_triage(store_dir, args.task)
-        elif args.command == "fix-count":
-            print(non_trivial_fix_count(load_progress_log(store_dir), args.task))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":

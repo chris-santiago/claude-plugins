@@ -79,6 +79,13 @@ def _review_lite(**overrides) -> dict:
     return data
 
 
+def _triaged(store: Path, task: int | str = 1, kind: str = "patch") -> None:
+    """Log a fix-kind triage entry with nothing sent, so a later snapshot
+    starts a routed fix (for tests about something other than routing)."""
+    ledger._append_progress(store, {"type": "triage", "task": task, "kind": kind,
+                                    "recheck": "raising", "findings": []})
+
+
 def _write(store: Path, name: str, data: dict) -> Path:
     path = store / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -1667,43 +1674,6 @@ class TestFixBaseline(GitRepoTestCase):
         self.assertNotEqual(bad.returncode, 0)
         self.assertIn("ERROR: git", bad.stderr)
 
-    def test_fix_count_counts_only_non_trivial_snapshots_for_the_task(self):
-        # The escalation cap is two non-trivial fix attempts; trivial fixes,
-        # labels bounces and reviewer re-dispatches take no flagged snapshot.
-        store = self.repo / ".sdd"
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(store, 4, "pre-fix c2", "t1", True, settled_by="cases")
-            ledger.cmd_snapshot(store, 4, "pre-fix c3", "t2")
-            ledger.cmd_snapshot(store, 5, "pre-fix c2", "t3", True, settled_by="cases")
-            ledger.cmd_snapshot(store, 4, "pre-fix c4", "t4", True, settled_by="cases")
-        log = ledger.load_progress_log(store)
-        self.assertEqual(ledger.non_trivial_fix_count(log, 4), 2)
-        self.assertEqual(ledger.non_trivial_fix_count(log, 6), 0)
-
-    def test_fix_count_for_final_restarts_after_a_close_round(self):
-        # Round 2's whole-change gate (final-r2-* records) must not inherit
-        # round 1's non-trivial fixes, just as its records don't.
-        store = self.repo / ".sdd"
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t1", True, settled_by="cases")
-            ledger.cmd_snapshot(store, "final", "pre-fix c3", "t2", True, settled_by="cases")
-            ledger.cmd_close_round(store, "round 1", "abc", 1)
-            ledger.cmd_snapshot(store, "final", "pre-fix c2", "t3", True, settled_by="cases")
-            ledger.cmd_snapshot(store, 7, "pre-fix c2", "t4", True, settled_by="cases")
-        log = ledger.load_progress_log(store)
-        self.assertEqual(ledger.non_trivial_fix_count(log, "final"), 1)
-        self.assertEqual(ledger.non_trivial_fix_count(log, 7), 1)
-
-    def test_cli_fix_count_prints_the_count(self):
-        run = lambda *a: subprocess.run(  # noqa: E731
-            [sys.executable, str(LEDGER_PY), *a, "--store", str(self.repo / ".sdd")],
-            cwd=self.repo, capture_output=True, text=True)
-        snap = run("snapshot", "--task", "2", "--label", "pre-fix c2", "--non-trivial",
-                   "--settled-by", "cases")
-        self.assertEqual(snap.returncode, 0, snap.stderr)
-        count = run("fix-count", "--task", "2")
-        self.assertEqual((count.returncode, count.stdout.strip()), (0, "1"), count.stderr)
-
     def test_cmd_snapshot_records_a_typed_entry_and_prints_the_tree(self):
         store = self.repo / ".sdd"
         buf = io.StringIO()
@@ -1879,40 +1849,6 @@ class TestDecisionContext(DecisionStoreTestCase):
         concern_id = _entry_id("task-2-python-coder", "concerns", concern)
         self.assertCheckFails(self._complete(choices=[
             _fix_choice([self.spec_id, self.quality_id, concern_id])]), "no such finding")
-
-    def test_a_root_cause_decision_before_review_routes_a_fix(self):
-        concern = "root cause: src/x.py:1 x"
-        _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
-        concern_id = _entry_id("task-3-python-coder", "concerns", concern)
-        self._check(_decision([concern_id], task=3, reviewer_records=[]),
-                    name="task-3-decision-c2.json")
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t", True,
-                                decision="task-3-decision-c2.json")
-        self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 3), 1)
-
-    def test_a_refused_root_cause_decision_reroutes_while_the_concern_is_relisted(self):
-        concern = "root cause: src/x.py:1 x"
-        _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
-        concern_id = _entry_id("task-3-python-coder", "concerns", concern)
-        data = _decision([concern_id], task=3, reviewer_records=[])
-        _write(self.store, "task-3-decision-c2.json", data)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t", True, decision="task-3-decision-c2.json")
-        _write(self.store, "task-3-decision-c2.json",
-               {**data, "choices": [_fix_choice([concern_id], choice="revised")]})
-        refusal = "refused: c names no site"
-        _write(self.store, "task-3-python-coder.json",
-               _coder(task=3, cycle=2, status="needs_context", concerns=[refusal]))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t2", True,
-                                decision="task-3-decision-c2.json")
-        self.assertIn("no such finding", str(ctx.exception))
-        _write(self.store, "task-3-python-coder.json",
-               _coder(task=3, cycle=2, status="needs_context", concerns=[concern, refusal]))
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", "t2", True,
-                                decision="task-3-decision-c2.json")
 
     def test_every_reviewer_record_for_the_task_is_listed(self):
         self.assertCheckFails(self._complete(reviewer_records=["task-1-spec-reviewer"]),
@@ -2124,32 +2060,6 @@ class TestEscalations(DecisionStoreTestCase):
         ledger.cmd_resolve(self.store, item.id, "user ruling: waive it")
         self.assertEqual(self._open_escalations(), [])
 
-    def test_a_ruling_route_needs_a_logged_ruling(self):
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
-        self.assertIn("no ruling is logged", str(ctx.exception))
-        ledger.cmd_append(self.store, "progress", 2, "user ruling: other task")
-        with self.assertRaises(ledger.RecordError):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
-
-    def test_a_ruling_counts_only_until_the_next_fix(self):
-        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c4", "t2", True, settled_by="ruling")
-        self.assertIn("no ruling is logged", str(ctx.exception))
-
-    def test_a_resolved_escalation_or_progress_note_is_a_ruling(self):
-        self._check(self._escalating())
-        (item,) = self._open_escalations()
-        ledger.cmd_resolve(self.store, item.id, "user ruling: fix it with a fixture")
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t", True, settled_by="ruling")
-            ledger.cmd_append(self.store, "progress", "final", "User ruling: fix")
-            ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t2", True,
-                                settled_by="ruling")
-
     def test_completion_waits_on_the_escalations_resolution(self):
         self._check(self._escalating())
         (item,) = self._open_escalations()
@@ -2175,217 +2085,6 @@ class TestEscalations(DecisionStoreTestCase):
                _decision(["x"], task="final", cycle=1, status="escalated", choices=[escalate]))
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_append(self.store, "complete", "final", "shipped")
-
-
-class TestSnapshotRoutes(DecisionStoreTestCase):
-    """A non-trivial fix baseline names its route; a decision route must
-    pass `check` for the snapshot's task."""
-
-    def _snapshot(self, task=1, **kwargs) -> str:
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            ledger.cmd_snapshot(self.store, task, "pre-fix c2", "tree1", **kwargs)
-        return out.getvalue()
-
-    def test_a_non_trivial_fix_needs_a_route(self):
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True)
-        self.assertIn("--decision", str(ctx.exception))
-        with self.assertRaises(ledger.RecordError):
-            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json",
-                           settled_by="cases")
-        self.assertEqual(ledger.load_progress_log(self.store), [])
-
-    def test_a_route_without_non_trivial_is_refused(self):
-        with self.assertRaises(ledger.RecordError):
-            self._snapshot(settled_by="cases")
-
-    def test_a_checked_decision_is_logged_and_counted(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        log = ledger.load_progress_log(self.store)
-        self.assertEqual(log[-1]["decision"], "task-1-decision-c2")
-        self.assertEqual(ledger.non_trivial_fix_count(log, 1), 1)
-
-    def test_a_failing_decision_logs_nothing(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete(excluded=[]))
-        with self.assertRaises(ledger.RecordError):
-            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        self.assertEqual(ledger.load_progress_log(self.store), [])
-
-    def test_a_rewrite_cannot_route_a_later_fix(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t3", True, settled_by="cases")
-        _write(self.store, "task-1-decision-c2.json", self._complete(
-            choices=[_fix_choice([self.spec_id, self.quality_id], choice="revised")]))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        self.assertIn("moved on", str(ctx.exception))
-
-    def test_a_rewrite_cannot_route_across_a_close_round(self):
-        lite = _review_lite(task="final", status="block", findings=[_QUALITY_FINDING])
-        _write(self.store, "final-python-review-lite.json", lite)
-        lite_id = _entry_id("final-python-review-lite", "findings", _QUALITY_FINDING)
-        data = _decision([lite_id], task="final", reviewer_records=["final-python-review-lite"])
-        _write(self.store, "final-decision-c2.json", data)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t", True,
-                                decision="final-decision-c2.json")
-            ledger.cmd_close_round(self.store, "round 1", "abc", 1)
-        _write(self.store, "final-decision-c2.json",
-               {**data, "choices": [_fix_choice([lite_id], choice="revised")]})
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "t2", True,
-                                decision="final-decision-c2.json")
-        self.assertIn("moved on", str(ctx.exception))
-
-    def test_a_decision_routes_only_its_own_task(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(task=2, non_trivial=True, decision="task-1-decision-c2.json")
-        self.assertIn("not task 2", str(ctx.exception))
-
-    def test_a_rewritten_decision_reroutes_the_fix_and_counts_once(self):
-        # The coder refused the first version; the rewrite routes the same fix.
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        _write(self.store, "task-1-decision-c2.json", self._complete(
-            choices=[_fix_choice([self.spec_id, self.quality_id], choice="revised")]))
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        log = ledger.load_progress_log(self.store)
-        self.assertEqual(ledger.non_trivial_fix_count(log, 1), 1)
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            ledger.cmd_baseline(self.store, "tree1", 1)
-        self.assertTrue(out.getvalue().startswith("decision: "))
-
-    def test_a_decision_outside_the_store_is_refused(self):
-        with tempfile.TemporaryDirectory() as elsewhere:
-            path = _write(Path(elsewhere), "task-1-decision-c2.json", self._complete())
-            with self.assertRaises(ledger.RecordError) as ctx:
-                self._snapshot(non_trivial=True, decision=str(path))
-            self.assertIn("must be in the store", str(ctx.exception))
-
-    def test_a_non_decision_record_is_refused(self):
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True, decision="task-1-spec-reviewer.json")
-        self.assertIn("not a decision record", str(ctx.exception))
-
-    def test_settled_by_is_logged(self):
-        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
-        self._snapshot(non_trivial=True, settled_by="ruling")
-        self.assertEqual(ledger.load_progress_log(self.store)[-1]["settled_by"], "ruling")
-
-    def test_baseline_reports_each_route(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "t-dec", True,
-                                decision="task-1-decision-c2.json")
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c3", "t-cases", True, settled_by="cases")
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c4", "t-trivial")
-        ledger._append_jsonl(self.store / ledger.PROGRESS_FILENAME, {
-            "type": "snapshot", "task": 1, "label": "old", "tree": "t-old", "non_trivial": True})
-        for tree, expected in (("t-dec", f"decision: {self.store / 'task-1-decision-c2.json'}"),
-                               ("t-cases", "settled-by: cases"), ("t-trivial", "trivial"),
-                               ("t-old", "unrecorded")):
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                ledger.cmd_baseline(self.store, tree, 1)
-            self.assertEqual(out.getvalue().strip(), expected)
-
-    def test_baseline_survives_later_records(self):
-        # A parallel task's decision and a re-review land after the
-        # snapshot; the routed decision was checked then and stays valid.
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        _write(self.store, "task-2-spec-reviewer.json",
-               _spec_reviewer(task=2, status="issues", issues=[_SPEC_ISSUE]))
-        spec2 = _entry_id("task-2-spec-reviewer", "issues", _SPEC_ISSUE)
-        later = _write(self.store, "task-2-decision-c2.json", _decision(
-            [spec2], task=2, reviewer_records=["task-2-spec-reviewer"],
-            reconciled=[{"decision": "task-1-decision-c2", "relation": "disjoint"}]))
-        ledger.check_record(later)
-        _write(self.store, "task-1-spec-reviewer.json",
-               _spec_reviewer(status="issues", issues=[{**_SPEC_ISSUE, "claim": "new"}]))
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            ledger.cmd_baseline(self.store, "tree1", 1)
-        self.assertTrue(out.getvalue().startswith("decision: "))
-
-    def test_baseline_refuses_a_decision_changed_after_the_snapshot(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        _write(self.store, "task-1-decision-c2.json", self._complete(excluded=[]))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_baseline(self.store, "tree1", 1)
-        self.assertIn("changed since the snapshot", str(ctx.exception))
-        (self.store / "task-1-decision-c2.json").unlink()
-        with self.assertRaises(ledger.RecordError):
-            ledger.cmd_baseline(self.store, "tree1", 1)
-
-    def test_a_decision_routes_one_fix(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        self.assertIn("needs a new decision", str(ctx.exception))
-
-    def test_an_all_escalation_decision_routes_no_fix(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete(
-            status="escalated", choices=[{"kind": "escalate", "why": "w", "evidence": "e",
-                                          "findings": [self.spec_id, self.quality_id]}]))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True, decision="task-1-decision-c2.json")
-        self.assertIn("nothing to fix", str(ctx.exception))
-
-    def test_baseline_matches_the_task_and_takes_the_latest_snapshot(self):
-        # Parallel tasks share a working tree, so one tree id can be two
-        # tasks' baselines; a re-taken baseline supersedes the earlier one.
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="cases")
-            ledger.cmd_snapshot(self.store, 2, "pre-fix c2", "shared")
-            ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it")
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "shared", True, settled_by="ruling")
-        for task, expected in ((1, "settled-by: ruling"), (2, "trivial")):
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                ledger.cmd_baseline(self.store, "shared", task)
-            self.assertEqual(out.getvalue().strip(), expected)
-
-    def test_baseline_refuses_an_unknown_tree(self):
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_baseline(self.store, "nope", 1)
-        self.assertIn("ledger.py snapshot", str(ctx.exception))
-
-    def test_stats_lists_each_fix_route(self):
-        self._snapshot(non_trivial=True, settled_by="cases")
-        ledger._append_jsonl(self.store / ledger.PROGRESS_FILENAME, {
-            "type": "snapshot", "task": 1, "label": "pre-fix c3", "tree": "t", "non_trivial": True})
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            ledger.cmd_stats(self.store)
-        self.assertIn("task 1 pre-fix c2: settled-by cases", out.getvalue())
-        self.assertIn("task 1 pre-fix c3: unrecorded", out.getvalue())
-
-    def test_cli_snapshot_with_a_decision_then_baseline(self):
-        _write(self.store, "task-1-decision-c2.json", self._complete())
-        run = lambda *a: subprocess.run(  # noqa: E731
-            [sys.executable, str(LEDGER_PY), *a, "--store", str(self.store)],
-            cwd=self.repo, capture_output=True, text=True)
-        refused = run("snapshot", "--task", "1", "--label", "pre-fix c2", "--non-trivial")
-        self.assertEqual(refused.returncode, 1)
-        self.assertIn("--decision", refused.stderr)
-        snap = run("snapshot", "--task", "1", "--label", "pre-fix c2", "--non-trivial",
-                   "--decision", "task-1-decision-c2.json")
-        self.assertEqual(snap.returncode, 0, snap.stderr)
-        base = run("baseline", snap.stdout.strip(), "--task", "1")
-        self.assertEqual(base.returncode, 0, base.stderr)
-        self.assertTrue(base.stdout.startswith("decision: "))
-        findings = run("findings", "task-1-decision-c3.json")
-        self.assertEqual(findings.returncode, 0, findings.stderr)
-        self.assertIn(self.spec_id, findings.stdout)
 
 
 # --- process labels (review-process narrative in code) ---
@@ -2899,6 +2598,229 @@ class TestContestAnswersAndReopens(TriageStoreTestCase):
             ledger.cmd_check(str(self.spec(_finding(reopens="task-3-spec-reviewer#issues[00000000]"))))
 
 
+class TestFixChecks(TriageStoreTestCase):
+    """A finished fix starts from a triaged snapshot, covers what it was
+    sent, maps its rows to real hunks, writes failing tests first, and
+    justifies any edit to a test that already existed."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests" / "test_a.py").write_text(
+            "def helper():\n    return 1\n\n\ndef test_x():\n    assert x == 2\n", encoding="utf-8")
+        self._git("add", "tests/test_a.py")
+        self._git("commit", "-qm", "tests")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "tests/test_a.py"])
+        self.issue = _finding(sites=["a.py:1"])
+
+    def review(self, *issues: dict, **extra) -> list[str]:
+        issues = issues or (self.issue,)
+        self.spec(*issues, **extra)
+        self.triage()
+        return [self.spec_id(i) for i in issues]
+
+    def snapshot(self) -> str:
+        tree = ledger.snapshot_tree(self.repo)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
+        return tree
+
+    def edit(self, a_py: str = "x = 1\ny = 2\n", test_a: str | None = None) -> None:
+        (self.repo / "a.py").write_text(a_py, encoding="utf-8")
+        if test_a is not None:
+            (self.repo / "tests" / "test_a.py").write_text(test_a, encoding="utf-8")
+
+    def fix(self, tree: str, sent: list[str], **overrides) -> None:
+        fields = dict(
+            cycle=2, baseline=tree, changed_files=["a.py"],
+            diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+            hunk_map=[{"site": "a.py:2", "implements": "the guard"}], consumers_checked=[],
+            sweeps=[{"findings": sent, "rule": "size must be positive",
+                     "rows": [{"site": "a.py:2", "hunk": "a.py:2"}],
+                     "searched": {"command": "rg size", "result": "1 match"}}],
+            tests_first=[{"finding": i, "n/a": "existing", "reason": "the round-trip test fails",
+                          "test": "tests/test_a.py::test_x"} for i in sent])
+        fields.update(overrides)
+        ledger.cmd_check(str(self.coder(**fields)))
+
+    def test_a_triaged_fix_that_covers_its_findings_passes(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        self.fix(tree, sent)
+
+    def test_a_fix_with_no_triage_before_its_snapshot_is_refused(self):
+        self.spec(self.issue)
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, [self.spec_id(self.issue)])
+        self.assertIn("triage", str(ctx.exception))
+
+    def test_a_sent_finding_left_uncovered_is_refused_naming_it(self):
+        other = _finding(sites=["a.py:1"], rule="other rule")
+        sent = self.review(self.issue, other)
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent[:1], tests_first=[
+                {"finding": i, "n/a": "existing", "reason": "r", "test": "tests/test_a.py::test_x"}
+                for i in sent])
+        self.assertIn(sent[1], str(ctx.exception))
+
+    def test_a_finding_covered_twice_is_refused(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError):
+            self.fix(tree, sent, contested=[{"finding": sent[0], "reason": "wrong", "evidence": "e"}])
+
+    def test_a_row_claiming_a_hunk_the_fix_never_changed_is_refused(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent, sweeps=[{"findings": sent, "rule": "r",
+                                          "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                                          "searched": {"command": "rg", "result": "1"}}])
+        self.assertIn("a.py:1", str(ctx.exception))
+
+    def test_a_recurring_site_must_be_a_row(self):
+        issue = _finding(sites=["a.py:1", "a.py:2"])
+        sent = self.review(issue, recurring=[{"site": "a.py:1", "why": "same rule as c1"}])
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent)
+        self.assertIn("a.py:1", str(ctx.exception))
+
+    def test_a_patch_finding_without_tests_first_is_refused(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent, tests_first=[])
+        self.assertIn("tests_first", str(ctx.exception))
+
+    def test_a_written_test_must_be_in_the_fix_diff(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError):
+            self.fix(tree, sent, tests_first=[{"finding": sent[0], "test": "tests/test_b.py::test_y",
+                                               "command": "pytest", "failed_output": "AssertionError"}])
+
+    def test_an_edited_assertion_in_an_existing_test_needs_a_changed_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit(test_a="def helper():\n    return 1\n\n\ndef test_x():\n    assert x == 3\n")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+        self.assertIn("tests/test_a.py", str(ctx.exception))
+        self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"], test_changes=[
+            {"kind": "changed", "test": "tests/test_a.py::test_x", "old": "assert x == 2",
+             "new": "assert x == 3", "reason": "the brief's row sets 3"}])
+
+    def test_a_deleted_or_skipped_test_needs_its_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        for test_a, kind in (("def helper():\n    return 1\n", "deleted"),
+                             ("def helper():\n    return 1\n\n\n@pytest.mark.skip\n"
+                              "def test_x():\n    assert x == 2\n", "skipped")):
+            with self.subTest(kind=kind):
+                self.edit(test_a=test_a)
+                with self.assertRaises(ledger.RecordError):
+                    self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+                self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"], test_changes=[
+                    {"kind": kind, "test": "tests/test_a.py::test_x", "old": "test_x", "new": "",
+                     "reason": "the behavior it pinned was removed by the ruling"}])
+
+    def test_a_helper_edit_or_a_new_test_file_needs_no_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit(test_a="def helper():\n    return 2\n\n\ndef test_x():\n    assert x == 2\n")
+        (self.repo / "tests" / "test_new.py").write_text(
+            "import pytest\n\n\n@pytest.mark.xfail\ndef test_n():\n    assert 0 == 0\n")
+        self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py", "tests/test_new.py"])
+
+    def test_deleting_a_test_that_asserts_through_a_helper_needs_an_entry(self):
+        (self.repo / "tests" / "test_a.py").write_text(
+            "def helper():\n    return 1\n\n\ndef test_x():\n    assert x == 2\n\n\n"
+            "def test_y():\n    check_round_trip()\n", encoding="utf-8")
+        self._git("commit", "-qam", "add test_y")
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit(test_a="def helper():\n    return 1\n\n\ndef test_x():\n    assert x == 2\n")
+        with self.assertRaises(ledger.RecordError):
+            self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+
+    def test_baseline_prints_the_round_its_findings_and_errors_untriaged(self):
+        sent = self.review()
+        tree = self.snapshot()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, tree, 3)
+        for expected in ("round: patch", "recheck: raising", sent[0]):
+            self.assertIn(expected, out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c3", "tree-b")
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_baseline(self.store, "tree-b", 3)
+
+
+class TestHolisticFix(TriageStoreTestCase):
+    def test_a_holistic_fix_implements_this_rounds_decision_case_by_case(self):
+        issue = _finding(sites=["a.py:1"], reach="contract")
+        self.coder()  # the task's first attempt, cycle 1
+        self.spec(issue)
+        self.triage()
+        entry = self.entries()[-1]
+        self.assertEqual((entry["kind"], entry["decision"]), ("holistic", "task-3-decision-c2"))
+        fid = self.spec_id(issue)
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, reviewer_records=["task-3-spec-reviewer"],
+            choices=[_fix_choice([fid])]))
+        tree = ledger.snapshot_tree(self.repo)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
+        (self.repo / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+        fields = dict(cycle=2, baseline=tree, changed_files=["a.py"],
+                      diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+                      hunk_map=[{"site": "a.py:2", "implements": "choice 0"}], consumers_checked=[])
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(self.coder(decision="task-3-decision-c2", **fields)))
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(self.coder(decision="task-3-decision-c1", **fields,
+                                            decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}])))
+        ledger.cmd_check(str(self.coder(decision="task-3-decision-c2", **fields,
+                                        decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}])))
+
+
+class TestPlainSnapshot(LedgerTestCase):
+    def test_a_snapshot_records_task_label_and_tree_only(self):
+        ledger.ensure_store(self.store)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 4, "pre-fix c2", "deadbeef")
+        [entry] = ledger.load_progress_log(self.store)
+        self.assertEqual(entry, {"type": "snapshot", "task": 4, "label": "pre-fix c2",
+                                 "tree": "deadbeef"})
+
+    def test_the_removed_route_flags_and_command_are_rejected(self):
+        flag = "--" + "non" + "-trivial"
+        command = "fix" + "-count"
+        for argv in (["snapshot", "--task", "1", "--label", "x", flag], [command, "--task", "1"]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    ledger.build_parser().parse_args(argv)
+
+    def test_a_log_with_old_route_fields_still_renders(self):
+        ledger.ensure_store(self.store)
+        legacy = {"type": "snapshot", "task": 2, "label": "pre-fix c2", "tree": "t",
+                  "non" + "_trivial": True, "decision": "task-2-decision-c2"}
+        (self.store / ledger.PROGRESS_FILENAME).write_text(json.dumps(legacy) + "\n")
+        self.assertIn("pre-fix c2", ledger.render_store_markdown([], ledger.load_progress_log(self.store)))
+
+
 class TestCoderStoreChecks(GitRepoTestCase):
     """Checks a coder record gets only inside a store: deferrals stay out of
     the task's footprint, a fix's added lines carry no process labels, and
@@ -2949,6 +2871,7 @@ class TestCoderStoreChecks(GitRepoTestCase):
 
     def _fix_with(self, added: str, **fields) -> None:
         tree = ledger.snapshot_tree(self.repo)
+        _triaged(self.store)
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, 1, "pre-fix c2", tree)
         (self.repo / "a.py").write_text(f"x = 1\n{added}\n", encoding="utf-8")
@@ -2984,6 +2907,7 @@ class TestCoderStoreChecks(GitRepoTestCase):
 class TestStoreChecksOutsideGit(LedgerTestCase):
     def test_a_store_outside_a_work_tree_skips_the_label_scan(self):
         ledger.ensure_store(self.store)
+        _triaged(self.store)
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "tree-a")
         ledger.cmd_check(str(_write(self.store, "task-1-python-coder.json", _coder(
@@ -3001,6 +2925,7 @@ class TestFixBaselineIsItsOwn(LedgerTestCase):
         ledger.ensure_store(self.store)
 
     def _snapshot(self, tree: str, task: int | str = 1) -> None:
+        _triaged(self.store, task)
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, task, f"pre-fix {tree}", tree)
 
@@ -3065,63 +2990,6 @@ class TestFixBaselineIsItsOwn(LedgerTestCase):
     def test_an_empty_baseline_is_malformed_at_load(self):
         self._fix(2, "  ")
         self.assertFalse(ledger.load_records(self.store)[0].ok)
-
-
-class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
-    def setUp(self):
-        super().setUp()
-        ledger.ensure_store(self.store)
-
-    def _snapshot(self, **kwargs) -> None:
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "tree-a", **kwargs)
-
-    def test_a_trivial_snapshot_is_refused_after_a_flagged_review(self):
-        for field_name in ("recurring", "introduced_by_fix"):
-            with self.subTest(field=field_name):
-                _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-                    status="issues", issues=[_finding()], **{field_name: [{"site": "a.py:1", "why": "w"}]}))
-                with self.assertRaises(ledger.RecordError) as ctx:
-                    self._snapshot()
-                self.assertIn("task-1-spec-reviewer", str(ctx.exception))
-                self.assertEqual(ledger.load_progress_log(self.store), [])
-
-    def test_a_routed_non_trivial_snapshot_proceeds_and_counts(self):
-        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
-        ledger.cmd_append(self.store, "progress", 1, "user ruling: delete, don't reword")
-        self._snapshot(non_trivial=True, settled_by="ruling")
-        self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 1), 1)
-
-    def test_every_reviewer_role_and_the_final_scope_are_checked(self):
-        flagged = [{"site": "a.py:1", "why": "w"}]
-        quality = {"schema": 2, "agent": "python-quality-reviewer", "role": "quality-reviewer",
-                   "task": 1, "status": "issues", "findings": [_finding()], "recurring": [],
-                   "introduced_by_fix": flagged}
-        _write(self.store, "task-1-python-quality-reviewer.json", quality)
-        with self.assertRaises(ledger.RecordError):
-            self._snapshot()
-        _write(self.store, "final-spec-reviewer.json", _spec_reviewer(
-            task="final", status="issues", issues=[_finding()], recurring=flagged))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            with contextlib.redirect_stdout(io.StringIO()):
-                ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "tree-f")
-        self.assertIn("final-spec-reviewer", str(ctx.exception))
-
-    def test_the_cases_line_cannot_settle_a_flagged_fix(self):
-        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self._snapshot(non_trivial=True, settled_by="cases")
-        self.assertIn("--settled-by ruling", str(ctx.exception))
-        self.assertEqual(ledger.load_progress_log(self.store), [])
-
-    def test_clean_or_other_task_reviews_allow_a_trivial_snapshot(self):
-        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(status="issues", issues=[_finding()]))
-        _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
-            task=2, status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
-        self._snapshot()
-        self.assertEqual(len(ledger.load_progress_log(self.store)), 1)
 
 
 # --- CLI end-to-end (subprocess) ---
