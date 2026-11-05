@@ -8,6 +8,22 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-05 — SDD's mechanical rules move into the scripts
+
+Several of SDD's rules were deterministic decisions the orchestrator carried out by reading prose: take a snapshot after triage and re-send it on a resume, recognize a stale store or a close-gate remediation run from the log, stage exactly the task's files, gate, commit and append the completion, and build a dozen record and report names by convention. Each was a place to slip. They are now commands, and the prose that described them is gone.
+
+### Added
+- **`ledger.py commit`.** One command takes a ready task from staging to a completed commit: the `ready` blockers, a check that the coder changed no file outside the task's recorded footprint, staging exactly that footprint, the gate, `git commit` of those files alone with the orchestrator's message verbatim, and the completion entry. It stops at the first failure and touches nothing before the commit; it never undoes one. Files another task staged stay staged and out of the commit. At `final`, a finished whole-change fix is committed for its re-check without completing the scope.
+- **`ledger.py path`.** Prints every record, report and brief path by scope (a task, the whole-change gate, a close round's fix, a ruled fix, or the close-round gates' reports), so no skill builds a name.
+- **A verdict on the store.** `task_brief.py` records each plan it builds briefs from, and `run-state --plan` opens with `fresh`, `resume`, `remediation`, `finished`, `foreign` or `ambiguous` and the next action. The stale-store and remediation-recognition rules are now this table, in a new `store_state.py` of pure functions.
+
+### Changed
+- **Triage takes the fix baseline.** A fix step snapshots the working tree in the same step and prints `Fix baseline` and `Task files` for the dispatch. Re-running `triage` while that fix is unfinished reprints it instead of starting another round, which also closes a gap where a paused coder's rewritten record could cost the task a round.
+- **`gate` stages the footprint itself**, and at `final` the footprint adds the files the whole-change fix's coder changed. `commit` skips a gate that already passed on the same files.
+- **Report names are uniform**: `<scope>-<agent>-report.md` for coders and reviewers, and `gate-<agent>-report.md` for the design, intent and mutation reports, which keep one path across close rounds. `clear` removes the new names and the old ones.
+- **A remediation note's fields are checked** before `run-state` repeats them as instructions: the plan must be a plain `.md` path and the front-end a known skill.
+- SDD, verification-before-completion, executing-plans and the reference docs call these commands instead of describing the steps.
+
 ## [0.13.0] - 2026-11-05 — Leaner contracts, verdicts by path
 
 The biggest skills and agent contracts had grown by accretion: shared protocol text was copied across files and drifted, rules were restated in several places, and every per-task reviewer returned its full verdict into the orchestrator's context although triage reads only the typed record. This release cuts the words without dropping a rule, sends reviewer verdicts by path, retires a field nothing reads, and adds a test that keeps the shared copies identical.
