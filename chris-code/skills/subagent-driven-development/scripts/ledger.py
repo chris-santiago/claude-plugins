@@ -117,13 +117,15 @@ STATUS_ENUMS = {
     "review-lite": {"clean", "block", "escalate"},
     # A per-task decision: `escalated` when any finding goes to the user.
     "decision": {"decided", "escalated"},
+    # The scripted commit gate (labels, lint, the task's Verify command).
+    "gate": {"pass", "fail"},
 }
 # Derived, never restated: a role added to STATUS_ENUMS alone (or vice
 # versa) would turn `check`'s corrective RecordError into a raw KeyError
 # at the STATUS_ENUMS[role] lookup below.
 VALID_ROLES = frozenset(STATUS_ENUMS)
 CODER_OPEN_STATUSES = {"blocked", "needs_context"}
-REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate"}
+REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate", "fail"}
 REVIEWER_ROLES = VALID_ROLES - {"coder", "decision"}
 # Roles whose records carry a validated `cycle`.
 CYCLE_ROLES = ("coder", "decision")
@@ -137,6 +139,7 @@ DECISION_LIST_FIELDS = {
     "spec-reviewer": ("cannot_verify", "recurring", "issues"),
     "quality-reviewer": ("recurring", "findings"),
     "review-lite": ("findings",),
+    "gate": ("findings",),
 }
 
 # Decision-driving list fields validated only when present (2026-10-06).
@@ -150,7 +153,7 @@ OPTIONAL_LIST_FIELDS = {
 # severity and reach alone. Spec findings live in `issues`, the rest in
 # `findings`.
 FINDING_LIST_FIELD = {"spec-reviewer": "issues", "quality-reviewer": "findings",
-                      "review-lite": "findings"}
+                      "review-lite": "findings", "gate": "findings"}
 MAX_SEVERITY = 5
 SERIOUS_SEVERITY = 3
 REACHES = ("local", "class", "contract")
@@ -1544,6 +1547,7 @@ def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> 
             _check_no_open_escalation(store_dir, task)
             if isinstance(task, int):
                 _check_task_notes_settled(load_progress_log(store_dir), task)
+            _check_gate_matches_commit(store_dir, task)
         _append_progress(store_dir,
                       {"type": entry_type, "task": task, "note": note})
 
@@ -2632,6 +2636,124 @@ def _render_triage(entry: dict, filed: list[str]) -> str:
     return "\n".join(lines)
 
 
+# --- gate: the scripted commit gate ---
+
+GATE_EXCERPT_LINES = 20
+
+
+def _gate_path(store_dir: Path, log: list[dict], task: int | str) -> Path:
+    return store_dir / f"{scope_prefix(log, task)}-gate.json"
+
+
+def _staged_scope(top: Path, files: list[str]) -> list[str]:
+    out = _git(top, "diff", "--cached", "--name-only", "--no-relative", "HEAD", "--", *files)
+    return sorted(line for line in out.splitlines() if line.strip())
+
+
+def _run_shell(top: Path, command: str) -> tuple[bool, str]:
+    """Run a gate command through the shell (Verify lines use `!` and
+    `&&`); it passes only on exit 0. The command is the plan's own Verify
+    or lint line, given on the orchestrator's command line, so it runs
+    with the same trust as typing it in the terminal."""
+    done = subprocess.run(command, shell=True, cwd=top, capture_output=True, text=True,
+                          errors="replace")
+    output = (done.stdout + done.stderr).strip().splitlines()
+    return done.returncode == 0, "\n".join(output[-GATE_EXCERPT_LINES:])
+
+
+def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> int:
+    """Run labels on the staged added lines of the scope's files, then lint,
+    then the task's Verify command; write the gate record and return the
+    exit code (0 on pass, 1 on fail). A failing test is a serious local
+    finding for triage; labels and lint failures go back to the coder."""
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        footprint = task_footprint(log, task)
+        if not footprint:
+            raise RecordError(f"task {task!r} has no recorded footprint; record it with "
+                              "`ledger.py stage` before gating it")
+        top = _store_repo(store_dir)
+        if top is None:
+            raise RecordError(f"{store_dir} isn't inside a git work tree; the gate reads the "
+                              "staged files")
+        files = sorted(footprint)
+        staged = _staged_scope(top, files)
+        if not staged:
+            raise RecordError(f"nothing is staged in task {task!r}'s files ({', '.join(files)}); "
+                              "stage the task's files first")
+        tree = _git(top, "write-tree").strip()
+        coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
+        hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
+                                   coder.data.get(CONCERN_FIELD, []) if coder else [])
+        commands = [{"kind": "labels", "command": "ledger.py labels (staged)",
+                     "passed": not hits,
+                     "excerpt": "\n".join(f"{h.path}:{h.line}: {h.label}: {h.text}"
+                                          for h in hits)}]
+        for kind, command in (("lint", lint), ("test", test)):
+            if command:
+                passed, excerpt = _run_shell(top, command)
+                commands.append({"kind": kind, "command": command, "passed": passed,
+                                 "excerpt": excerpt})
+        record = _gate_record(task, tree, staged, commands, files, coder)
+        validate_record(record)
+        _write_json(_gate_path(store_dir, log, task), record)
+    for command in commands:
+        print(f"{command['kind']}: {'pass' if command['passed'] else 'FAIL'}  {command['command']}")
+        if not command["passed"] and command["excerpt"]:
+            print(command["excerpt"])
+    print(f"gate: {record['status']}")
+    return 0 if record["status"] == "pass" else 1
+
+
+def _gate_record(task: int | str, tree: str, staged: list[str], commands: list[dict],
+                 files: list[str], coder: Record | None) -> dict:
+    findings, introduced = [], []
+    failed_test = next((c for c in commands if c["kind"] == "test" and not c["passed"]), None)
+    if failed_test is not None:
+        findings.append({"severity": SERIOUS_SEVERITY, "reach": "local",
+                         "rule": f"`{failed_test['command']}` passes", "sites": files,
+                         "claim": failed_test["excerpt"]})
+        finished_fix = (coder is not None and coder.data["cycle"] >= 2
+                        and coder.data["status"] in DIAGNOSIS_STATUSES)
+        if finished_fix:
+            introduced.append({"site": files[0], "why": "the test passed before this fix"})
+    return {"schema": SCHEMA_VERSION, "agent": "ledger", "role": "gate", "task": task,
+            "status": "pass" if all(c["passed"] for c in commands) else "fail",
+            "tree": tree, "files": staged, "commands": commands, "findings": findings,
+            "recurring": [], "introduced_by_fix": introduced}
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _check_gate_matches_commit(store_dir: Path, task: int | str) -> None:
+    """A task completes only after a passing gate on exactly what was
+    committed: each gated file's blob in the gate's tree equals HEAD's."""
+    log = load_progress_log(store_dir)
+    path = _gate_path(store_dir, log, task)
+    if not path.is_file():
+        raise RecordError(f"task {task!r} has no gate record; run `ledger.py gate` on the "
+                          "staged files before committing")
+    gate = json.loads(path.read_text(encoding="utf-8"))
+    if gate.get("status") != "pass":
+        raise RecordError(f"task {task!r}'s last gate failed; fix, re-stage, and gate again")
+    top = _store_repo(store_dir)
+    if top is None:
+        return
+    differ = [f for f in gate.get("files", []) if _blob(top, gate["tree"], f) != _blob(top, "HEAD", f)]
+    if differ:
+        raise RecordError(f"{', '.join(differ)} changed between the gate and the commit; "
+                          "re-stage and gate again")
+
+
+def _blob(top: Path, tree: str, path: str) -> str | None:
+    try:
+        return _git(top, "rev-parse", f"{tree}:{path}").strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
 def _check_contest_answers(path: Path, data: dict) -> None:
     """A re-checking reviewer answers every contest the coder raised against
     one of its findings, so a finding closes only after it read the evidence."""
@@ -3063,6 +3185,14 @@ def build_parser() -> argparse.ArgumentParser:
                                    "its deferrals, and print the dispatch to make")
     p_triage.add_argument("--task", required=True, type=_task_arg)
 
+    p_gate = sub.add_parser("gate", parents=[store_parent],
+                            help="run labels, lint and the task's Verify command on the staged "
+                                 "task files; write the gate record; exit 1 on a failure")
+    p_gate.add_argument("--task", required=True, type=_task_arg)
+    p_gate.add_argument("--test", required=True,
+                        help="the task's Verify: command; passes only on exit 0")
+    p_gate.add_argument("--lint", help="the project's lint command; passes only on exit 0")
+
     p_diff = sub.add_parser("diff-since",
                              help="show what changed since a snapshot tree, new "
                                   "files included (never touches the working tree or "
@@ -3175,6 +3305,8 @@ def main() -> None:
             cmd_findings(_resolve_check_path(args.decision_path, args.store))
         elif args.command == "triage":
             cmd_triage(store_dir, args.task)
+        elif args.command == "gate":
+            sys.exit(cmd_gate(store_dir, args.task, args.test, args.lint))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":

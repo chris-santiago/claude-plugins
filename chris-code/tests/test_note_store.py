@@ -49,8 +49,21 @@ class StoreTestCase(unittest.TestCase):
         """File a note and return the id it printed."""
         return self._out(ledger.cmd_note, self.store, kind, text, **kwargs).strip()
 
-    def _complete(self, task: int) -> None:
+    def _complete(self, task: int | str) -> None:
+        self._completable(task)
         ledger.cmd_append(self.store, "complete", task, "shipped")
+
+    def _completable(self, task: int | str) -> None:
+        """A done triage entry and a passing gate, so completion turns only
+        on the notes under test."""
+        ledger.ensure_store(self.store)
+        ledger._append_progress(self.store, {"type": "triage", "task": task, "kind": "done",
+                                             "recheck": "none", "findings": []})
+        prefix = ledger.scope_prefix(ledger.load_progress_log(self.store), task)
+        (self.store / f"{prefix}-gate.json").write_text(json.dumps({
+            "schema": 2, "agent": "ledger", "role": "gate", "task": task, "status": "pass",
+            "tree": "t", "files": [], "commands": [], "findings": [], "recurring": [],
+            "introduced_by_fix": []}), encoding="utf-8")
 
     def assertRefused(self, fragment: str, func, *args, **kwargs) -> None:
         def snapshot() -> dict:
@@ -423,6 +436,7 @@ class TestCompletionGate(DeliveryTestCase):
 
     def test_final_is_not_held_by_notes(self):
         self._note("run-note", "a")
+        self._completable("final")
         ledger.cmd_append(self.store, "complete", "final", "whole change clean")
 
 

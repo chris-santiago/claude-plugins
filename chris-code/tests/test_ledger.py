@@ -86,6 +86,19 @@ def _triaged(store: Path, task: int | str = 1, kind: str = "patch") -> None:
                                     "recheck": "raising", "findings": []})
 
 
+def _completable(store: Path, task: int | str) -> None:
+    """Make `task` ready to complete for tests about something else: a done
+    triage entry and a passing gate (a store outside git skips the blob
+    match)."""
+    ledger.ensure_store(store)
+    _triaged(store, task, kind="done")
+    prefix = ledger.scope_prefix(ledger.load_progress_log(store), task)
+    _write(store, f"{prefix}-gate.json", {
+        "schema": 2, "agent": "ledger", "role": "gate", "task": task, "status": "pass",
+        "tree": "t", "files": [], "commands": [], "findings": [], "recurring": [],
+        "introduced_by_fix": []})
+
+
 def _write(store: Path, name: str, data: dict) -> Path:
     path = store / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -952,14 +965,17 @@ class TestCompletion(LedgerTestCase):
         self.assertEqual(ledger.completed_task_ids(log), ["3", "1"])
 
     def test_cmd_append_writes_a_typed_complete_entry(self):
+        _completable(self.store, 5)
         ledger.cmd_append(self.store, "complete", 5, "shipped")
         log = ledger.load_progress_log(self.store)
-        self.assertEqual(log, [{"type": "complete", "task": 5, "note": "shipped"}])
+        self.assertEqual(log[-1], {"type": "complete", "task": 5, "note": "shipped"})
         # append routes creation through ensure_store, so a store born from
         # an append (not store-dir) is still self-ignoring.
         self.assertEqual((self.store / ".gitignore").read_text(encoding="utf-8"), "*\n")
 
     def test_cmd_completed_prints_one_task_id_per_line(self):
+        for task in (2, 5):
+            _completable(self.store, task)
         ledger.cmd_append(self.store, "complete", 2, "shipped")
         ledger.cmd_append(self.store, "complete", 5, "also shipped")
         buf = io.StringIO()
@@ -2071,11 +2087,13 @@ class TestEscalations(DecisionStoreTestCase):
         self.assertIn("resolve", str(ctx.exception))
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), [])
         ledger.cmd_resolve(self.store, item.id, "user ruling: fix it with a fixture")
+        _completable(self.store, 1)
         ledger.cmd_append(self.store, "complete", 1, "shipped")
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["1"])
 
     def test_another_tasks_escalation_does_not_block_completion(self):
         self._check(self._escalating())
+        _completable(self.store, 2)
         ledger.cmd_append(self.store, "complete", 2, "shipped")
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["2"])
 
@@ -2821,6 +2839,104 @@ class TestPlainSnapshot(LedgerTestCase):
         self.assertIn("pre-fix c2", ledger.render_store_markdown([], ledger.load_progress_log(self.store)))
 
 
+class TestGate(TriageStoreTestCase):
+    """`gate` runs labels, lint, and the task's Verify command on the staged
+    scope files; each passes only on exit 0."""
+
+    def stage_fix(self, text: str = "x = 1\ny = 2\n") -> None:
+        (self.repo / "a.py").write_text(text, encoding="utf-8")
+        self._git("add", "a.py")
+
+    def gate(self, test: str = "true", lint: str | None = "true", task: int | str = 3) -> tuple[int, dict]:
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = ledger.cmd_gate(self.store, task, test, lint)
+        prefix = "task-3" if task == 3 else "final"
+        return code, json.loads((self.store / f"{prefix}-gate.json").read_text())
+
+    def test_everything_passing_writes_a_passing_record(self):
+        self.stage_fix()
+        code, record = self.gate()
+        self.assertEqual((code, record["status"], record["findings"]), (0, "pass", []))
+        self.assertEqual([c["kind"] for c in record["commands"]], ["labels", "lint", "test"])
+        ledger.cmd_check(str(self.store / "task-3-gate.json"))
+
+    def test_an_unexcused_label_fails_without_a_finding(self):
+        self.stage_fix("x = 1\ny = 2  # fixed per the decision doc\n")
+        code, record = self.gate()
+        self.assertEqual((code, record["status"], record["findings"]), (1, "fail", []))
+
+    def test_a_label_the_coder_listed_as_a_false_positive_passes(self):
+        line = "y = 2  # fixed per the decision doc"
+        self.coder(concerns=[f"label false positive: a.py: {line}"])
+        self.stage_fix(f"x = 1\n{line}\n")
+        self.assertEqual(self.gate()[0], 0)
+
+    def test_a_failing_lint_fails_without_a_finding(self):
+        self.stage_fix()
+        code, record = self.gate(lint="false")
+        self.assertEqual((code, record["status"], record["findings"]), (1, "fail", []))
+
+    def test_a_failing_test_becomes_one_serious_local_finding(self):
+        self.stage_fix()
+        code, record = self.gate(test="exit 1")
+        self.assertEqual((code, record["status"]), (1, "fail"))
+        [finding] = record["findings"]
+        self.assertEqual((finding["severity"], finding["reach"], finding["sites"]), (3, "local", ["a.py"]))
+        self.assertIn("exit 1", finding["rule"])
+        self.assertIn("task-3-gate#status", {i.id for i in ledger.compute_open_items(
+            ledger.load_records(self.store), set())})
+
+    def test_a_zero_matches_check_passes_when_nothing_matches(self):
+        self.stage_fix()
+        self.assertEqual(self.gate(test="! grep -q TODO a.py")[0], 0)
+
+    def test_without_lint_only_labels_and_test_run(self):
+        self.stage_fix()
+        self.assertEqual([c["kind"] for c in self.gate(lint=None)[1]["commands"]], ["labels", "test"])
+
+    def test_a_scope_without_a_footprint_or_staged_files_is_refused(self):
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_gate(self.store, 9, "true", None)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_gate(self.store, 3, "true", None)
+        self.assertIn("staged", str(ctx.exception))
+
+    def test_the_staged_tree_is_recorded_and_the_index_left_alone(self):
+        self.stage_fix()
+        before = self._git("diff", "--cached", "--name-only")
+        _, record = self.gate()
+        self.assertEqual(record["tree"], self._git("write-tree").strip())
+        self.assertEqual(self._git("diff", "--cached", "--name-only"), before)
+
+    def complete(self) -> None:
+        _triaged(self.store, 3, kind="done")
+        ledger.cmd_append(self.store, "complete", 3, "shipped")
+
+    def test_complete_needs_a_passing_gate_matching_the_commit(self):
+        self.stage_fix()
+        with self.assertRaises(ledger.RecordError):
+            self.complete()
+        self.gate(test="exit 1")
+        self._git("commit", "-qm", "fix")
+        with self.assertRaises(ledger.RecordError):
+            self.complete()
+        with self.assertRaises(ledger.RecordError):
+            self.gate(test="true")  # nothing staged now: refused, the record stays failed
+        self.stage_fix("x = 1\ny = 3\n")
+        self.gate()
+        self._git("commit", "-qm", "fix")
+        self.complete()
+
+    def test_complete_refuses_a_file_changed_after_the_gate(self):
+        self.stage_fix()
+        self.gate()
+        (self.repo / "a.py").write_text("x = 1\ny = 4\n", encoding="utf-8")
+        self._git("commit", "-qam", "changed after the gate")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.complete()
+        self.assertIn("a.py", str(ctx.exception))
+
+
 class TestCoderStoreChecks(GitRepoTestCase):
     """Checks a coder record gets only inside a store: deferrals stay out of
     the task's footprint, a fix's added lines carry no process labels, and
@@ -3062,6 +3178,7 @@ class TestCLI(LedgerTestCase):
         self.assertEqual(result.stdout.strip(), str(self.store.resolve()))
 
     def test_append_complete_and_completed_roundtrip(self):
+        _completable(self.store, 5)
         appended = self._run("append", "--type", "complete", "--task", "5",
                               "--note", "shipped")
         self.assertEqual(appended.returncode, 0, appended.stderr)
@@ -3090,6 +3207,7 @@ class TestCLI(LedgerTestCase):
         self.assertIn("escalate", past_cap.stderr)
 
     def test_read_renders_complete_entries_distinctly_from_progress(self):
+        _completable(self.store, 5)
         self._run("append", "--type", "progress", "--task", "5", "--note", "working on it")
         self._run("append", "--type", "complete", "--task", "5", "--note", "shipped")
         result = self._run("read")
