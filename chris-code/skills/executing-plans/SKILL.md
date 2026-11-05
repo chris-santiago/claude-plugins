@@ -1,17 +1,15 @@
 ---
 name: executing-plans
-description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
+description: Use when executing a plan for small work inline, in this session, with lighter review than subagent-driven-development
 ---
 
 # Executing Plans
 
 ## Overview
 
-Load plan, review critically, execute all tasks, report when complete.
+Load plan, review critically, execute all tasks inline, report when complete. This is the light path for small work: you implement each task yourself against its brief, the quality reviewers check it, and the same scripted gate checks each commit. It skips subagent-driven-development's triage loop, spec reviewer, and record evidence, so its assurance is lighter; for larger or riskier plans, use that skill instead.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
-
-**Note:** If subagents are available, prefer `chris-code:subagent-driven-development` over this skill.
 
 ## The Process
 
@@ -24,31 +22,25 @@ Load plan, review critically, execute all tasks, report when complete.
 ### Step 2: Execute Tasks
 
 For each task:
-1. Mark as in_progress, and take the task's notes: `python3 "$SDD_SCRIPTS/ledger.py" notes --task N --deliver --store "$STORE"` lists every note the task must honor (its task-notes, the active run-notes, the disclosures it owes) and records that you received them. File notes the way subagent-driven-development's *Run Notes* section describes; `append --type complete` refuses a task with an undelivered note or an open disclosure or question it owns.
-2. Follow each step exactly (plan has bite-sized steps)
-3. Run verifications as specified
-4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). Give each the plan's task entry, the changed-file list, the plan's Constraints verbatim, a record path at `$STORE/task-N-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). If any returns REVISE: fix issues and re-dispatch at the same record path until all APPROVED. File each case you handle that the task's `Cases:` line didn't list as a follow-up note (`ledger.py note --kind follow-up --from N --text "unlisted case: ..."`), so `ledger.py report` lists it at completion as a planning gap. When a later task covers the same kind of rule, also file the case as a task-note for it (subagent-driven-development's *Unlisted cases feed forward*).
-5. Run the Step 3 commit gate for the task. Once it is committed, mark it completed in TodoWrite and append the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --note "commits <base7>..<head7>, review clean" --store "$STORE"`.
+1. Mark it in_progress, record its footprint (`python3 "$SDD_SCRIPTS/ledger.py" stage --task N --stage N --files <paths> --store "$STORE"`), and build its brief: `python3 "$SDD_SCRIPTS/task_brief.py" PLAN_FILE N --intent "..." --store "$STORE" -o "$STORE/task-N-brief.md"`. The brief carries the task's notes and logs their delivery, and the script refuses a task whose `Cases:` rows state no result, that still has an `open:` row, or whose `Verify:` line has no command: fix the plan (asking the user for an `open:` answer) rather than working around it. File notes the way subagent-driven-development's *Run Notes* section describes.
+2. Implement against the brief: every row on its `Cases:` line, each with a test. For behavior the brief leaves undefined, do what the codebase already does for the nearest analogous case, and note the choice and its precedent for the user (a `question` note owned by the task, resolved with their answer). A case you handle that the `Cases:` line didn't list goes in a follow-up note (`ledger.py note --kind follow-up --from N --text "unlisted case: ..."`).
+3. Run the brief's `Verify:` command exactly.
+4. Dispatch **all matching** `*-quality-reviewer` agents (additive — e.g., both `python-quality-reviewer` and `pytorch-quality-reviewer` fire on `.py` and `.ipynb` files in a PyTorch project). Give each the brief path, the changed-file list, the plan's Constraints verbatim, a record path at `$STORE/task-N-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). A REVISE (any finding of severity 3 or more) gets a fix round: sweep each finding's rule across the task's files, write a failing test first, fix every site, and re-dispatch the reviewers that raised findings at their same record paths. Notes (severity 1-2) are fixed alongside, or filed as follow-ups. **At most two fix rounds, then stop and ask the user** with the open findings and both rounds' results.
+5. Run the Step 3 commit gate for the task. Once it is committed, mark it completed in TodoWrite and append the typed completion entry: `python3 "$SDD_SCRIPTS/ledger.py" append --type complete --task N --light --note "commits <base7>..<head7>" --store "$STORE"`.
 
 ### Step 3: Commit Gate
 
-Before each commit (end of plan or mid-plan commit points):
-
-1. **Check for process labels:** run `python3 "$SDD_SCRIPTS/ledger.py" labels HEAD <the commit's files>`. It lists task, cycle and finding ids, decision-doc vocabulary and commit hashes on the added lines and exits 1 if it finds any (2 on an error). Rewrite each comment it lists to state the behavior instead. A hit that isn't a process label (an F1 score written `(F1)`, say) stands; note it in the task's progress entry.
-2. **Collect candidates:** Check staged file extensions → match **all** `*-review-lite` agents by `scope.extensions` (additive, not exclusive)
-3. **Dispatch** all matching agents against the staged diff, supplying each a record path (`$STORE/task-<N>-<agent-name>.json`, per subagent-driven-development's File Handoffs). Never pass a `cycle` value: the agent reads its own prior record at that path and self-derives `cycle` as prior + 1 (else 1), escalating at `cycle >= 3` when a block condition (an S3+ finding or a failed linter) remains — the backstop fires on its own as long as the record path stays stable across re-dispatches.
-4. If any agent returns **block**: fix the issue, re-run step 1's `labels` check, and re-dispatch at the same record path before committing
-5. If any agent returns **escalate**: stop and surface to the user
-
-Only dispatch when there are staged changes to review.
+1. `python3 "$SDD_SCRIPTS/ledger.py" ready --task N --light --store "$STORE"` lists anything that still stops the commit (an undelivered note, an open question, an open disclosure). Settle each first.
+2. Stage exactly the task's files and run `python3 "$SDD_SCRIPTS/ledger.py" gate --task N --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`. It runs the process-label scan on the staged lines, then lint, then the tests, each passing only on exit 0, and refuses while a task file has unstaged changes. A label or lint failure: rewrite and re-stage. A test failure: it's a fix round (Step 2, item 4's limit applies).
+3. Commit, then `complete --light` (Step 2, item 5). It refuses a commit that doesn't match what the gate passed.
 
 ### Step 4: Final Review
 
-After all tasks complete, review the whole change to catch cross-task idiom drift the per-commit gates missed. The task commits are already in, so `git diff --cached` is empty and `*-review-lite` cannot use its staged-diff path. Hand it the whole-change diff as a file:
+After all tasks complete, review the whole change to catch cross-task drift the per-task reviews missed. The task commits are already in, so hand `*-review-lite` the whole-change diff as a file:
 
 1. `BASE=$(git merge-base HEAD main)` (or the actual base), `HEAD=$(git rev-parse HEAD)`.
 2. Run `"$SDD_SCRIPTS/review-package" "$BASE" "$HEAD" "$STORE/review-whole-change.diff"` to write the multi-commit diff to that file and print its path. Pass the explicit outfile: the script's own default resolves the default store, which is wrong when the session overrode `--store`.
-3. Dispatch each matching `*-review-lite` agent with that package-file path, a record path at `$STORE/final-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). The agent reviews the package diff, not `--cached`. Handle block/escalate as at the commit gate, re-dispatching at the same record path.
+3. Dispatch each matching `*-review-lite` agent with that package-file path, a record path at `$STORE/final-<agent-name>.json`, and the scripts path (`$SDD_SCRIPTS`, expanded). A block is a fix round: fix, gate the fix with `--task final`, commit, and re-dispatch at the same record path. Two rounds, then the user.
 
 ### Step 5: Complete Development
 
@@ -78,7 +70,7 @@ After final review passes:
 
 ## Remember
 - Review plan critically first
-- Follow plan steps exactly
+- Implement against each task's brief
 - Don't skip verifications
 - Reference skills when plan says to
 - Stop when blocked, don't guess
@@ -93,4 +85,4 @@ After final review passes:
 - **chris-code:verification-before-completion** - The completion close, before finishing
 - **chris-code:finishing-a-development-branch** - Complete development after all tasks
 - **`*-quality-reviewer` agents** - Per-task quality + bug review, auto-dispatched by file type
-- **`*-review-lite` agents** - Commit gates + final full-diff review, auto-dispatched by file type
+- **`*-review-lite` agents** - The final full-diff review, auto-dispatched by file type

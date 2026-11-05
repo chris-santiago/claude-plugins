@@ -10,7 +10,8 @@ Dispatch a review for a fresh perspective on work in progress. This skill is for
 **When the automated pipeline handles it:**
 - Per-task review → `*-quality-reviewer` agents (subagent-driven-development)
 - Pre-merge review → `*-design-reviewer` agents (verification-before-completion Step 3)
-- Commit gate → `*-review-lite` agents (executing-plans)
+- Commit gate → `ledger.py gate`, the scripted labels, lint, and Verify check (subagent-driven-development and executing-plans)
+- Whole-change review → `*-review-lite` agents (both executors)
 
 **When to use this skill instead:**
 - Stuck and want a fresh perspective

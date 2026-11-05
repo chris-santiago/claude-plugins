@@ -26,7 +26,7 @@ If the spec covers multiple independent subsystems, suggest breaking into separa
 1. Read the design spec (and any referenced docs) end to end
 2. Identify which details are already well-documented in the spec vs. which need to be stated in the plan
 3. Map out which files will be created or modified
-4. **Ground against existing code:** for the files in step 3, note the existing helpers, idioms, and patterns this change should build on rather than reinvent — the coherent implementation is usually already in the repo, and the planner is the last actor who sees the whole change before it fans out into isolated per-task coder contexts. Where the design implies an operation several tasks will share, decide its owner now (Self-Review §6 checks you did); where *which* existing approach best fits is genuinely contested, resolve it via `chris-code:coherent-change` in decision-only mode before writing tasks — don't defer the choice into the plan.
+4. **Ground against existing code:** for the files in step 3, note the existing helpers, idioms, and patterns this change should build on rather than reinvent — the coherent implementation is usually already in the repo, and the planner is the last actor who sees the whole change before it fans out into isolated per-task coder contexts. Where the design implies an operation several tasks will share, decide its owner now (Self-Review §7 checks you did); where *which* existing approach best fits is genuinely contested, resolve it via `chris-code:coherent-change` in decision-only mode before writing tasks — don't defer the choice into the plan.
 
 ## Plan Format
 
@@ -66,10 +66,10 @@ One sentence describing the required change.
 
 ### Task 1: [Name]
 - Consumes: <contract> from <spec §N, or built in Task M → `path`> — a pointer, never a restated signature; omit if the task stands alone
-- Cases: <every case the task's rule covers, with its intended behavior: the main case, its siblings, boundary inputs (e.g. `size>0; size=0, size<0, size=None → ValueError; empty data → []`)>, or `n/a — <why the task has no input domain>` (wiring, renames, docs, structural moves). A behavior-preserving refactor lists what it preserves and the existing tests that cover it (`preserves <behavior>; covered by <tests>`). Long lists may go one case per indented sub-bullet. Required: `task_brief.py` refuses a task without it, or with a placeholder (`none`, `TBD`, a bare `n/a`)
+- Cases: <rows, each a situation and its expected result: `<situation> → <result>` (e.g. `size>0 → grid; size=0, size<0, size=None → ValueError; empty data → []`)>, or `n/a — <why the task has no input domain>` (wiring, renames, docs, structural moves). A behavior-preserving refactor lists what it preserves and the existing tests that cover it (`preserves <behavior>; covered by <tests>`). Behavior you can't decide goes in as `open: <the question>`, which the executor asks the user before the build. Long lists may go one row per indented sub-bullet. Required: `task_brief.py` refuses a task without it, a placeholder (`none`, `TBD`, a bare `n/a`), a row with no `→`, or a remaining `open:` row
 - [ ] Concrete action (reference spec §N for requirements)
 - [ ] Concrete action
-- [ ] Verify: `exact command to run`
+- [ ] Verify: `exact command, where exit 0 means pass` (a "zero matches" check is `! rg -q '<pattern>' <paths>`; the commit gate runs it)
 
 ### Task 2: [Name]
 ...
@@ -112,8 +112,9 @@ After writing, check against the spec:
 2. **Bloat scan:** Any prose that restates the spec? Any code blocks an executor would rewrite? Cut them.
 3. **Name consistency:** Do types, signatures, and paths used in later tasks match earlier tasks?
 4. **Verify scope vs. shared contracts:** Does any task change a *shared contract* (a test file several tasks edit, such as a central exclusions list or fixtures module; an enum; an allow/deny list; a public signature consumed elsewhere)? If so, its `Verify:` and its slice of the acceptance checks must run the **full suite, or grep every assertion of that contract**, not just a local `-k` subset scoped to the task's own module. A narrow filter passes green while hiding orphaned failures in sibling files: the assertion a *different* task already wrote against the contract you just flipped. When in doubt, a shared-contract task verifies suite-wide.
-5. **Cases are complete:** For each task that implements a rule, does its `Cases:` line list every case the rule covers, with the intended behavior for each: the main case, its siblings (every parameter or site the same rule governs), and the boundary inputs (`None`, empty, zero, negative, wrong type)? What `None` should do is a design decision. Make it here, because a coder left to guess will patch one case, and the siblings then surface one review cycle at a time. Use `n/a — <reason>` only when the task truly has no input domain.
-6. **Repeated shapes are contracts:** Do 3+ tasks perform the same operation (the same call pair, construction, or dispatch block)? Name the shared helper as a contract with an owner — one task builds it, every later consumer carries a `Consumes:` pointer to it. A shape left inline in the plan becomes N verbatim copies at execution: coders are scope-disciplined and will not hoist it for you.
+5. **Every behavior is decided, as a row:** For each task that introduces or changes behavior, does its `Cases:` line decide each behavior as a row with its result (`size=0 → ValueError`), never as a principle ("validate sizes")? A coder given a principle builds one reading of it, and the other readings come back one review at a time. What `None` should do is a design decision: make it here, or write it as an `open:` row so the user makes it before the build. Use `n/a — <reason>` only when the task truly has no input domain.
+6. **Every `Verify:` is a command where exit 0 means pass:** in backticks, run as written by the commit gate.
+7. **Repeated shapes are contracts:** Do 3+ tasks perform the same operation (the same call pair, construction, or dispatch block)? Name the shared helper as a contract with an owner — one task builds it, every later consumer carries a `Consumes:` pointer to it. A shape left inline in the plan becomes N verbatim copies at execution: coders are scope-disciplined and will not hoist it for you.
 
 Fix issues inline, then move on.
 
@@ -125,7 +126,7 @@ After saving the plan, offer:
 
 **1. Subagent-Driven (recommended)** — fresh subagent per task, review between tasks
 
-**2. Inline Execution** — execute in this session with checkpoints
+**2. Inline Execution** — the light path for small work: implemented in this session, quality reviewers and the same commit gate, no triage loop
 
 **Which approach?"**
 
@@ -134,6 +135,6 @@ After saving the plan, offer:
 
 **Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in four ways:
 - §2's spec references are the decision doc and the gate report paths.
-- Each task's `Cases:` line comes from the decision doc's correctness table (every affected case and its result), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or list the affected sites if the table names them.
+- Each task's `Cases:` line comes from the decision doc's correctness table, one row per affected case (`<case> → <its result>`), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or list the affected sites if the table names them.
 - Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
 - Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.

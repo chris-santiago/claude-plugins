@@ -174,7 +174,11 @@ Two failure modes quietly turn a green gate into a false pass:
 
 ## After Verification Passes
 
-Every finding fixed, filed as a follow-up (separable, or fresh sampling in round 2), or adjudicated by the user → you may claim completion. Build the completion report from `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"`, not from memory: it lists the user's rulings, the follow-ups, the `unlisted case:` entries the coders reported (which show where the plan's `Cases:` lines were thin), the orchestrator's dispositions and waivers, and where each disclosure landed. Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
+Every finding fixed, filed as a follow-up (separable, or fresh sampling in round 2), or adjudicated by the user → you may claim completion. Build the completion report from `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"`, not from memory: it lists the user's rulings, the follow-ups, the `unlisted case:` entries the coders reported (which show where the plan's `Cases:` lines were thin), the orchestrator's dispositions and waivers, where each disclosure landed, and which tasks ran on executing-plans' light path.
+
+**The close batch.** The report groups the open follow-ups by rule: notes the coders skipped, minor findings whose fix would change a contract, sites a sweep found outside a task, and anything else filed during the run. Present them to the user in one message, each with a recommendation, and let them pick per item: **fix**, **file** (keep it as a follow-up past this branch), or **ignore** (`resolve` it with their ruling). The items to fix go through `chris-code:remediating-issues`' Batch Path as one change, not one fix per item. Nothing in the change is left behind without the user having decided it.
+
+Then invoke `chris-code:finishing-a-development-branch` for the integration workflow (merge/PR/keep/discard).
 
 ## What These Gates Do and Don't Prove
 
