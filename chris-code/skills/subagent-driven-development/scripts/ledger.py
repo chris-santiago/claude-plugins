@@ -2331,8 +2331,12 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
     sent finding once, maps its rows and decision cases to hunks it really
     changed, writes failing tests first in a patch or ruling round, and
     justifies edits to tests that already existed."""
-    entry = fix_round(load_progress_log(path.parent), data["baseline"], data["task"])
-    sent = [f for f in entry["findings"] if f["tier"] not in ("defer", "held")]
+    log = load_progress_log(path.parent)
+    entry = fix_round(log, data["baseline"], data["task"])
+    # A finding the user waived after triage sent it is no longer the round's work.
+    waived = _user_waived(log)
+    sent = [f for f in entry["findings"]
+            if f["tier"] not in ("defer", "held") and f["id"] not in waived]
     if entry["kind"] in ("patch", "polish", "ruling"):
         _check_coverage(data, sent)
     if entry["kind"] in ("patch", "ruling"):
@@ -2343,7 +2347,7 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
         return
     # Tasks in a stage share the working tree: read only this task's files,
     # its footprint as well as what it says it changed.
-    footprint = task_footprint(load_progress_log(path.parent), data["task"]) or set()
+    footprint = task_footprint(log, data["task"]) or set()
     paths = sorted(footprint | {f for f in data.get("changed_files", []) if _non_empty_str(f)})
     diff = diff_trees(repo, data["baseline"], snapshot_tree(repo), paths)
     changed = changed_lines(diff)
@@ -2356,7 +2360,7 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
         if not site_touches(row["hunk"], changed):
             raise RecordError(f"{path}: decision case {row['choice']}/{row['case']} claims hunk "
                               f"{row['hunk']}, which the fix didn't change")
-    _check_flagged_rows(path, data, {f["id"] for f in sent})
+    _check_flagged_rows(path, data, {f["id"] for f in sent} - _left_unfixed(data))
     for test in data.get("tests_first", []):
         if "n/a" not in test and test["test"].split("::")[0] not in changed:
             raise RecordError(f"{path}: tests_first names {test['test']}, which the fix diff "
@@ -2388,13 +2392,17 @@ def _check_coverage(data: dict, sent: list[dict]) -> None:
         raise RecordError(f"{', '.join(not_notes)} isn't a note, so it can't be skipped")
 
 
+def _left_unfixed(data: dict) -> set[str]:
+    """Sent findings the fix leaves as they are. A contested finding isn't
+    fixed, one raised to contract reach stops before its fix, and a skipped
+    note is skipped; none has a test to write or a flagged site to row."""
+    return {e["finding"] for field in ("contested", "reach_raised", "notes_skipped")
+            for e in data.get(field, [])}
+
+
 def _check_tests_first(data: dict, serious: list[dict]) -> None:
     covered = {t["finding"] for t in data.get("tests_first", [])}
-    # A contested finding isn't fixed, and one raised to contract reach
-    # stops before its fix; neither has a test to write yet.
-    unfixed = {c["finding"] for field in ("contested", "reach_raised")
-               for c in data.get(field, [])}
-    missing = sorted(f["id"] for f in serious if f["id"] not in covered | unfixed)
+    missing = sorted(f["id"] for f in serious if f["id"] not in covered | _left_unfixed(data))
     if missing:
         raise RecordError(f"tests_first: no entry for {', '.join(missing)}; write a failing "
                           f"test first, or give an n/a category ({', '.join(TESTS_FIRST_NA)})")
@@ -2429,8 +2437,8 @@ def _check_holistic_decision(path: Path, data: dict, entry: dict, sent: list[dic
 
 
 def _check_flagged_rows(path: Path, data: dict, sent_ids: set[str]) -> None:
-    """Every site a reviewer flagged recurring or fix-introduced, on a sent
-    finding, is a row of the fix."""
+    """Every site a reviewer flagged recurring or fix-introduced, on a
+    finding the fix fixes, is a row of the fix."""
     rows = {row["site"] for sweep in data.get("sweeps", []) for row in sweep["rows"]}
     scope = _scope(path.stem)
     for rec in _scope_records(path.parent, scope).reviewers if scope else []:

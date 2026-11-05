@@ -8,6 +8,12 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-11-05
+
+### Fixed
+- **A finding the user waives after triage sent it drops out of the round.** `check` still counted it among the round's findings, so the coder had to cover it, and the only way to do that was to contest a finding nobody disputed. `check` now leaves out a finding with a `user ruling:` resolution, and the SDD skill tells the orchestrator to pass the waiver on to the coder.
+- **Flagged sites are rows only for findings the fix fixes.** `check` asked for every site a reviewer flagged `recurring` or `introduced_by_fix` to appear as a sweep row, even for a finding the coder contested, raised to contract reach or skipped as a note. None of those has a hunk to show, so coders padded their sweeps with `already_correct` rows saying the site wasn't fixed. The rule now covers only the findings the fix fixes, and the coders' protocol says so.
+
 ## [0.14.1] - 2026-11-05
 
 ### Fixed

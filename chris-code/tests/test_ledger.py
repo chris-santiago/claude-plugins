@@ -2860,6 +2860,33 @@ class TestFixChecks(TriageStoreTestCase):
             self.fix(tree, sent)
         self.assertIn("a.py:1", str(ctx.exception))
 
+    def test_a_recurring_site_of_a_finding_the_fix_leaves_unfixed_needs_no_row(self):
+        # A contest or a reach raise doesn't fix the finding, so its flagged
+        # sites have no hunk to show.
+        issue = _finding(sites=["a.py:1"])
+        sent = self.review(issue, recurring=[{"site": "a.py:1", "why": "same rule as c1"}])
+        tree = self.snapshot()
+        self.edit()
+        for field_name, entry in (("contested", {"reason": "wrong", "evidence": "e"}),
+                                  ("reach_raised", {"evidence": "the fix renames a public API"})):
+            with self.subTest(field_name=field_name):
+                self.fix(tree, sent, sweeps=[], tests_first=[],
+                         **{field_name: [{"finding": sent[0], **entry}]})
+
+    def test_a_finding_the_user_waives_after_triage_sent_it_drops_out_of_the_fix(self):
+        waived = _finding(sites=["a.py:1"], rule="other rule")
+        sent = self.review(self.issue, waived,
+                           recurring=[{"site": "a.py:1", "why": "same rule as c1"}])
+        tree = self.snapshot()
+        ledger.cmd_resolve(self.store, sent[1], "user ruling: land as-is, filed as a follow-up")
+        self.edit()
+        self.fix(tree, sent[:1], sweeps=[{"findings": sent[:1], "rule": "size must be positive",
+                                          "rows": [{"site": "a.py:1", "already_correct": "e"},
+                                                   {"site": "a.py:2", "hunk": "a.py:2"}],
+                                          "searched": {"command": "rg size", "result": "1"}}],
+                 tests_first=[{"finding": sent[0], "n/a": "existing", "reason": "r",
+                               "test": "tests/test_a.py::test_x"}])
+
     def test_a_patch_finding_without_tests_first_is_refused(self):
         sent = self.review()
         tree = self.snapshot()
