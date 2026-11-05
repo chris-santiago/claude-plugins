@@ -324,11 +324,18 @@ class TestFixLoopFields(LedgerTestCase):
                 ledger.validate_record(_spec_reviewer(introduced_by_fix=bad))
             self.assertIn("introduced_by_fix", str(ctx.exception))
 
-    def test_finished_fix_with_empty_hunk_map_raises(self):
-        # A finished fix changed something; an empty map hides every hunk.
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.validate_record(_coder(cycle=2, **self._fix(hunk_map=[])))
-        self.assertIn("hunk_map", str(ctx.exception))
+    def test_an_empty_hunk_map_is_refused_when_the_fix_claims_a_hunk(self):
+        sweep = {"findings": ["f"], "rule": "r", "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                 "searched": {"command": "rg r", "result": "1 match"}}
+        for claim in ({"sweeps": [sweep]}, {"decision_rows": [{"choice": 0, "case": 0, "hunk": "a.py:1"}]}):
+            with self.subTest(claim=list(claim)), self.assertRaises(ledger.RecordError) as ctx:
+                ledger.validate_record(_coder(cycle=2, **self._fix(hunk_map=[], **claim)))
+            self.assertIn("hunk_map", str(ctx.exception))
+
+    def test_a_round_that_changed_nothing_may_have_an_empty_hunk_map(self):
+        # Every finding sent was contested, or a polish found nothing to change.
+        ledger.validate_record(_coder(cycle=2, **self._fix(
+            hunk_map=[], contested=[{"finding": "f", "reason": "wrong", "evidence": "a.py:1 guards it"}])))
 
     def test_introduced_by_fix_never_becomes_an_open_item(self):
         # Like recurring, it's a failed-fix signal riding on findings,
@@ -1764,6 +1771,11 @@ class TestDecisionShape(unittest.TestCase):
         self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], cases=[])]),
                            "cases: got 0 entries")
 
+    def test_a_decision_may_only_exclude(self):
+        # A round started for a lone root cause the engine defers.
+        ledger.validate_record(_decision([], choices=[], excluded=[{"finding": "c", "reason": "later"}]))
+        self.assertRejects(_decision([], choices=[]), "choices: got 0 entries")
+
     def test_a_finding_is_accounted_for_once(self):
         self.assertRejects(_decision(["x"], excluded=[{"finding": "x", "reason": "trivial"}]),
                            "accounted for twice")
@@ -2051,14 +2063,24 @@ class TestDecisionContext(DecisionStoreTestCase):
 
 
 class TestEscalations(DecisionStoreTestCase):
-    """An escalated finding waits on the user: `open` lists it until the
-    ruling resolves it, and a ruling route needs that ruling logged."""
+    """A close-gate escalation waits on the user: `open` lists it until the
+    ruling resolves it, and `final` can't complete before then. A per-task
+    decision's escalation is contested instead (TestUserDecisionsRouteBack)."""
+
+    def setUp(self):
+        super().setUp()
+        _write(self.store, "final-python-review-lite.json",
+               _review_lite(task="final", status="block", findings=[_QUALITY_FINDING]))
+        self.lite_id = _entry_id("final-python-review-lite", "findings", _QUALITY_FINDING)
 
     def _escalating(self) -> dict:
-        escalate = {"kind": "escalate", "findings": [self.quality_id], "why": "no fixture",
+        escalate = {"kind": "escalate", "findings": [self.lite_id], "why": "no fixture",
                     "evidence": "e"}
-        return self._complete(status="escalated",
-                              choices=[_fix_choice([self.spec_id]), escalate])
+        return _decision([], task="final", status="escalated",
+                         reviewer_records=["final-python-review-lite"], choices=[escalate])
+
+    def _check(self, data: dict, name: str = "final-decision-c2.json") -> None:
+        super()._check(data, name)
 
     def _open_escalations(self) -> list:
         items = ledger.compute_open_items(
@@ -2069,7 +2091,7 @@ class TestEscalations(DecisionStoreTestCase):
     def test_open_lists_an_escalation_until_the_ruling_resolves_it(self):
         self._check(self._escalating())
         (item,) = self._open_escalations()
-        self.assertIn(self.quality_id, item.summary)
+        self.assertIn(self.lite_id, item.summary)
         with self.assertRaises(ledger.RecordError) as ctx:
             ledger.cmd_resolve(self.store, item.id, "waived")
         self.assertIn("user ruling:", str(ctx.exception))
@@ -2079,20 +2101,16 @@ class TestEscalations(DecisionStoreTestCase):
     def test_completion_waits_on_the_escalations_resolution(self):
         self._check(self._escalating())
         (item,) = self._open_escalations()
+        _completable(self.store, "final")
         # A ruling logged as a progress note leaves the escalation open.
-        ledger.cmd_append(self.store, "progress", 1, "user ruling: fix it with a fixture")
+        ledger.cmd_append(self.store, "progress", "final", "user ruling: fix it with a fixture")
         with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_append(self.store, "complete", 1, "shipped")
+            ledger.cmd_append(self.store, "complete", "final", "shipped")
         self.assertIn(item.id, str(ctx.exception))
         self.assertIn("resolve", str(ctx.exception))
-        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), [])
         ledger.cmd_resolve(self.store, item.id, "user ruling: fix it with a fixture")
-        for unverified in ledger.compute_open_items(ledger.load_records(self.store), set()):
-            if unverified.kind == "cannot_verify":
-                ledger.cmd_resolve(self.store, unverified.id, "claim-checker: holds")
-        _completable(self.store, 1)
-        ledger.cmd_append(self.store, "complete", 1, "shipped")
-        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["1"])
+        ledger.cmd_append(self.store, "complete", "final", "shipped")
+        self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["final"])
 
     def test_another_tasks_escalation_does_not_block_completion(self):
         self._check(self._escalating())
@@ -2813,6 +2831,17 @@ class TestFixChecks(TriageStoreTestCase):
         with self.assertRaises(ledger.RecordError):
             self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
 
+    def test_a_fix_whose_window_ends_in_a_non_fix_step_is_refused(self):
+        # Triage moved on (done) after routing the round: the fix is stale.
+        sent = self.review()
+        ledger.cmd_resolve(self.store, sent[0], "user ruling: waive")
+        self.triage()
+        tree = self.snapshot()
+        self.edit()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent)
+        self.assertIn("done", str(ctx.exception))
+
     def test_baseline_prints_the_round_its_findings_and_errors_untriaged(self):
         sent = self.review()
         tree = self.snapshot()
@@ -2853,6 +2882,202 @@ class TestHolisticFix(TriageStoreTestCase):
                                             decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}])))
         ledger.cmd_check(str(self.coder(decision="task-3-decision-c2", **fields,
                                         decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}])))
+
+
+    def holistic_round(self, *issues: dict) -> str:
+        """Review, triage to a holistic round, and snapshot for its fix."""
+        self.coder()
+        self.spec(*issues)
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "holistic")
+        tree = ledger.snapshot_tree(self.repo)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
+        return tree
+
+    def holistic_fix(self, tree: str, **fields) -> None:
+        record = dict(cycle=2, baseline=tree, changed_files=["a.py"], decision="task-3-decision-c2",
+                      diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+                      hunk_map=[], consumers_checked=[])
+        record.update(fields)
+        ledger.cmd_check(str(self.coder(**record)))
+
+    def test_notes_sent_in_a_holistic_round_must_be_fixed_or_skipped(self):
+        issue, note = _finding(reach="contract"), _finding(severity=1, rule="name says what it holds")
+        tree = self.holistic_round(issue, note)
+        fid, nid = self.spec_id(issue), self.spec_id(note)
+        escalate = {"kind": "escalate", "findings": [fid], "why": "the plan fixes the API", "evidence": "plan §3"}
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, status="escalated", reviewer_records=["task-3-spec-reviewer"],
+            choices=[escalate], excluded=[{"finding": nid, "reason": "a note; the coder handles it"}]))
+        contest = [{"finding": fid, "reason": "plan-conflict", "evidence": "plan §3 fixes the API"}]
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.holistic_fix(tree, contested=contest)
+        self.assertIn(nid, str(ctx.exception))
+        self.holistic_fix(tree, contested=contest,
+                          notes_skipped=[{"finding": nid, "reason": "renaming breaks callers"}])
+
+    def test_a_finding_the_decision_escalates_must_be_contested(self):
+        issue = _finding(reach="contract")
+        tree = self.holistic_round(issue)
+        fid = self.spec_id(issue)
+        escalate = {"kind": "escalate", "findings": [fid], "why": "the plan fixes the API", "evidence": "plan §3"}
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, status="escalated", reviewer_records=["task-3-spec-reviewer"],
+            choices=[escalate]))
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.holistic_fix(tree)
+        self.assertIn(fid, str(ctx.exception))
+        self.holistic_fix(tree, contested=[{"finding": fid, "reason": "plan-conflict",
+                                            "evidence": "plan §3: the decision's escalation"}])
+
+
+class TestUserDecisionsRouteBack(TriageStoreTestCase):
+    """What the stage batch decides comes back into the loop: an override is
+    a ruling round, a deferred or waived root cause stops counting, and a
+    per-task decision's escalation goes through the contest path."""
+
+    choice = {"question": "size=None?", "choice": "ValueError", "precedent": "a.py:1"}
+    root = "root cause: a.py:1 the size guard lives in the wrong layer"
+
+    def choice_id(self) -> str:
+        return _entry_id("task-3-python-coder", "open", self.choice)
+
+    def root_id(self) -> str:
+        return _entry_id("task-3-python-coder", "concerns", self.root)
+
+    def test_an_override_after_done_is_a_ruling_round_the_spec_reviewer_rechecks(self):
+        self.coder(open=[self.choice])
+        self.spec()
+        self.triage()
+        ledger.cmd_append(self.store, "progress", 3, f"user ruling: override {self.choice_id()}: return None")
+        ledger.cmd_resolve(self.store, self.choice_id(), "user ruling: override, return None")
+        out = self.triage()
+        last = self.entries()[-1]
+        self.assertEqual((last["kind"], last["recheck"], last["recheck_records"]),
+                         ("ruling", "spec", ["task-3-spec-reviewer"]))
+        self.assertIn("re-check: task-3-spec-reviewer", out)
+
+    def test_an_opus_ruling_starts_no_round(self):
+        self.spec()
+        self.triage()
+        ledger.cmd_append(self.store, "progress", 3, "user ruling: opus coder for this task")
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["done"])
+
+    def test_a_root_cause_a_decision_excludes_stops_counting_and_is_filed_once(self):
+        self.coder(concerns=[self.root])
+        self.spec()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "holistic")
+        self.write("task-3-decision-c2.json", _decision(
+            [], task=3, reviewer_records=["task-3-spec-reviewer"], choices=[],
+            excluded=[{"finding": self.root_id(), "reason": "moving the guard is its own refactor"}]))
+        self.coder(concerns=[self.root], report="still lists it")
+        self.triage()
+        self.coder(report="dropped it once the decision claimed it")
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["holistic", "done", "done"])
+        follow_ups = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                      if n["kind"] == "follow-up"]
+        self.assertEqual([n.get("rule") for n in follow_ups], ["moving the guard is its own refactor"])
+
+    def test_a_root_cause_only_the_user_waives(self):
+        self.coder(concerns=[self.root])
+        self.spec()
+        self.triage()
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_resolve(self.store, self.root_id(), "not needed")
+        ledger.cmd_resolve(self.store, self.root_id(), "user ruling: leave the guard where it is")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_per_task_decision_escalation_never_blocks_ready(self):
+        # The coder contests it and the reviewer's hold parks the task instead.
+        fid = self.spec_id(_finding())
+        escalate = {"kind": "escalate", "findings": [fid], "why": "w", "evidence": "e"}
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, status="escalated", reviewer_records=["task-3-spec-reviewer"],
+            choices=[escalate]))
+        self.spec()
+        self.triage()
+        items = ledger.compute_open_items(ledger.load_records(self.store), set())
+        self.assertNotIn(ledger.ESCALATION_KIND, [i.kind for i in items])
+        self.assertEqual(ledger.ready_blockers(self.store, 3), [])
+
+
+class TestTriageOutput(TriageStoreTestCase):
+    """What `triage` prints and records for the orchestrator's next dispatch."""
+
+    def gate_record(self, *findings: dict) -> None:
+        self.write("task-3-gate.json", {
+            "schema": 2, "agent": "ledger", "role": "gate", "task": 3,
+            "status": "fail" if findings else "pass", "tree": "t", "files": ["a.py"],
+            "commands": [], "findings": list(findings), "recurring": [], "introduced_by_fix": []})
+
+    def test_settled_ids_and_the_decision_doc_are_printed(self):
+        issue, other = _finding(reach="contract"), _finding(rule="other rule")
+        self.coder()
+        self.spec(issue, other)
+        ledger.cmd_resolve(self.store, self.spec_id(other), "user ruling: waive")
+        out = self.triage()
+        self.assertIn(f"settled: {self.spec_id(other)}", out)
+        self.assertIn("decision doc: task-3-decision-c2", out)
+
+    def test_the_first_fix_at_final_is_cycle_two_so_its_decision_is_c2(self):
+        self.write("final-python-review-lite.json", _review_lite(
+            task="final", status="block", findings=[_finding(reach="contract")]))
+        self.triage("final")
+        self.assertEqual(self.entries()[-1]["decision"], "final-decision-c2")
+
+    def test_the_gate_is_rerun_not_redispatched(self):
+        issue = _finding()
+        self.spec(issue)
+        self.gate_record(_finding(rule="`pytest` passes", sites=["a.py"], claim="the test command failed"))
+        for recheck in ("raising", "all"):
+            with self.subTest(recheck=recheck):
+                if recheck == "all":
+                    self.coder()
+                    self.spec(issue, _finding(reach="contract", rule="api"))
+                out = self.triage()
+                last = self.entries()[-1]
+                self.assertNotIn("task-3-gate", last["recheck_records"])
+                self.assertIn("re-stage and re-run `gate`", out)
+
+    def test_contest_answers_count_only_from_the_raising_reviewer(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        self.write("task-3-python-quality-reviewer.json", _quality_reviewer(
+            task=3, contests=[{"finding": self.spec_id(issue), "verdict": "concede", "reason": "r"}]))
+        self.triage()
+        self.assertNotIn(self.spec_id(issue), self.entries()[-1]["settled"])
+
+    def test_settled_lists_only_this_scopes_ids(self):
+        ledger.cmd_stage(self.store, 4, 1, ["b.py"])
+        other = _finding(sites=["b.py:1"])
+        self.write("task-4-spec-reviewer.json", _spec_reviewer(task=4, status="issues", issues=[other]))
+        ledger.cmd_resolve(self.store, _entry_id("task-4-spec-reviewer", "issues", other),
+                           "user ruling: waive")
+        self.spec()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["settled"], [])
+
+
+class TestChangedLines(unittest.TestCase):
+    def test_an_added_line_that_looks_like_a_file_header_stays_in_its_file(self):
+        diff = ("--- a/a.py\n+++ b/a.py\n@@ -1,0 +1,2 @@\n+x = 1\n+++ b/evil.py\n"
+                "--- a/b.py\n+++ b/b.py\n@@ -3,0 +4 @@\n+y = 2\n")
+        self.assertEqual(ledger.changed_lines(diff), {"a.py": {1, 2}, "b.py": {4}})
+
+    def test_a_quoted_path_is_decoded(self):
+        diff = '--- "a/sp ace.py"\n+++ "b/sp ace.py"\n@@ -1 +1 @@\n-x = 0\n+x = 1\n'
+        self.assertEqual(ledger.changed_lines(diff), {"sp ace.py": {1}})
+
+    def test_a_pure_deletion_marks_the_line_it_removed(self):
+        diff = "--- a/a.py\n+++ b/a.py\n@@ -2 +1,0 @@\n-y = 2\n"
+        self.assertEqual(ledger.changed_lines(diff), {"a.py": {1}})
 
 
 class TestPlainSnapshot(LedgerTestCase):
@@ -2926,6 +3151,21 @@ class TestGate(TriageStoreTestCase):
         self.assertIn("exit 1", finding["rule"])
         self.assertIn("task-3-gate#status", {i.id for i in ledger.compute_open_items(
             ledger.load_records(self.store), set())})
+
+    def test_a_failing_tests_finding_keeps_its_id_across_runs(self):
+        # The excerpt (timings, temp paths) lives on the command, so a re-run
+        # that fails the same way raises the same finding, never a new one.
+        self.coder(cycle=2, status="done", baseline="t",
+                   diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+                   hunk_map=[], consumers_checked=[])
+        self.stage_fix()
+        counter = Path(self._tmp.name) / "runs"
+        test = f"echo run >> {counter}; wc -l < {counter}; exit 1"
+        _, record = self.gate(test=test)
+        _, again = self.gate(test=test)
+        self.assertNotEqual(record["commands"][-1]["excerpt"], again["commands"][-1]["excerpt"])
+        self.assertEqual(record["findings"], again["findings"])
+        self.assertEqual(record["introduced_by_fix"], [])
 
     def test_a_zero_matches_check_passes_when_nothing_matches(self):
         self.stage_fix()

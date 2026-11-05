@@ -558,6 +558,11 @@ class TestPlanContract(unittest.TestCase):
     def test_a_principle_is_refused_naming_it(self):
         self.assertRefused("### Task 2: x\n- Cases: validate sizes\n", "validate sizes")
 
+    def test_a_semicolon_inside_code_quotes_or_parentheses_does_not_split_a_row(self):
+        for value in ("`a; b` → parsed as one statement", '"x;y" → ValueError',
+                      "split (on ;) → two parts", "size=0 → ValueError; `f(1; 2)` → TypeError"):
+            task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
     def test_a_segment_without_its_own_result_is_refused(self):
         self.assertRefused("### Task 2: x\n- Cases: size>0; size=0 → ValueError\n", "size>0")
 

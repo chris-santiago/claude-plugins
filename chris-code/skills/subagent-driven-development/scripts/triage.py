@@ -76,11 +76,13 @@ def derive(*, findings: list[dict], root_causes: list[str], reach_raised: set[st
     concerns. `answers` maps a contested finding id to the raising
     reviewer's verdict. `waived` are ids the user resolved. `prior` are the
     scope's earlier triage entries, oldest first. `ruled` says a user ruling
-    was logged after the last escalate entry. `file_candidates` are coder
+    was logged after the last entry; it starts a ruling round once the task
+    waits on the user (escalate) or is about to commit (done, where the
+    ruling overrides an open behavior choice). `file_candidates` are coder
     deferrals (skipped notes, outside sites) as dicts with id and rule."""
     settled = _settled(prior, waived, answers)
     last_kind = prior[-1]["kind"] if prior else None
-    ruling_now = ruled and last_kind == "escalate"
+    ruling_now = ruled and last_kind in ("escalate", "done")
     held = _held(prior, answers, settled, ruling_now, {f["id"] for f in findings})
     live = [f for f in findings if f["id"] not in settled]
     tiers = {f["id"]: ("held" if f["id"] in held else tier(f, reach_raised)) for f in live}
@@ -92,7 +94,7 @@ def derive(*, findings: list[dict], root_causes: list[str], reach_raised: set[st
     open_work = bool(serious or root_causes)
     rounds = sum(1 for e in prior if e.get("kind") in FIX_ROUND_KINDS)
 
-    if open_work and ruling_now:
+    if ruling_now:
         kind, sent = "ruling", serious
     elif open_work and (rounds >= MAX_FIX_ROUNDS or last_kind == "ruling"):
         kind, sent = "escalate", serious
@@ -137,11 +139,14 @@ def derive(*, findings: list[dict], root_causes: list[str], reach_raised: set[st
 
 def _recheck(kind: str, sent: list[dict]) -> str:
     """Who re-checks the step: the raising reviewers after a patch or a
-    ruling (or just the gate, when only gate findings were sent), every
-    reviewer after a holistic round, nobody otherwise."""
+    ruling (or just the gate, when only gate findings were sent), the spec
+    reviewer after a ruling that sent no finding (an overridden behavior
+    choice), every reviewer after a holistic round, nobody otherwise."""
     if kind == "holistic":
         return "all"
     if kind in ("patch", "ruling"):
         serious = [f for f in sent if f["severity"] >= SERIOUS]
+        if not serious and kind == "ruling":
+            return "spec"
         return "gate" if serious and all(f.get("gate") for f in serious) else "raising"
     return "none"

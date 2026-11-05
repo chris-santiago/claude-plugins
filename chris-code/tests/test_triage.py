@@ -141,6 +141,27 @@ class TestLaterRounds(unittest.TestCase):
         entry = derive([self.a], prior=prior, ruled=True)
         self.assertEqual((entry["kind"], entry["round"]), ("ruling", 1))
 
+    def test_an_override_ruled_after_done_starts_a_ruling_round_the_spec_reviewer_rechecks(self):
+        # The user overrode an open behavior choice: nothing is raised, but
+        # the coder must implement the ruling and the spec reviewer check it.
+        prior = [step("patch", [(self.a, "patch")]), step("done")]
+        entry = derive(prior=prior, ruled=True)
+        self.assertEqual((entry["kind"], entry["round"], entry["recheck"], entry["findings"]),
+                         ("ruling", 1, "spec", []))
+
+    def test_a_ruling_round_with_findings_is_still_rechecked_by_their_raisers(self):
+        prior = [step("escalate", [(self.a, "patch")])]
+        self.assertEqual(derive([self.a], prior=prior, ruled=True)["recheck"], "raising")
+
+    def test_a_ruling_after_a_fix_round_waits_for_its_recheck(self):
+        # A ruling logged mid-round is acted on once triage reaches done or escalate.
+        entry = derive([self.a], prior=[step("patch", [(self.a, "patch")])], ruled=True)
+        self.assertEqual(entry["kind"], "patch")
+
+    def test_a_failed_recheck_after_an_override_returns_to_the_user(self):
+        prior = [step("done"), step("ruling")]
+        self.assertEqual(derive([self.a], prior=prior)["kind"], "escalate")
+
     def test_notes_already_sent_to_a_coder_are_not_open_again(self):
         n = finding("n", severity=1)
         self.assertEqual(derive([n], prior=[step("patch", [(self.a, "patch"), (n, "note")])])["kind"],

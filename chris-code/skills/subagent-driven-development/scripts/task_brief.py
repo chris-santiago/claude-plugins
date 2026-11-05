@@ -537,7 +537,7 @@ def _validate_case_rows(value: str) -> None:
     other readings come back one review at a time."""
     if CASES_REFACTOR_RE.match(value.strip()):
         return
-    for row in (part.strip() for part in value.split(";")):
+    for row in (part.strip() for part in _split_rows(value)):
         if not row:
             continue
         question = CASES_OPEN_RE.match(row)
@@ -549,6 +549,28 @@ def _validate_case_rows(value: str) -> None:
             raise BriefValidationError(
                 f"'Cases:' row '{row}' states no result: write it as '<situation> → <expected "
                 "result>' (e.g. 'size=0 → ValueError')")
+
+
+def _split_rows(value: str) -> list[str]:
+    """Split a `Cases:` line into rows on `;`, except inside backticks,
+    double quotes, or parentheses, where a `;` is part of the case."""
+    rows, current, depth, quote = [], [], 0, None
+    for char in value:
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "`\"":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(depth - 1, 0)
+        elif char == ";" and depth == 0:
+            rows.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+    rows.append("".join(current))
+    return rows
 
 
 def validate_verify(task_entry: str, task_n: str) -> None:

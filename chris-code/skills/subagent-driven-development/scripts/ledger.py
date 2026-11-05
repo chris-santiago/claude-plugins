@@ -643,7 +643,10 @@ def _validate_decision(data: dict) -> None:
                           "names (e.g. task-3-spec-reviewer; empty before any review)")
     seen: set[str] = set()
     escalated = False
-    for idx, choice in enumerate(_require_objects(data, "choices", min_len=1)):
+    # A decision may only exclude: a round started for a lone root cause the
+    # engine defers has nothing to choose.
+    min_choices = 0 if data.get("excluded") else 1
+    for idx, choice in enumerate(_require_objects(data, "choices", min_len=min_choices)):
         where = f"choices[{idx}]"
         kind = choice.get("kind")
         if not isinstance(kind, str) or kind not in CHOICE_KEYS:
@@ -735,10 +738,10 @@ def _validate_fix(data: dict) -> None:
             raise RecordError(
                 f"{field_name}: required from cycle 2 on a finished fix; expected "
                 f"a list of objects with {', '.join(keys)}, got {entries!r}")
-        if field_name == "hunk_map" and not entries:
+        if field_name == "hunk_map" and not entries and _claims_a_hunk(data):
             raise RecordError(
-                "hunk_map: a finished fix changed something, so it needs at least "
-                "one entry; got an empty list")
+                "hunk_map: the record claims hunks (sweep rows or decision_rows), so "
+                "map each one; got an empty list")
         for idx, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 raise RecordError(f"{field_name}[{idx}]: got {entry!r}, expected an object")
@@ -754,6 +757,15 @@ def _validate_fix(data: dict) -> None:
             # "No consumers" is a negative claim: it carries the search behind it.
             if field_name == "consumers_checked" and not entry["consumers"]:
                 _validate_search_evidence(entry, f"consumers_checked[{idx}]")
+
+
+def _claims_a_hunk(data: dict) -> bool:
+    """Whether a fix says it changed code: a sweep row with a hunk, or a
+    decision case mapped to one. A round whose findings were all contested,
+    raised or skipped, or a polish that changed nothing, claims none."""
+    rows = [row for sweep in data.get("sweeps", []) if isinstance(sweep, dict)
+            for row in sweep.get("rows", []) if isinstance(row, dict)]
+    return any("hunk" in row for row in rows) or bool(data.get("decision_rows"))
 
 
 def load_records(store_dir: Path) -> list[Record]:
@@ -993,8 +1005,10 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
             seen_ids.add(item_id)
             items.append(OpenItem(id=item_id, kind=field_name, summary=summary, source=rec.stem))
 
-    if role == "decision":
-        # Waiting on the user: open until `resolve` logs the ruling.
+    if role == "decision" and _scope(rec.stem) in _task_scopes("final"):
+        # Waiting on the user: open until `resolve` logs the ruling. A task's
+        # own decision escalates through its coder's contest instead, which
+        # the raising reviewer concedes or holds for the user.
         for choice in rec.data["choices"]:
             if choice["kind"] == "escalate":
                 items.append(OpenItem(
@@ -1919,10 +1933,11 @@ def find_baseline(log: list[dict], tree: str, task: int | str) -> dict:
 
 
 def fix_round(log: list[dict], tree: str, task: int | str) -> dict:
-    """The fix-kind triage entry that routes the fix starting from `tree`:
-    the last one logged after the task's previous snapshot and before this
-    one. Every fix starts from its own snapshot, routed by the triage
-    entry before it."""
+    """The triage entry that routes the fix starting from `tree`: the last
+    one logged after the task's previous snapshot and before this one,
+    which must be a fix kind. Every fix starts from its own snapshot,
+    routed by the triage entry before it; one that triage has since moved
+    past (to done or escalate) is stale."""
     scoped = _scope_log(log, task)
     at = max((i for i, e in enumerate(scoped) if e.get("type") == "snapshot"
               and e.get("tree") == tree and e.get("task") == task), default=None)
@@ -1931,12 +1946,15 @@ def fix_round(log: list[dict], tree: str, task: int | str) -> dict:
                           "baseline comes only from `ledger.py snapshot`")
     start = max((i for i, e in enumerate(scoped[:at]) if e.get("type") == "snapshot"
                  and e.get("task") == task), default=-1)
-    rounds = [e for e in scoped[start + 1:at] if e.get("type") == TRIAGE_ENTRY
-              and e.get("task") == task and e.get("kind") in triage_rules.FIX_KINDS]
-    if not rounds:
+    steps = [e for e in scoped[start + 1:at] if e.get("type") == TRIAGE_ENTRY
+             and e.get("task") == task]
+    if not steps:
         raise RecordError(f"no triage entry routes the fix from {tree!r}: run `ledger.py "
                           "triage` and act on the step it prints before taking the snapshot")
-    return rounds[-1]
+    if steps[-1].get("kind") not in triage_rules.FIX_KINDS:
+        raise RecordError(f"the last triage step before snapshot {tree!r} is "
+                          f"{steps[-1].get('kind')}, not a fix round; act on that step instead")
+    return steps[-1]
 
 
 def cmd_baseline(store_dir: Path, tree: str, task: int | str) -> None:
@@ -2012,8 +2030,9 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
 
 
 def _user_settleable_ids(records: list[Record]) -> set[str]:
-    """Ids only the user settles: reviewer findings (a waiver) and a coder's
-    open behavior choices (an acceptance or an override)."""
+    """Ids only the user settles: reviewer findings (a waiver), a coder's
+    open behavior choices (an acceptance or an override), and its `root
+    cause:` concerns (a waiver, when the task can't wait for the fix)."""
     ids = set()
     for rec in records:
         if not rec.ok:
@@ -2023,6 +2042,8 @@ def _user_settleable_ids(records: list[Record]) -> set[str]:
             ids |= set(finding_ids(rec, (FINDING_LIST_FIELD.get(role, "findings"),)))
         elif role == "coder":
             ids |= {_item_id(rec.stem, "open", e) for e in rec.data.get("open", [])}
+            ids |= {cid for cid, text in concern_ids(rec).items()
+                    if text.lower().startswith(ROOT_CAUSE_PREFIX)}
     return ids
 
 
@@ -2188,7 +2209,7 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
     if entry["kind"] in ("patch", "ruling"):
         _check_tests_first(data, [f for f in sent if f["tier"] != "note"])
     if entry["kind"] == "holistic":
-        _check_holistic_decision(path, data, entry)
+        _check_holistic_decision(path, data, entry, sent)
     if repo is None:
         return
     # Tasks in a stage share the working tree: read only this task's files,
@@ -2250,9 +2271,11 @@ def _check_tests_first(data: dict, serious: list[dict]) -> None:
                           f"test first, or give an n/a category ({', '.join(TESTS_FIRST_NA)})")
 
 
-def _check_holistic_decision(path: Path, data: dict, entry: dict) -> None:
+def _check_holistic_decision(path: Path, data: dict, entry: dict, sent: list[dict]) -> None:
     """A holistic fix implements this round's decision doc, which passes
-    `check`, and maps every case of every fix choice to a hunk."""
+    `check`: it maps every case of every fix choice to a hunk, contests each
+    finding the doc escalates (the raising reviewer answers in the round's
+    re-check), and fixes or skips each sent note no fix choice took."""
     expected = entry.get("decision")
     named = Path(data.get("decision", "")).stem
     if named != expected:
@@ -2266,6 +2289,14 @@ def _check_holistic_decision(path: Path, data: dict, entry: dict) -> None:
     if unmapped:
         raise RecordError(f"{path}: decision cases {', '.join(unmapped)} (choice/case) have no "
                           "decision_rows entry mapping them to a hunk")
+    contested = {c["finding"] for c in data.get("contested", [])}
+    uncontested = sorted(f for c in doc["choices"] if c["kind"] == "escalate"
+                         for f in c["findings"] if f not in contested)
+    if uncontested:
+        raise RecordError(f"{path}: the decision escalates {', '.join(uncontested)}; contest "
+                          "each with the decision's evidence (reason wrong or plan-conflict)")
+    fixed = {f for c in doc["choices"] if c["kind"] == "fix" for f in c["findings"]}
+    _check_coverage(data, [f for f in sent if f["tier"] == "note" and f["id"] not in fixed])
 
 
 def _check_flagged_rows(path: Path, data: dict, sent_ids: set[str]) -> None:
@@ -2641,28 +2672,39 @@ def _coder_deferrals(coder: Record | None, rules: dict[str, str]) -> list[dict]:
     return out
 
 
-def _ruled_since_escalation(log: list[dict], task: int | str) -> bool:
-    """A user ruling logged for `task` after its last escalate entry."""
+def _ruled_since_last_entry(log: list[dict], task: int | str) -> bool:
+    """A user ruling logged for `task` after its last triage entry. Which
+    model codes the task is no ruling on the work, so it starts no round."""
     scoped = _scope_log(log, task)
-    escalations = [i for i, e in enumerate(scoped) if e.get("type") == TRIAGE_ENTRY
-                   and e.get("task") == task and e.get("kind") == "escalate"]
-    if not escalations:
+    entries = [i for i, e in enumerate(scoped) if e.get("type") == TRIAGE_ENTRY
+               and e.get("task") == task]
+    if not entries:
         return False
-    return any(e.get("type") == "progress" and e.get("task") == task
-               and str(e.get("note", "")).lower().startswith(RULING_PREFIX)
-               for e in scoped[escalations[-1] + 1:])
+    notes = (str(e.get("note", "")).lower() for e in scoped[entries[-1] + 1:]
+             if e.get("type") == "progress" and e.get("task") == task)
+    return any(n.startswith(RULING_PREFIX) and not n.startswith(OPUS_RULING_PREFIX) for n in notes)
 
 
-def _user_waived(log: list[dict]) -> set[str]:
+def _user_waived(log: list[dict], scope: str | None = None) -> set[str]:
+    """Ids the user settled with a ruling; with `scope`, only that scope's."""
     return {i for i, note in resolutions_from_log(log).items()
-            if note.lower().startswith(RULING_PREFIX)}
+            if note.lower().startswith(RULING_PREFIX)
+            and (scope is None or _scope(i.split("#")[0]) == scope)}
+
+
+def _deferred_root_causes(decisions: list[Record], scope: str) -> dict[str, str]:
+    """Coder `root cause:` concerns a decision of the scope excluded, mapped
+    to the reason: deferred, so filed once and no longer open work."""
+    return {e["finding"]: e["reason"] for d in decisions if _scope(d.stem) == scope
+            for e in d.data["excluded"] if f"#{CONCERN_FIELD}[" in e["finding"]}
 
 
 def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record], Record | None]:
     """Everything `triage.derive` reads for `task`, from the store; plus the
     scope's reviewer records and its latest coder record."""
     log = load_progress_log(store_dir)
-    found = _scope_records(store_dir, scope_prefix(log, task))
+    scope = scope_prefix(log, task)
+    found = _scope_records(store_dir, scope)
     if found.problems:
         raise RecordError(f"record(s) named for task {task!r} can't be triaged; fix them "
                           "first: " + "; ".join(found.problems))
@@ -2672,19 +2714,25 @@ def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record],
     coder = _latest_coder(found.coders)
     findings = _finding_inputs(found.reviewers)
     coder_data = coder.data if coder else {}
+    waived = _user_waived(log, scope)
+    deferred = _deferred_root_causes(found.decisions, scope)
     root_causes = [cid for cid, text in (concern_ids(coder).items() if coder else [])
-                   if text.lower().startswith(ROOT_CAUSE_PREFIX)]
+                   if text.lower().startswith(ROOT_CAUSE_PREFIX)
+                   and cid not in deferred and cid not in waived]
+    # Only the reviewer that raised a finding answers a contest of it.
     answers = {a["finding"]: a["verdict"] for rec in found.reviewers
-               for a in rec.data.get("contests", [])}
+               for a in rec.data.get("contests", []) if a["finding"].startswith(f"{rec.stem}#")}
     rules = {f["id"]: f["rule"] for f in findings}
     inputs = {
         "findings": findings, "root_causes": root_causes,
         "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
-        "answers": answers, "waived": _user_waived(log),
-        "prior": triage_entries(log, task), "ruled": _ruled_since_escalation(log, task),
+        "answers": answers, "waived": waived,
+        "prior": triage_entries(log, task), "ruled": _ruled_since_last_entry(log, task),
         "undelivered_note": isinstance(task, int) and bool(undelivered_notes(log, task)),
         "model": coder_data.get("model"),
-        "file_candidates": _coder_deferrals(coder, rules),
+        "file_candidates": _coder_deferrals(coder, rules) + [
+            {"id": cid, "rule": reason, "text": f"deferred root cause {cid}: {reason}"}
+            for cid, reason in deferred.items()],
     }
     return inputs, found.reviewers, coder
 
@@ -2742,8 +2790,10 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
                  **result, "recheck_records": recheck_records, "inputs": digest, "at": _now()}
         if result["kind"] == "holistic":
-            # The decision doc for the coder's upcoming fix cycle.
-            cycle = (coder.data["cycle"] if coder else 0) + 1
+            # The decision doc for the coder's upcoming fix cycle. Every fix
+            # is cycle 2 or later, the first at `final` included, where no
+            # coder wrote a first attempt.
+            cycle = (coder.data["cycle"] if coder else 1) + 1
             entry["decision"] = f"{scope_prefix(log, task)}-decision-c{cycle}"
         _append_progress(store_dir, entry)
     print(_render_triage(entry, filed_notes))
@@ -2761,13 +2811,22 @@ def _inputs_digest(inputs: dict, reviewers: list[Record], coder: Record | None) 
 
 
 def _recheck_records(result: dict, reviewers: list[Record]) -> list[str]:
-    """The reviewer records to re-dispatch for the step."""
+    """The reviewer records to re-dispatch for the step. The gate is never
+    dispatched: its findings re-check by re-staging and re-running it."""
+    agents = [r for r in reviewers if r.data["role"] != "gate"]
     if result["recheck"] == "all":
-        return sorted(r.stem for r in reviewers)
+        return sorted(r.stem for r in agents)
+    if result["recheck"] == "spec":
+        return sorted(r.stem for r in agents if r.data["role"] == "spec-reviewer")
     if result["recheck"] == "raising":
+        stems = {r.stem for r in agents}
         return sorted({f["source"] for f in result["findings"]
-                       if f["tier"] in ("patch", "holistic", "held")})
+                       if f["tier"] in ("patch", "holistic", "held")} & stems)
     return []
+
+
+def _is_gate_stem(stem: str) -> bool:
+    return stem.endswith("-gate")
 
 
 def _render_triage(entry: dict, filed: list[str]) -> str:
@@ -2778,10 +2837,18 @@ def _render_triage(entry: dict, filed: list[str]) -> str:
                      f"({finding['source']})")
     for cid in entry["root_causes"]:
         lines.append(f"  [{cid}] holistic: root cause")
+    if entry.get("decision"):
+        lines.append(f"decision doc: {entry['decision']}.json (written before the fix)")
     if entry["recheck_records"]:
         lines.append("re-check: " + ", ".join(entry["recheck_records"]))
+    if entry["kind"] in triage_rules.FIX_KINDS and any(
+            _is_gate_stem(f["source"]) and f["tier"] not in ("defer", "held")
+            for f in entry["findings"]):
+        lines.append("then re-stage and re-run `gate`")
     if entry["held"]:
         lines.append("held for the user: " + ", ".join(entry["held"]))
+    if entry["settled"]:
+        lines.append("settled: " + ", ".join(entry["settled"]))
     for nid in filed:
         lines.append(f"filed {nid}")
     return "\n".join(lines)
@@ -2860,7 +2927,7 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
             passed, excerpt = _run_shell(top, command)
             commands.append({"kind": kind, "command": command, "passed": passed,
                              "excerpt": excerpt})
-    record = _gate_record(task, tree, files, commands, files, coder)
+    record = _gate_record(task, tree, commands, files)
     validate_record(record)
     with store_lock(store_dir):
         _write_json(_gate_path(store_dir, log, task), record)
@@ -2872,22 +2939,21 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
     return 0 if record["status"] == "pass" else 1
 
 
-def _gate_record(task: int | str, tree: str, staged: list[str], commands: list[dict],
-                 files: list[str], coder: Record | None) -> dict:
-    findings, introduced = [], []
+def _gate_record(task: int | str, tree: str, commands: list[dict], files: list[str]) -> dict:
+    """The gate's record. A failing test is one finding whose text never
+    carries the run's output (that stays in the command's excerpt), so the
+    same failure keeps the same id from run to run."""
+    findings = []
     failed_test = next((c for c in commands if c["kind"] == "test" and not c["passed"]), None)
     if failed_test is not None:
         findings.append({"severity": SERIOUS_SEVERITY, "reach": "local",
                          "rule": f"`{failed_test['command']}` passes", "sites": files,
-                         "claim": failed_test["excerpt"]})
-        finished_fix = (coder is not None and coder.data["cycle"] >= 2
-                        and coder.data["status"] in DIAGNOSIS_STATUSES)
-        if finished_fix:
-            introduced.append({"site": files[0], "why": "the test passed before this fix"})
+                         "claim": "the test command exits non-zero; its output is the test "
+                                  "command's excerpt in this record"})
     return {"schema": SCHEMA_VERSION, "agent": "ledger", "role": "gate", "task": task,
             "status": "pass" if all(c["passed"] for c in commands) else "fail",
-            "tree": tree, "files": staged, "commands": commands, "findings": findings,
-            "recurring": [], "introduced_by_fix": introduced}
+            "tree": tree, "files": files, "commands": commands, "findings": findings,
+            "recurring": [], "introduced_by_fix": []}
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -2938,27 +3004,33 @@ def _check_contest_answers(path: Path, data: dict) -> None:
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
     """New-side line numbers each file's hunks added or changed; a hunk that
-    only deletes marks the line it deleted before."""
+    only deletes marks the line it deleted before. Hunk line counts are
+    tracked (as `_file_line_changes` does), so an added line whose text
+    starts with `++ ` is never read as a file header."""
     changed: dict[str, set[int]] = {}
-    path, line_no, new_left = None, 0, 0
+    path, line_no, old_left, new_left = None, 0, 0, 0
     for raw in diff.split("\n"):
+        if old_left > 0 or new_left > 0:
+            tag = raw[:1]
+            if tag == "+":
+                new_left -= 1
+                if path is not None:
+                    changed.setdefault(path, set()).add(line_no)
+                line_no += 1
+            elif tag == "-":
+                old_left -= 1
+            elif tag != "\\":
+                old_left, new_left, line_no = old_left - 1, new_left - 1, line_no + 1
+            continue
         if raw.startswith("+++ "):
-            target = raw[4:].rstrip("\t")
-            path = target[2:] if target.startswith("b/") else None
+            path = _diff_side(raw[4:], "b/")
             continue
         header = HUNK_HEADER_RE.match(raw)
         if header:
+            old_left = int(header.group(1) or 1)
             line_no, new_left = int(header.group(2)), int(header.group(3) or 1)
             if new_left == 0 and path is not None:
                 changed.setdefault(path, set()).add(max(line_no, 1))
-            continue
-        if path is None or not raw:
-            continue
-        if raw[0] == "+":
-            changed.setdefault(path, set()).add(line_no)
-            line_no += 1
-        elif raw[0] == " ":
-            line_no += 1
     return changed
 
 
