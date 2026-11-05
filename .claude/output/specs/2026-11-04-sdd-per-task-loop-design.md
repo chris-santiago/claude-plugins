@@ -19,7 +19,7 @@ This redesign replaces that with:
 - notes that never get a re-review;
 - a scripted commit gate in place of per-task review-lite.
 
-Upstream, lean-plan's `Cases:` lines must decide behavior as named rows, so fewer gaps reach review. The whole-change gate uses the same triage. executing-plans keeps a light path.
+Upstream, lean-plan's `Cases:` lines must decide behavior as rows with expected results, so fewer gaps reach review. The whole-change gate uses the same triage. executing-plans keeps a light path.
 
 ## 2. Goals
 
@@ -40,6 +40,8 @@ Upstream, lean-plan's `Cases:` lines must decide behavior as named rows, so fewe
 - review-lite's standalone behavior.
 - Converting in-flight stores. Stores are per-run, and a schema-1 store is finished on the prior release or cleared.
 - Gate re-execution of new tests against the pre-fix tree. "Failed first" rests on recorded output, which reviewers can spot-check.
+- coherent-change's markdown correctness table (direct, batch, and close-gate paths). Giving its cases a site and named test, as the per-task record now does, is a filed follow-up.
+- A run-level light/full mode. executing-plans declares `--light` per call; a run-level mode is a follow-up if per-call misuse ever shows up in a run.
 
 ## 4. System behavior
 
@@ -57,7 +59,7 @@ Every reviewer finding carries `severity` (1-5), `reach`, `rule`, and `sites`. T
 - A finding the coder raises to `contract` reach (`reach_raised`) is holistic from then on.
 - `recurring` and `introduced_by_fix` never change a tier. They oblige the next fix to list the flagged sites (Section 4.3) and feed telemetry.
 - A spec finding that names a listed `Cases:` row is S3 or higher.
-- A finding a reviewer `holds` after a contest is held for the user (Section 4.5).
+- A contested finding a reviewer holds is held for the user (Section 4.5).
 
 ### 4.2 Rounds
 
@@ -87,10 +89,14 @@ Each re-check dispatch carries the round's contests with their evidence, and the
 
 - **Sweep with rows.** Per finding, the coder states the rule and searches the scope's files plus the consumers of every symbol the fix changes. It lists every site where the rule applies as a row, each mapped to the hunk that fixes it or marked `already correct` with evidence. A `recurring` or `introduced_by_fix` finding's flagged sites must appear as rows. A site outside the scope is recorded in `sites_outside` and routed as in Section 4.6.
 - **Search evidence.** Each sweep records either `searched` (the command and its result) for a textual rule, or `inspected` (each symbol or file examined and how it was found) for a rule a text search can't express.
-- **Tests first.** For each S3+ finding about behavior, the coder writes a test, runs it, and records the command and its failing output before the fix. A finding with no behavior to test (structure, duplication) gets `n/a` with a reason, which reviewers judge.
+- **Tests first.** For each S3+ finding, the coder writes a test, runs it, and records the command and its failing output before the fix. A finding with no new test to write gets `n/a` with a category and a reason, which reviewers judge and `stats` counts per category:
+  - `structural`: no behavior changes (duplication, naming, module shape).
+  - `docs`: only text changes that no test asserts.
+  - `unreachable`: no fixture can reach the site, with evidence.
+  - `existing`: an existing test, which the entry names, already fails on the defect (a gate test failure is the common case).
 - **Contract discovered.** If a fix turns out to need a contract change, the coder stops before making it and records `reach_raised`. The task goes holistic at the next triage.
 
-**Holistic round.** An opus research agent runs the remediating-issues per-task variant over the whole task: its diff, every reviewer record from every round, and the coder records. It may redo the task's implementation shape. It writes one decision doc that accounts for every open finding and `root cause:` concern. Each fix choice lists its rows (every affected site, every coupling the choice touches, and each named test with its expected result) and probes the premise it rests on. The original sonnet coder implements the doc test-first and maps every row to a hunk.
+**Holistic round.** An opus research agent runs the remediating-issues per-task variant over the whole task: its diff, every reviewer record from every round, and the coder records. It may redo the task's implementation shape. It writes one decision doc that accounts for every open finding and `root cause:` concern. Each fix choice's `cases` table gives every affected case its site, its named test, and its expected result. The choice lists the couplings it touches, each of which must also be a case, and records the premise it rests on with the probe that confirmed it. The original sonnet coder implements the doc test-first and maps every case to a hunk.
 
 **Ruling round.** The coder implements the user's ruling with the same rows and tests-first obligations.
 
@@ -109,7 +115,7 @@ When the brief leaves a behavior undefined, the coder doesn't stop. It picks the
 **Contest.**
 
 - The coder records `contested` with a reason (`wrong` or `plan-conflict`) and evidence instead of fixing.
-- At re-check, the raising reviewer sees the evidence. It concedes by not raising the finding again, which closes it. Or it holds by re-raising it with `holds` naming the contested finding, which marks it held for the user.
+- At re-check, the raising reviewer gets the evidence and answers every contest it was sent in its record's `contests`, with a `concede` or `hold` verdict and a reason. A concede closes the finding. A hold marks it held for the user. `check` refuses a re-check record that leaves a forwarded contest unanswered, so a finding closes only after someone read the evidence.
 - A contest never consumes a fix round by itself.
 
 **Settled findings.**
@@ -123,8 +129,10 @@ When the brief leaves a behavior undefined, the coder doesn't stop. It picks the
 - A task with open work after two rounds, a held finding, an unanswered open choice, or a contract change needing approval is parked. A parked task does not commit. The rest of the stage proceeds.
 - Once no task in the stage has a dispatch in flight, the orchestrator sends one message covering every parked item:
   - each task's open findings (rule, sites), with the holistic decision's choice and rejected alternatives where one ran;
-  - the round history;
+  - the round history, with each round's closed and introduced counts;
   - every item's recommended answer.
+
+  A task returning after a failed ruling round always offers "land as-is and file the rest as follow-ups" next to another ruling. The recommendation picks between them by whether the last round closed more findings than it introduced.
 - One reply settles the batch: "accept all", or overrides by item number. The user can:
   - rule a fix, on an opus coder if they say so;
   - waive a finding, optionally filing a follow-up;
@@ -185,7 +193,7 @@ It writes no triage entries, sweep rows, or coder records. `--light` skips the t
 - **`Cases:` decides behavior.** A task that introduces or changes behavior lists it as named rows, each with an input or situation and its expected result (`size=0 → ValueError("size must be positive")`), never as a principle ("validate sizes"). A behavior the planner can't decide is written as an `open:` row with the question.
 - **`Verify:` is a command** where exit 0 means pass. A zero-matches check is written `! rg -q '<pattern>' <paths>`.
 - **Pre-flight.** SDD's pre-flight scan, which already batches thin `Cases:` lines to the user, also batches every `open:` row. Answers are written into the plan before execution.
-- **`task_brief.py`** refuses a task whose `Verify:` line has no backticked command, or whose `Cases:` still carries an unanswered `open:` row.
+- **`task_brief.py`** refuses a task whose `Verify:` line has no backticked command, whose `Cases:` still carries an `open:` row, or whose `Cases:` has a row that doesn't separate situation from expected result with `→` or `->`. A row may group cases (`size=0, size<0 → ValueError`). `n/a — <reason>` and the refactor form (`preserves <behavior>; covered by <tests>`) are exempt.
 
 ### 4.11 Agent obligations
 
@@ -202,10 +210,11 @@ It writes no triage entries, sweep rows, or coder records. `--light` skips the t
   - Check CLAUDE.md constraints and public sentinel returns, the two checks per-task lite carried that they lacked.
   - Re-run recorded sweep commands and spot-check inspected lists.
   - Judge tests-first `n/a` reasons and flagged test changes.
+- **Every re-checking reviewer:** answers each forwarded contest, and marks any settled finding it raises again with `reopens`.
 - **review-lite:** tags at `final`, with the public-symbol reach rule.
 - **remediating-issues per-task variant:**
   - Runs only in holistic rounds, task-wide, dispatched on opus.
-  - Writes rows and a premise probe per fix choice.
+  - Gives every case a site, test, and expected result; lists couplings as cases; records the premise and its probe.
   - Accounts for `root cause:` concerns.
 
 ## 5. Architecture
@@ -233,12 +242,20 @@ Existing fields stay. Added, all required except where noted:
 ```json
 {"severity": 3, "reach": "local | class | contract", "rule": "size must be a positive int",
  "sites": ["src/a.py:40", "src/a.py:88-91", "src/b.py"],
- "case": "size=0 -> ValueError", "holds": "<contested finding id>", "reopens": "<settled finding id>"}
+ "case": "size=0 -> ValueError", "reopens": "<settled finding id>"}
 ```
 
 - `sites`: one or more of `path`, `path:line`, `path:start-end`. The path is relative to the repo toplevel, lines are at least 1, and start is at most end.
 - `case` (optional, spec reviewer only): names a listed `Cases:` row and requires severity 3 or more.
-- `holds` and `reopens` are optional. `holds` must name a finding contested in the latest coder record. `reopens` must name a settled finding and have a site in lines changed since its settlement tree.
+- `reopens` (optional): must name a settled finding and have a site in lines changed since its settlement tree.
+
+A reviewer record also carries `contests` (required on a re-check that was sent contests, otherwise absent):
+
+```json
+{"contests": [{"finding": "<contested id>", "verdict": "concede | hold", "reason": "..."}]}
+```
+
+Every contest forwarded to the reviewer (listed in the triage entry for its findings) has exactly one answer.
 - Spec findings stay in `issues`; quality, lite, and gate findings are in `findings`.
 - Status matches findings: spec `issues`, or quality `issues`, exactly when some finding is S3+.
 - Every `recurring` and `introduced_by_fix` entry's `site` equals one of some finding's `sites`.
@@ -256,14 +273,16 @@ The existing fields and checks stay. Added fields, each optional and empty when 
              "sites_outside": ["lib/x.py:9"]}],
  "tests_first": [{"finding": "<id>", "test": "tests/test_a.py::test_size_zero",
                   "command": "pytest tests/test_a.py::test_size_zero", "failed_output": "..."},
-                 {"finding": "<id>", "n/a": "structural: no behavior changes"}],
- "decision_rows": [{"choice": 0, "row": 2, "hunk": "src/a.py:38-44"}],
+                 {"finding": "<id>", "n/a": "structural | docs | unreachable | existing",
+                  "reason": "...", "test": "<named existing test, for existing>"}],
+ "decision_rows": [{"choice": 0, "case": 2, "hunk": "src/a.py:38-44"}],
  "open": [{"question": "what does size=None do?", "choice": "ValueError",
            "precedent": "src/grid.py:31"}],
  "contested": [{"finding": "<id>", "reason": "wrong | plan-conflict", "evidence": "..."}],
  "reach_raised": [{"finding": "<id>", "evidence": "..."}],
  "notes_skipped": [{"finding": "<id>", "reason": "..."}],
- "test_changes": [{"test": "tests/test_a.py::test_scale", "old": "2", "new": "3", "reason": "..."}],
+ "test_changes": [{"kind": "changed | deleted | skipped", "test": "tests/test_a.py::test_scale",
+                   "old": "assert scale == 2", "new": "assert scale == 3", "reason": "..."}],
  "decision": "<path to this round's decision doc>"}
 ```
 
@@ -282,24 +301,33 @@ On a finished fix (cycle 2 or later, `done` or `done_with_concerns`, in a store)
 - A triage entry of kind `patch`, `holistic`, `polish`, or `ruling` precedes the fix's baseline snapshot since the scope's previous snapshot.
 - Every finding the entry sent appears in exactly one of `sweeps[].findings`, `contested`, `reach_raised`, or (notes only) `notes_skipped`.
 - Every row's `hunk` overlaps the diff from the fix baseline. Every `recurring` and `introduced_by_fix` site of a sent finding appears as a row's `site`.
-- Every S3+ finding sent in a patch or ruling round has a `tests_first` entry, and a named test appears in the fix diff.
+- Every S3+ finding sent in a patch or ruling round has a `tests_first` entry. A written test appears in the fix diff. An `n/a` entry has a category from the closed list and a non-empty reason, and an `existing` entry names its test.
 - **Holistic:**
   - `decision` names `<scope>-decision-c<cycle>` for this cycle, and that doc passes `check`.
-  - Every row of every fix choice in it has a `decision_rows` entry whose hunk overlaps the diff.
-- Every modified (not added) line containing an assertion, in a test file that existed at the fix baseline, is covered by a `test_changes` entry. Test files are recognized by path convention (`tests/`, `test_*.py`, `*_test.py`, `*_test.rs`, `tests.rs`). Assertions are recognized by `assert`, `assert_eq!`, `assert_ne!`, `pytest.raises`, `expect`.
+  - Every case of every fix choice in it has a `decision_rows` entry whose hunk overlaps the diff.
+- In a test file that existed at the fix baseline, each of these needs a `test_changes` entry of the matching kind:
+  - a modified line containing an assertion (`changed`);
+  - a deleted line containing an assertion, or a deleted test function (`deleted`);
+  - an added skip or expected-failure marker (`skipped`).
+
+  Test files are recognized by path convention (`tests/`, `test_*.py`, `*_test.py`, `*_test.rs`, `tests.rs`). Assertions are recognized by `assert`, `assert_eq!`, `assert_ne!`, `pytest.raises`, `expect`. Skip markers are recognized by `pytest.mark.skip`, `pytest.mark.xfail`, `pytest.skip(`, `unittest.skip`, `#[ignore]`. Helper and fixture edits need no entry.
 - `labels` on the changed files finds no hit beyond the record's `label false positive:` concerns.
 - The model check exempts `agent: executing-plans`.
 
 ### 6.3 Decision doc (holistic only)
 
-The existing fields stay. Each `fix` choice adds two required fields:
+The existing fields stay, `cases` included. Each `cases` entry gains a required `site` and `test`, and its existing `under_fix` is the test's expected result. Each `fix` choice adds two required fields:
 
 ```json
-{"rows": [{"site": "src/a.py:40", "coupling": "src/b.py:12 reads the padded value", "test": "tests/test_a.py::test_pad", "expect": "pad=1.5 → refused at to_spec()"}],
- "premise": "what the choice assumes, and the probe that confirmed it"}
+{"cases": [{"case": "ordinal padding 1.5 to band", "site": "src/scale.py:120",
+            "test": "tests/test_scale.py::test_band_padding", "today": "refused at render",
+            "under_fix": "refused at to_spec()", "result": "fixed"}],
+ "couplings": [{"site": "src/merge.py:88", "effect": "reads the padded value"}],
+ "premise": {"assumption": "padding is validated before translation", "probe": "what was run or read to confirm it"}}
 ```
 
-A row needs a `site`, a `test`, and an `expect`. `coupling` is optional per row.
+- `couplings` may be empty. Each coupling's `site` must also be some case's `site`, so a named coupling is always tested.
+- `premise` needs a non-empty `assumption` and `probe`.
 
 ### 6.4 Gate record (`<scope>-gate.json`, role `gate`)
 
@@ -318,6 +346,7 @@ A failing test adds one S3 `local` finding whose `rule` names the command and wh
 {"type": "triage", "task": 3, "kind": "patch | holistic | polish | ruling | escalate | done",
  "round": 1, "recheck": "raising | all | gate | none", "tree": "<tree at triage>",
  "findings": [{"id": "<id>", "tier": "note | defer | patch | holistic | held", "rule": "..."}],
+ "contests": [{"finding": "<id>", "reviewer": "<record stem>"}],
  "settled": ["<id>"], "filed": ["<id>"],
  "model": "sonnet", "closed": 2, "survived": 0, "introduced": 1}
 ```
@@ -331,7 +360,7 @@ A failing test adds one S3 `local` finding whose `rule` names the command and wh
 
 | Command | Contract |
 |---|---|
-| `triage --task N\|final` | Computes Sections 4.1-4.2, files deferrals (Section 4.6), and appends one triage entry. Prints the step, the `recheck` set, each finding's id, tier, and rule, the contests to forward, and the settled list. Refuses, writing nothing, while a record in scope is malformed or when the scope has no reviewer record. |
+| `triage --task N\|final` | Computes Sections 4.1-4.2, files deferrals (Section 4.6), and appends one triage entry. Prints the step, the `recheck` set, each finding's id, tier, and rule, the contests to forward with each one's reviewer, and the settled list. Refuses, writing nothing, while a record in scope is malformed or when the scope has no reviewer record. |
 | `gate --task N\|final --test CMD [--lint CMD]` | Section 4.7 step 2. Refuses when the scope has no footprint or nothing staged in it. Exit 0 on pass, 1 on fail. |
 | `ready --task N\|final [--light]` | Lists every blocker in Section 4.7 step 1. Exit 0 only with none. |
 | `baseline TREE --task N\|final` | Prints the round's kind, `recheck`, decision path (holistic), findings, and contests. Errors with no fix-kind triage entry before that snapshot. |
@@ -340,7 +369,7 @@ A failing test adds one S3 `local` finding whose `rule` names the command and wh
 | `note --kind follow-up --rule TEXT` | `--rule` is optional; `report` groups follow-ups by it. |
 | `snapshot --task N --label L` | Plain baseline: task, label, tree. |
 | `run-state`, `read`, `stats`, `report` | Render triage entries in place of fix counts and routes. `stats` prints per round: kind, model, closed, survived, introduced. `report` shows the close batch grouped by rule. |
-| `task_brief.py` | Also refuses a missing `Verify:` command or an unanswered `open:` row in `Cases:`. |
+| `task_brief.py` | Also refuses a missing `Verify:` command, an `open:` row in `Cases:`, or a `Cases:` row without `→`/`->` (Section 4.10 exemptions apply). |
 
 Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`.
 
@@ -365,15 +394,20 @@ Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`
 | Tier from severity × reach only; flags don't route | A local regression has a known site and a failing test: patch work. A wrong design shows up as broad reach. T42 recurred three cycles under decision docs, and T49 converged only when the rule became named rows. | Recurring or fix-caused S3+ forced holistic (2026-11-04 draft) |
 | Holistic only for S3+ contract and `root cause:` | 45% of later findings were fix-caused, mostly by decision choices. The engine is the heavy route and a defect source, so it runs where breadth demands it. | Holistic after any patch with open work |
 | Two fix rounds of either kind, then the user | Bounded by structure, not a counter with route flags. A holistic first round can still be followed by a patch for a new local bug. | "A patch never follows a fix round"; escalate after any holistic round |
-| Task-wide decision doc with rows and a premise probe | T16 halted after 7 per-finding docs ("We need a coherent design!"). Four docs had wrong premises, each costing a cycle. "Named neither its coupling" was a recurring cause. | A doc per finding; a pre-build doc review (another correlated LLM pass) |
+| Task-wide decision doc; its existing `cases` table gains site and test; couplings must be cases; premise with probe | T16 halted after 7 per-finding docs ("We need a coherent design!"). Four docs had wrong premises, each costing a cycle. "Named neither its coupling" was a recurring cause. Extending `cases` keeps one table. | A doc per finding; a parallel `rows` table beside `cases`; a pre-build doc review (another correlated LLM pass) |
 | Sweep rows mapped to hunks; tests first | 26% of later findings were the same rule at the next site or a decided item left unbuilt. Partial builds were claimed complete (T42, T43). The dominant test complaint was tests that can't fail. | Free-text sweeps; tests after the fix |
+| Tests-first `n/a` from a closed category list | Some S3+ findings can't have a failing test, and forcing one produces fake tests (T54). Categories make overuse countable, and `existing` avoids duplicating a test that already fails. | Free-text `n/a`; no escape |
+| Test changes cover edits, deletions, and skips | Deleting or skipping a failing test is a more common shortcut than editing its expectation (T35 was an edit) | Assertion edits only; any test-file line (noisy); reviewer judgment only |
 | Search evidence: command or inspected list | Many rules can't be grepped. A forced pattern proves nothing. | Command always required; free text |
 | Re-check = raising reviewers over fix diff plus consumers | Only 7% of later findings were fresh re-reads, and the user reports real bugs concentrate in the fix and its callers | Every reviewer re-reads everything |
 | Notes ride along, never re-reviewed; skips go to close | Trivial routes cost 17% of fix-round reviewer dispatches for about 4% of fix-round findings. The user wants minor debt decided once at close. | First-polish re-check rules (2026-11-04 draft) |
-| Contest: reviewer concedes or holds; settled findings need new code to reopen | Contests were 2.5% of findings and settled cheaply. The real gaps were a re-raised excluded item (T40), a false completion claim (T43), and an unjustified test flip (T35). | Every contest parked for the user |
+| Contest: reviewer answers each contest explicitly; settled findings need new code to reopen | Contests were 2.5% of findings and settled cheaply. An explicit verdict means a finding closes only after someone read the evidence. The real gaps were a re-raised excluded item (T40), a false completion claim (T43), and an unjustified test flip (T35). | Every contest parked for the user; concede by silence |
+| A failed ruling offers "land as-is" with a recommendation | T16 and T28 hit the cap three times each. Stopping should be one word, chosen by the user with the round history in view. | A hard ceiling on total rounds |
 | Open choices follow precedent, defaulted in the batch | 61 of 144 rulings defined behavior the plan left open, and almost all picked the recommendation. A precedent keeps choices coherent. | Coder stops on every gap; provisional orchestrator rulings (35 reversals in the run) |
 | Stage batch with a recommendation per item; parked tasks don't commit | One interruption per stage, and one reply when the user agrees. Not committing avoids re-entry on a committed task (F5). | One question per item; committing and re-opening on override |
-| `Cases:` as named rows; `open:` rows answered at pre-flight | 127 of 682 first-review findings were plan gaps. Rows with expected results are what made T49 converge. | Leaving plan quality to the rigor change |
+| `Cases:` as rows with expected results, shape-checked by `task_brief.py`; `open:` rows answered at pre-flight | 127 of 682 first-review findings were plan gaps. T49's root cause was principles where rows belonged, and rows with expected results made it converge. The arrow check catches that at plan time. | Leaving plan quality to the rigor change; prose-only row rule; a named test per row in the plan |
+| `triage` files deferrals itself, once each | Records keep only their latest cycle, so deriving the close batch at the end would lose earlier skips. Orchestrator filing is a loop in the prompt. | Orchestrator files; derive at report time |
+| executing-plans uses a per-call `--light` | Misuse is hypothetical and visible in `report` | A run-level mode; inferring light from absent records (an unreviewed SDD task would pass) |
 | Scripted gate replaces per-task review-lite | Lite re-reviewed what reviewers had approved. Its unique checks moved to the gate and quality reviewers. Gate failures caused 1% of rework. | Keeping per-task lite |
 | Lite stays at `final` | Cross-task drift was invisible per task and was all 5 non-trivial `final` fixes | Spec and quality reviewers at `final` (no brief to judge against) |
 | executing-plans stays light | It's the path for small work. The full loop would make it as heavy as SDD. | Adopting the full loop; retiring it |
@@ -415,8 +449,9 @@ Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`
   - skipped notes, S1-S2 contract findings, and outside sites are filed once as follow-ups with their rule, and nothing else is.
 - **Re-check set:** each step's entry names exactly the set in Section 4.2.
 - **Contest and settlement:**
-  - a contested finding not re-raised closes;
-  - one re-raised with `holds` is held;
+  - a contest answered `concede` closes its finding;
+  - one answered `hold` is held and parks the task;
+  - a re-check record missing an answer to a forwarded contest is refused;
   - `reopens` with a site outside changed lines is refused;
   - `reopens` with a site in changed lines is accepted.
 - **Open choices:**
@@ -433,10 +468,10 @@ Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`
   - a sent finding uncovered or covered twice;
   - a row whose hunk misses the diff;
   - a flagged site missing from the rows;
-  - an S3+ patch finding without `tests_first`;
-  - a holistic fix without this round's passing decision doc, or with an unmapped decision row;
-  - a decision fix choice without rows or premise;
-  - an unjustified modified assertion in a pre-existing test;
+  - an S3+ patch finding without `tests_first`, or an `n/a` outside the category list;
+  - a holistic fix without this round's passing decision doc, or with an unmapped decision case;
+  - a decision case without site or test, a coupling that isn't a case, or a missing premise;
+  - an unjustified modified or deleted assertion, deleted test function, or added skip marker in a pre-existing test file;
   - a sweep without search evidence;
   - a deferral inside the footprint;
   - unlisted label hits;
@@ -450,7 +485,8 @@ Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`
   - `ready` lists each blocker, including parked and open-choice blockers;
   - `complete` refuses without a matching passing gate;
   - `--light` skips exactly the triage, held, and open-choice checks and is recorded.
-- **Plan contract:** `task_brief.py` refuses a missing `Verify:` command and an unanswered `open:` row.
+- **Plan contract:** `task_brief.py` refuses a missing `Verify:` command, an `open:` row, and a principle-style `Cases:` row, and accepts grouped rows, `n/a — <reason>`, and the refactor form.
+- **Escalation batch:** a task returning after a failed ruling round offers "land as-is" with a recommendation based on its last round's closed and introduced counts.
 - **Whole-change:** a fix commits only after `gate` passes. Lite re-reviews the fix commit after a patch, or the full package after a holistic round.
 - **Removals:** removed commands and flags are rejected. Schema-1 records are refused with the migration message.
 - **Telemetry:** triage entries carry round, model, closed, survived, and introduced, and `stats` prints them per task.
@@ -487,8 +523,8 @@ Removed: `fix-count`, and `snapshot --non-trivial`, `--decision`, `--settled-by`
 - **executing-plans:** Section 4.9, and its description.
 - **lean-plan:** the `Cases:` row rule, `open:` rows, the `Verify:` exit-0 rule, its offer wording for the light path, and Self-Review.
 - **Coders and `implementer-prompt.md`:** sweeps with rows and evidence, tests first, open choices, contest, reach raise, `test_changes`, `decision_rows`, the `root cause:` path format, running `Verify:`, and reading the round from `baseline`.
-- **Reviewers:** tags, `holds`, `reopens`, settled findings, the re-check scope, consumer search, the CLAUDE.md and sentinel checks, and the open-choice rule.
+- **Reviewers:** tags, `contests` verdicts, `reopens`, settled findings, the re-check scope, consumer search, the CLAUDE.md and sentinel checks, and the open-choice rule.
 - **review-lite:** tags at `final`, and the public-symbol reach rule.
-- **remediating-issues per-task variant:** task-wide, holistic only, opus, with rows and premise.
+- **remediating-issues per-task variant:** task-wide, holistic only, opus; `cases` with site and test, `couplings`, and `premise`.
 - **verification-before-completion:** the completion report's close batch.
 - **Docs and release:** `execution-mechanics.md`, `reference/ledger.md`, `reference/agents.md`, `the-pipeline.md`, `getting-started.md`, the README, the slides, and the CHANGELOG.
