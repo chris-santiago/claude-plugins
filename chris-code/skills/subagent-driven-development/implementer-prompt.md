@@ -31,19 +31,31 @@ Agent tool:
     ## On a fix (cycle >= 2 only; omit this section on a first attempt)
 
     Fix baseline: [FIX_BASELINE]. Task files: [TASK_FILES].
-    Reviewer records: [REVIEWER_RECORDS]. Decision doc: [DECISION_DOC or "none"].
-    User ruling: [the logged ruling, verbatim, or "none"].
-    Review checklist(s): [REVIEW_CHECKLISTS or "none" for an all-trivial batch].
+    Reviewer records: [REVIEWER_RECORDS].
+    User ruling: [the logged ruling, verbatim, on a ruling round, or "none"].
+    Review checklist(s): [REVIEW_CHECKLISTS].
     A fix dispatch missing the baseline or task files is malformed: return
     NEEDS_CONTEXT naming it.
     Before changing anything, run
     `python3 [SCRIPTS_DIR]/ledger.py baseline [FIX_BASELINE] --task <your task> --store <your record's directory>`.
-    `decision: <path>` must be the decision doc above, at the cycle you're
-    writing; implement its choices.
-    `settled-by: cases` means every non-trivial finding only reports a case
-    the brief's Cases: line lists; `settled-by: ruling` means this dispatch
-    quotes the user's ruling. `trivial` and `unrecorded` need nothing more.
+    It prints the round (patch, holistic, ruling, or polish) and the
+    findings sent to you; a holistic round also names its decision doc.
     If it errors or doesn't match this dispatch, return NEEDS_CONTEXT quoting it.
+    - patch or ruling: for each finding, sweep its rule across the task's
+      files and the consumers of what you change, list every site as a row
+      in `sweeps` (the hunk that fixes it, or `already_correct`), record the
+      search (`searched` command and result, or `inspected`), and write a
+      failing test first for each finding of severity 3 or more
+      (`tests_first`, or an `n/a` category: structural, docs, unreachable,
+      existing). A ruling round implements the quoted ruling.
+    - holistic: implement the decision doc case by case, tests first; map
+      each case to its hunk in `decision_rows` and set `decision` to the
+      doc's path.
+    - polish: fix each note, or skip it with a reason in `notes_skipped`.
+    Notes (severity 1-2) ride along in any round the same way. A finding
+    you believe is wrong, or that conflicts with the plan, goes in
+    `contested` with evidence instead of being fixed. A fix that needs a
+    contract change stops before making it: add it to `reach_raised`.
 
     ## Before You Begin
 
@@ -59,20 +71,25 @@ Agent tool:
 
     ## Your Job
 
-    1. Implement exactly what the brief specifies
-       (every case on its `Cases:` line, each with a test; on a fix,
-       every input and site in each finding's class; report an unlisted
-       case you handle in concerns as `unlisted case: ...`, which alone
-       doesn't make your status DONE_WITH_CONCERNS; a root cause you
-       trace to code the brief doesn't cover is not yours to fix: report
-       it in concerns as `root cause: ...` with its evidence and reach,
-       re-listed verbatim on every attempt until a fix implements it,
-       and return DONE_WITH_CONCERNS)
+    1. Implement exactly what the brief specifies: every row on its
+       `Cases:` line, each with a test. An unlisted case you handle goes in
+       concerns as `unlisted case: ...`. Behavior the brief leaves
+       undefined: do what the codebase already does for the nearest
+       analogous case and record it in `open` with that `precedent` site
+       (or `no_precedent` and your reasoning); the user confirms these in a
+       batch. A root cause you trace to code the brief doesn't cover is not
+       yours to fix: report it in concerns as `root cause: <path>[:<line>]
+       <evidence and reach>`, outside your task's files, re-listed verbatim
+       on every attempt until a fix implements it. None of these entries
+       alone makes your status DONE_WITH_CONCERNS
     2. Write tests (following TDD if the brief says to). RED proofs and pinned
        fixtures must be produced by the real path under test, or a documented
-       mirror of it — a hand-built shape the production path never emits
-       proves nothing
-    3. Verify implementation works
+       mirror of it: a hand-built shape the production path never emits
+       proves nothing. Changing an assertion in a test that already
+       existed, deleting one, or skipping one needs a `test_changes` entry
+       with the reason
+    3. Run the brief's `Verify:` command exactly and record it as
+       `tests.command`: the commit gate runs it and passes only on exit 0
     4. Self-review against your embedded checklist (on a fix, also against the quality
        reviewer checklist the dispatch supplies). Comments state behavior, never
        the review process: run `python3 [SCRIPTS_DIR]/ledger.py labels HEAD
@@ -115,7 +132,8 @@ Agent tool:
     Write a JSON record to [RECORD_FILE] before returning — a separate absolute
     path from the report file, supplied by the dispatch; never compute it
     yourself. Every field is required (except the fix-only `diagnosis`,
-    `hunk_map`, and `consumers_checked`, which a first attempt omits); an
+    `hunk_map`, and `consumers_checked`, which a first attempt omits, and
+    the evidence fields from `sweeps` to `decision`, written when used); an
     absent field is a contract violation, and an explicit empty value is a
     real answer, not an omission. No
     agent-written timestamps — file mtime is the only time source. After
@@ -144,10 +162,19 @@ Agent tool:
       "diagnosis": {"root_cause": "...", "end_state": "...", "resolves_cluster": "..."},
       "hunk_map": [{"site": "file:lines", "implements": "<finding or decision-doc choice>"}],
       "consumers_checked": [{"symbol": "...", "consumers": ["file:line"], "verified": "..."}],
+      "sweeps": [{"findings": ["task-5-spec-reviewer#issues[1a2b3c4d]"], "rule": "size must be a positive int", "rows": [{"site": "src/grid.py:40", "hunk": "src/grid.py:38-44"}], "searched": {"command": "rg -n 'size' src/", "result": "1 match: src/grid.py:40"}, "sites_outside": []}],
+      "tests_first": [{"finding": "task-5-spec-reviewer#issues[1a2b3c4d]", "test": "tests/test_grid.py::test_size_zero", "command": "<the command you ran>", "failed_output": "<its failing output>"}],
+      "open": [{"question": "what does size=None do?", "choice": "raise ValueError", "precedent": "src/grid.py:31"}],
+      "contested": [{"finding": "<id>", "reason": "wrong | plan-conflict", "evidence": "..."}],
+      "reach_raised": [{"finding": "<id>", "evidence": "..."}],
+      "notes_skipped": [{"finding": "<id>", "reason": "..."}],
+      "test_changes": [{"kind": "changed | deleted | skipped", "test": "...", "old": "...", "new": "...", "reason": "..."}],
+      "decision_rows": [{"choice": 0, "case": 0, "hunk": "src/grid.py:38-44"}],
+      "decision": "<the decision doc path, on a holistic round>",
       "report": "[REPORT_FILE]"
     }
 
-    - `schema` — contract version; always `1`.
+    - `schema` — contract version; always `2`.
     - `agent` — the subagent_type this dispatch used (typically `general-purpose`
       for this fallback template).
     - `role` — always `coder`.
@@ -207,8 +234,15 @@ Agent tool:
       empty if none), and `verified` (how each was confirmed). Update a
       consumer the fix breaks and map that hunk; a cross-language or
       public-API consumer gets `verified: escalated: <reason>`, a concerns
-      entry, and DONE_WITH_CONCERNS. Empty list when the fix
-      changed no symbol's signature or behavior.
+      entry, and DONE_WITH_CONCERNS. An entry with no consumers carries the
+      search that found none (`searched` or `inspected`). Empty list when
+      the fix changed no symbol's signature or behavior.
+    - `sweeps`, `tests_first`, `contested`, `reach_raised`, `notes_skipped`,
+      `decision_rows`, `decision`: see "On a fix" above. `check` holds a
+      finished fix to its round: every finding sent appears exactly once
+      among sweeps, contests, reach raises, and (notes only) skips; every
+      row's hunk is in the fix diff; a holistic fix maps every case.
+    - `open`, `test_changes`: see Your Job steps 1 and 2.
 
     Return to the orchestrator only: status (DONE | DONE_WITH_CONCERNS | BLOCKED |
     NEEDS_CONTEXT), the changed-file list, a one-line test summary, and any concerns.

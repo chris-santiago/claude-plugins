@@ -177,6 +177,28 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                                   f"{path.name}: fix-mode field {field_name!r} missing "
                                   "from the contract's record example")
 
+    def test_every_coder_contract_example_is_a_valid_record_with_its_evidence(self):
+        # A coder copying its example writes the evidence `check` holds a
+        # fix to; with one status and one value per enum, it validates.
+        evidence = ("sweeps", "tests_first", "open", "contested", "reach_raised",
+                    "notes_skipped", "test_changes", "decision_rows", "decision")
+        coders = [p for p in CONTRACT_FILES if _load_record_example(p)["role"] == "coder"]
+        self.assertEqual(len(coders), 4)
+        for path in coders:
+            with self.subTest(contract=path.name):
+                data = _load_record_example(path)
+                for field_name in evidence:
+                    self.assertIn(field_name, data)
+                for entry in data["contested"]:
+                    entry["reason"] = _one_of(entry["reason"], ledger.CONTEST_REASONS, path)
+                for entry in data["test_changes"]:
+                    entry["kind"] = _one_of(entry["kind"], ledger.TEST_CHANGE_KINDS, path)
+                sweep = data["sweeps"][0]
+                for key in ("findings", "rule", "rows", "searched", "sites_outside"):
+                    self.assertIn(key, sweep)
+                # The template's `"task": N` placeholder loads as 0.
+                ledger.validate_record({**data, "status": "done", "task": data["task"] or 5})
+
     def test_every_reviewer_contract_example_is_a_valid_tagged_record(self):
         # A reviewer copying its example writes findings triage can route:
         # with the status its findings imply, the example passes `check`'s
