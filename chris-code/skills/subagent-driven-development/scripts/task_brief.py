@@ -73,7 +73,7 @@ __all__ = [
 EXIT_USAGE = 2
 EXIT_INVALID = 3
 
-TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+[0-9]+(?:[^0-9]|$)")
+TASK_ANY_RE = re.compile(r"^#+[ \t]+Task[ \t]+([0-9]+)(?:[^0-9]|$)")
 CONSUMES_LINE_RE = re.compile(r"^\s*[-*+]\s*Consumes:\s*(.*)$")
 HEADING_LEVEL_RE = re.compile(r"^(#{1,6})[ \t]")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -212,6 +212,14 @@ def extract_task_entry(plan_text: str, task_n: str) -> str:
         raise UsageError(
             f"task {task_n} not found in plan (no heading matching 'Task {task_n}')")
     return entry
+
+
+def plan_task_numbers(plan_text: str) -> list[int]:
+    """The plan's task numbers, from its 'Task N' headings outside code fences."""
+    numbers = {int(match.group(1)) for line, infence
+               in _iter_fence_aware(plan_text.splitlines(keepends=True))
+               if not infence and (match := TASK_ANY_RE.match(line))}
+    return sorted(numbers)
 
 
 def extract_section(text: str, heading_word: str) -> str:
@@ -753,6 +761,7 @@ def run(request: BriefRequest) -> Path:
     try:
         ledger.record_delivery(store_dir, int(request.task_n), [n["id"] for n in required],
                                "brief")
+        ledger.record_plan(store_dir, str(plan_path))
     except OSError as e:
         raise UsageError(f"wrote {out_path} but could not log its delivery: {e}") from e
 

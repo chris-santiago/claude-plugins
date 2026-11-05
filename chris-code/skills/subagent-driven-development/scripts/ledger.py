@@ -84,6 +84,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import store_state  # this script's directory: what the store holds, as pure rules
 import triage as triage_rules  # this script's directory: the loop's pure routing rules
 
 __all__ = [
@@ -300,6 +301,10 @@ HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 class RecordError(Exception):
     """A record violates the contract; message names field, value, allowed set."""
+
+
+class UsageError(Exception):
+    """A command was given an argument it can't use; the CLI exits 2."""
 
 
 @dataclass
@@ -1098,6 +1103,8 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         elif entry.get("type") == "waiver":
             lines.append(f"- task {entry.get('task')} waived `{entry.get('note')}`: "
                           f"{entry.get('reason', '')}")
+        elif entry.get("type") == "plan":
+            lines.append(f"- plan `{entry.get('path')}`")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -1111,6 +1118,74 @@ def completed_task_ids(log: list[dict]) -> list[str]:
     amended 2026-08-27)."""
     return list(dict.fromkeys(
         str(entry.get("task")) for entry in log if entry.get("type") == "complete"))
+
+
+def recorded_plans(log: list[dict]) -> list[str]:
+    """The plans this store has run, in the order first recorded."""
+    return list(dict.fromkeys(e["path"] for e in log
+                              if e.get("type") == "plan" and isinstance(e.get("path"), str)))
+
+
+def plan_key(store_dir: Path, plan: str, base: Path | None = None) -> str:
+    """A plan's identity in the store: its path relative to the store's repo
+    toplevel, POSIX-style, so `./x.md`, `x.md` and the absolute path are one
+    plan. A relative path resolves against `base` (default: the current
+    directory). A plan outside the repo keeps its absolute path."""
+    path = Path(plan)
+    resolved = (path if path.is_absolute() else (base or Path.cwd()) / path).resolve()
+    repo = _store_repo(store_dir)
+    if repo is not None:
+        try:
+            return resolved.relative_to(repo.resolve()).as_posix()
+        except ValueError:
+            pass
+    return resolved.as_posix()
+
+
+def record_plan(store_dir: Path, plan: str) -> None:
+    """Log the plan a brief was built from, once per plan."""
+    key = plan_key(store_dir, plan)
+    with store_lock(store_dir):
+        if key not in recorded_plans(load_progress_log(store_dir)):
+            _append_progress(store_dir, {"type": "plan", "path": key, "at": _now()})
+
+
+def store_verdict(store_dir: Path, plan: str | None) -> tuple[str, str]:
+    """`store_state.classify`'s verdict and next action for `plan` (default:
+    the latest recorded plan), from the facts the progress log holds."""
+    log = load_progress_log(store_dir)
+    plans = recorded_plans(log)
+    repo = _store_repo(store_dir)
+    if plan is not None:
+        if not Path(plan).is_file():
+            raise UsageError(f"--plan {plan}: no such file")
+        key: str | None = plan_key(store_dir, plan)
+        plan_file: Path | None = Path(plan)
+    else:
+        key = plans[-1] if plans else None
+        plan_file = None if key is None else (Path(key) if Path(key).is_absolute()
+                                              else (repo or Path.cwd()) / key)
+    tasks = _plan_tasks(plan_file) if plan_file is not None and plan_file.is_file() else []
+    notes = [store_state.parse_remediation_note(str(e.get("note", ""))) for e in log
+             if e.get("type") == "progress" and e.get("task") == "final"]
+    remediation = next((n for n in reversed(notes) if n is not None), None)
+    if remediation is not None:
+        remediation = {**remediation,
+                       "plan": plan_key(store_dir, remediation["plan"], base=repo)}
+    return store_state.classify(
+        has_entries=bool(log), plans=plans, plan=key,
+        plan_first_index=next((i for i, e in enumerate(log) if e.get("type") == "plan"
+                               and e.get("path") == key), None),
+        completed=set(completed_task_ids(log)), plan_tasks=tasks,
+        close_round_indices=[i for i, e in enumerate(log) if e.get("type") == "close_round"],
+        remediation=remediation)
+
+
+def _plan_tasks(plan_file: Path) -> list[int]:
+    # Imported here: task_brief imports this module, so a module-level
+    # import would be a cycle.
+    import task_brief
+    return task_brief.plan_task_numbers(plan_file.read_text(encoding="utf-8"))
 
 
 def close_rounds(log: list[dict]) -> int:
@@ -1445,7 +1520,10 @@ def _parked_items(log: list[dict], records: list[Record], task: int) -> list[str
     return items
 
 
-def cmd_run_state(store_dir: Path) -> None:
+def cmd_run_state(store_dir: Path, plan: str | None = None) -> None:
+    verdict, action = store_verdict(store_dir, plan)
+    print(f"Verdict: {verdict}")
+    print(f"Next: {action}")
     print(render_run_state(load_progress_log(store_dir), load_records(store_dir)))
 
 
@@ -3502,9 +3580,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_clear.add_argument("--discard-open", action="store_true",
                          help="clear even with open notes (the user confirmed the loss)")
 
-    sub.add_parser("run-state", parents=[store_parent],
-                    help="where the run stands: stages, task states, notes owed, open "
-                         "disclosures and questions, handles, the latest checkpoint")
+    p_run_state = sub.add_parser("run-state", parents=[store_parent],
+                                  help="the store's verdict (fresh, resume, remediation, "
+                                       "finished, foreign, ambiguous) and next action, then "
+                                       "where the run stands")
+    p_run_state.add_argument("--plan", help="the plan you are running (default: the latest "
+                                            "plan the store recorded)")
     sub.add_parser("report", parents=[store_parent],
                     help="what the completion report lists: rulings, follow-ups, "
                          "unlisted cases, dispositions, disclosures, questions")
@@ -3596,13 +3677,16 @@ def main() -> None:
         elif args.command == "clear":
             cmd_clear(store_dir, args.discard_open)
         elif args.command == "run-state":
-            cmd_run_state(store_dir)
+            cmd_run_state(store_dir, args.plan)
         elif args.command == "report":
             cmd_report(store_dir)
         else:
             # A subcommand registered in build_parser but not wired here
             # must not exit 0 having done nothing.
             raise RuntimeError(f"unhandled command: {args.command}")
+    except UsageError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
     except (RuntimeError, RecordError) as e:
         _fail(args.command, f"ERROR: {e}")
     except subprocess.CalledProcessError as e:

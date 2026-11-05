@@ -3494,6 +3494,109 @@ class TestReady(TriageStoreTestCase):
         self.assertIn("task 3", report.split("## Ran light")[1])
 
 
+class TestPlansAndVerdict(GitRepoTestCase):
+    """The store records the plans it ran, and `run-state` opens with a
+    verdict on the store and the next action."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.repo / ".sdd"
+        ledger.ensure_store(self.store)
+        (self.repo / "plans").mkdir()
+        (self.repo / "plans" / "a.md").write_text(
+            "# A\n\n### Task 1: one\n\n### Task 2: two\n\n```\n### Task 9: fenced\n```\n",
+            encoding="utf-8")
+        (self.repo / "plans" / "b.md").write_text("# B\n\n### Task 3: three\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(self.repo)
+        self.addCleanup(os.chdir, old)
+
+    def _plans(self) -> list[str]:
+        return ledger.recorded_plans(ledger.load_progress_log(self.store))
+
+    def _state(self, plan: str | None = None) -> list[str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_run_state(self.store, plan)
+        return out.getvalue().splitlines()
+
+    def test_recording_a_plan_is_idempotent_whatever_its_spelling(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        ledger.record_plan(self.store, "./plans/a.md")
+        ledger.record_plan(self.store, str(self.repo / "plans" / "a.md"))
+        self.assertEqual(self._plans(), ["plans/a.md"])
+
+    def test_a_second_plan_is_recorded_separately(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        ledger.record_plan(self.store, "plans/b.md")
+        self.assertEqual(self._plans(), ["plans/a.md", "plans/b.md"])
+
+    def test_run_state_opens_with_the_verdict_and_next_action(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        ledger.cmd_append(self.store, "progress", 1, "started")
+        lines = self._state("plans/a.md")
+        self.assertEqual(lines[0], "Verdict: resume")
+        self.assertEqual(lines[1], "Next: resume at task 1")
+        self.assertIn("# Run state", lines)
+
+    def test_a_fenced_task_heading_is_not_a_plan_task(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        _completable(self.store, 1)
+        ledger.cmd_append(self.store, "complete", 1, "commits a..b")
+        _completable(self.store, 2)
+        ledger.cmd_append(self.store, "complete", 2, "commits b..c")
+        self.assertIn("whole-change gate", self._state("plans/a.md")[1])
+
+    def test_without_plan_the_latest_recorded_plan_is_used(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        ledger.record_plan(self.store, "plans/b.md")
+        self.assertEqual(self._state()[1], "Next: resume at task 3")
+
+    def test_an_unrecorded_plan_is_foreign(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        self.assertEqual(self._state("plans/b.md")[0], "Verdict: foreign")
+
+    def test_a_missing_plan_file_is_a_usage_error(self):
+        with self.assertRaisesRegex(ledger.UsageError, "nope.md"):
+            self._state("plans/nope.md")
+
+    def test_a_store_from_before_plans_were_recorded_is_ambiguous(self):
+        _completable(self.store, 1)
+        ledger.cmd_append(self.store, "complete", 1, "commits a..b")
+        self.assertEqual(self._state("plans/a.md")[0], "Verdict: ambiguous")
+
+    def test_a_remediation_note_makes_its_plan_a_remediation_run(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        ledger._append_progress(self.store, {"type": "close_round", "round": 1, "head": "h",
+                                             "note": "plans/a.md"})
+        ledger.cmd_append(self.store, "progress", "final",
+                          "close-gate remediation r1: plan ./plans/b.md, decision d.md, "
+                          "intent i.md, front-end none")
+        ledger.record_plan(self.store, "plans/b.md")
+        lines = self._state("plans/b.md")
+        self.assertEqual(lines[0], "Verdict: remediation")
+        self.assertIn("task 3", lines[1])
+        self.assertIn("plans/b.md", self._state("plans/a.md")[1])
+
+    def test_read_renders_a_plan_entry(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_read(self.store)
+        self.assertIn("plan `plans/a.md`", out.getvalue())
+        self.assertNotIn("unknown entry", out.getvalue())
+
+    def test_the_cli_exits_2_on_a_missing_plan_and_prints_the_verdict_otherwise(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        run = lambda *a: subprocess.run([sys.executable, str(LEDGER_PY), "run-state",  # noqa: E731
+                                         "--store", str(self.store), *a],
+                                        cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(run("--plan", "plans/nope.md").returncode, 2)
+        done = run("--plan", "plans/a.md")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertTrue(done.stdout.startswith("Verdict: resume\n"))
+
+
 class TestRoundRendering(TriageStoreTestCase):
     """`run-state`, `read` and `stats` show the rounds triage logged."""
 

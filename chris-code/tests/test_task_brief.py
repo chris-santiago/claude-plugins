@@ -759,6 +759,21 @@ class TestBriefNotes(TaskBriefTestCase):
             task_brief.run(self._args(task_n="3a"))
         self.assertFalse(any(self.store.rglob("*brief*")))
 
+    def test_building_briefs_records_the_plan_once(self):
+        self._brief()
+        self._brief()
+        plans = ledger.recorded_plans(ledger.load_progress_log(self.store))
+        self.assertEqual(plans, [self.plan_path.resolve().as_posix()])
+
+    def test_a_failed_validation_records_no_plan(self):
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.run(self._args(intent=" ", spec=str(self.spec_path)))
+        self.assertEqual(ledger.recorded_plans(ledger.load_progress_log(self.store)), [])
+
+    def test_plan_task_numbers_skip_fenced_headings(self):
+        text = "# P\n\n### Task 1: a\n\n## Task 2: b\n\n```\n### Task 7: not a task\n```\n"
+        self.assertEqual(task_brief.plan_task_numbers(text), [1, 2])
+
     def test_rebuilding_logs_a_new_delivery(self):
         self._brief()
         late = _file_note(self.store, "task-note", "late note", for_task=2)
