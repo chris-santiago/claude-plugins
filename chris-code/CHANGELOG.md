@@ -8,6 +8,21 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-05 — Test rigor scales with the project
+
+Every project got the same testing depth: plans listed esoteric boundaries, reviewers rated any missing boundary case S3, and the mutation tester gated on every covered survivor. On a large Python and Rust codebase that depth earns its cost. On a small app it meant fix rounds over inputs no caller produces, and mutation runs out of proportion to the code. Real runs also showed that the costly misses were tests that couldn't fail, not missing edge cases. This release resolves a rigor level per project and scales plans, tests, reviews and mutation to it, while holding the line on tests that can't fail at every level.
+
+### Added
+- **`rigor.py` and three levels.** `light`, `standard` and `heavy` resolve from the repo. Counted source lines set the base: under 5,000 is `light`, 5,000 to 30,000 is `standard`, and over 30,000 is `heavy`. Tests, vendored code, generated code and tracked symlinks don't count. A language binding raises the level to at least `standard`, and numeric or ML dependencies raise it one step, capped at `heavy`. A `Test rigor: <level>` line in the repo-root `CLAUDE.md` overrides the heuristic, and a value that isn't a level is an error. The level prints with its reasons, and nothing is stored.
+- **`rigor.md`, the per-role table.** One reference defines what each level means for plan rows, coder tests, a reviewer's severity for a missing case, mutation breaks, mutation gating and the mutation model. Every consuming contract points to it, and a drift test checks they still do.
+- **Task raises.** A plan task's `- Rigor: standard|heavy` line raises that task above the project level. `task_brief.py` refuses a line that would lower it or names no level.
+
+### Changed
+- **Briefs state the level.** Every brief opens with `Rigor: <level> (<reasons>)`, and the coder and every reviewer of the task apply it.
+- **Reviewers rate missing cases by level.** Below `heavy`, a missing case no `Cases:` row names and no realistic caller hits is S1-S2, so it doesn't start a fix round. A test that can't fail is S3 at every level, and a missed `Cases:` row stays S3 or higher.
+- **Mutation scales per file.** Verification resolves the project level and the files raised tasks touched (`rigor.py --files`), and passes them with the plan path. At `light` the tester makes at most two breaks per changed function and gates only on behavior a `Cases:` row names (or, without a plan, on functions the change's tests call directly), and runs on sonnet. `heavy` keeps the previous behavior. The report states the level applied to each file.
+- **Planning and TDD start realistic.** lean-plan resolves the level before writing rows and checks them against it in self-review. TDD's edge-case list is now the `heavy` list, preceded by "realistic first".
+
 ## [0.11.0] - 2026-11-05 — The per-task loop routes by severity and reach
 
 SDD's per-task loop routed reviewer findings on the orchestrator's trivial/non-trivial call. Minor items went down the heavy route, every non-trivial finding got its own decision doc, and a two-fix counter with route flags decided when to stop. In a long real run that came to 2.39 fix cycles and about two user rulings per task, and 45% of later findings were introduced by the previous fix, most of them by a decision doc's choice. This release replaces the routing with a script-computed triage over findings the reviewers tag, holds each fix to the evidence its round requires, and moves plan gaps up front.

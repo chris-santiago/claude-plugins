@@ -231,5 +231,28 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
         ledger.validate_record({**data, "status": "escalated"})
 
 
+SKILLS_DIR = CHRIS_CODE_DIR / "skills"
+# Every contract that applies a row of the rigor table (rigor-level spec §5).
+RIGOR_CONSUMERS = [
+    *(AGENTS_DIR / f"{lang}-{role}.md" for lang in ("python", "rust", "pytorch")
+      for role in ("coder", "quality-reviewer")),
+    AGENTS_DIR / "spec-reviewer.md",
+    AGENTS_DIR / "mutation-tester.md",
+    IMPLEMENTER_PROMPT,
+    SKILLS_DIR / "test-driven-development" / "SKILL.md",
+    SKILLS_DIR / "lean-plan" / "SKILL.md",
+    SKILLS_DIR / "verification-before-completion" / "SKILL.md",
+]
+
+
+class TestRigorConsumers(unittest.TestCase):
+    def test_every_consumer_points_to_the_rigor_table(self):
+        # A consumer that restates its row instead drifts when the table changes.
+        for path in RIGOR_CONSUMERS:
+            with self.subTest(contract=path.relative_to(CHRIS_CODE_DIR)):
+                self.assertTrue("rigor.md" in path.read_text(encoding="utf-8"),
+                                f"{path.name} doesn't name rigor.md")
+
+
 if __name__ == "__main__":
     unittest.main()

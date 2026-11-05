@@ -53,4 +53,14 @@ Records carry schema version 2. A record or store written by an earlier release 
 | `diff-since <tree> [<path>...]` | The diff since a snapshot tree, new files included, limited to the task's files |
 | `labels <tree> [<path>...]` | Lists review-process labels (task and finding ids, cycle numbers, commit hashes) on lines added since the tree; exits 1 if any |
 
-`task_brief.py`, beside it, builds each task's brief from the plan, embeds the task's notes from the store, and logs their delivery. It refuses a task whose `Verify:` line has no backticked command, whose `Cases:` still carries an `open:` row, or whose `Cases:` has a row that doesn't separate its situation from its expected result with `→` or `->`. A row may group cases (`size=0, size<0 → ValueError`), and `n/a — <reason>` and the refactor form (`preserves <behavior>; covered by <tests>`) are exempt.
+`task_brief.py`, beside it, builds each task's brief from the plan, embeds the task's notes from the store, and logs their delivery. It refuses a task whose `Verify:` line has no backticked command, whose `Cases:` still carries an `open:` row, or whose `Cases:` has a row that doesn't separate its situation from its expected result with `→` or `->`. A row may group cases (`size=0, size<0 → ValueError`), and `n/a — <reason>` and the refactor form (`preserves <behavior>; covered by <tests>`) are exempt. It also opens the brief with the task's rigor level, and refuses a task `Rigor:` line below the project level.
+
+`rigor.py`, beside it, resolves the test rigor level (see `rigor.md` in the skill directory for what each level changes). It reads tracked files only and writes nothing.
+
+| Command | What it prints |
+|---|---|
+| `rigor.py [--repo DIR]` | The project level and its reasons, e.g. `standard: 4,200 source lines (python); numpy +1` |
+| `rigor.py --plan PLAN --task N` | Task N's level: the project level, or the higher one its `Rigor:` line sets |
+| `rigor.py --plan PLAN --store STORE --files` | The project line, then `<level> <path>` for each file a raised task's latest stage footprint lists |
+
+It exits 2 on a `Test rigor:` value in `CLAUDE.md` that isn't a level, or a task `Rigor:` line below the project level or naming no level.

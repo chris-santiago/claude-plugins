@@ -112,7 +112,9 @@ Vague name, tests mock not code
 - Clear name
 - Real code (no mocks unless unavoidable)
 
-**Edge cases to consider** (from bug-hunter's adversarial testing categories):
+**Realistic first.** Test the cases a realistic caller hits before anything esoteric: the main paths, the errors a caller in the repo, user input, or a file or network input can trigger, and the boundaries the code explicitly handles. How far past that to go is set by the rigor level: the brief's `Rigor:` line, or without a brief, the project level from SDD's `scripts/rigor.py`. The levels are defined in SDD's `rigor.md`. Every test must be able to fail on the broken code at every level.
+
+**Edge cases at `heavy`** (from bug-hunter's adversarial testing categories):
 - Null/NaN/None in key fields; all-null input
 - Empty inputs (zero rows, empty strings, empty collections)
 - Single-element / degenerate domain (all values identical)

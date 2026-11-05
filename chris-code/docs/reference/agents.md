@@ -74,7 +74,7 @@ A fix also carries the round's evidence, each field optional and empty when unus
 
 ## Quality review agents (additive — all matching fire)
 
-Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
+Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. Both rate a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
@@ -152,6 +152,7 @@ The mutation step of `verification-before-completion`, and a direct on-demand to
 **Inside an isolated worktree** (dispatched with the Agent tool's `isolation: "worktree"`) it deliberately breaks a piece of the changed code — flips a comparison, changes a boundary, drops a guard — runs the project's own tests, records whether any failed, and reverts the break before the next one. Nothing is installed and no framework is required, so it works in any language with a runnable suite, and it never touches the checkout you develop in. Two modes:
 
 - **Closing-review mode** (Step 6 of the completion gate): scoped to the branch diff, or, in close round 2, to the `Range` it is handed (`<round-1 head>..HEAD`) so only the remediation's lines are mutated. It returns **CONCERNS** only when changed code is executed by a test yet no test fails when the code is broken — the precise signature of a trivial, non-discriminating test. Uncovered breaks (a *missing* test) and breaks it judges behavior-preserving (equivalent) are advisory or discarded, never blocking.
+- **Rigor level** (closing-review only): the dispatch carries the project's rigor level, the plan path, and the files a plan task raised above it (`rigor.py --files`). Each file's level sets how many breaks it gets and which covered survivors gate: at `light` and `standard`, a survivor gates when it changes behavior a `Cases:` row names or sits in a function the change's tests call directly, and the rest are advisory. At `heavy` every covered survivor gates. A `light` run uses sonnet. The report states the level it applied to each file.
 - **On-demand mode**: dispatched directly against a user-designated area, always advisory — a report of breaks the tests missed, no gating verdict.
 
 Because it breaks committed state, the gate assumes the branch work is committed (the same assumption the diff-based design and intent gates make). A non-green baseline or a scope with nothing to mutate is a non-blocking skip.
