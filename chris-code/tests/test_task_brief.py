@@ -647,6 +647,48 @@ def _write_shape_record(store: Path) -> None:
     }), encoding="utf-8")
 
 
+class TestBriefRigor(TaskBriefTestCase):
+    """Every brief states its task's rigor level, and a plan line can only
+    raise it (rigor-level spec §4.2, §4.5)."""
+
+    def setUp(self):
+        super().setUp()
+        subprocess.run(["git", "init", "-q"], cwd=self.tmp, check=True)
+        (self.tmp / "app.py").write_text("x = 1\n" * 1000, encoding="utf-8")
+
+    def _brief(self, rigor_line: str = "") -> str:
+        self.plan_path.write_text(
+            f"# Plan\n\n### Task 2: x\n{rigor_line}- Cases: x → y\n- [ ] Verify: `true`\n",
+            encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.tmp, check=True)
+        return task_brief.run(self._args()).read_text(encoding="utf-8")
+
+    def test_the_level_comes_before_the_task_entry(self):
+        lines = self._brief().splitlines()
+        rigor = lines.index("Rigor: light (1,000 source lines (python))")
+        self.assertLess(rigor, lines.index("## Task entry"))
+
+    def test_a_raising_line_sets_the_task_level(self):
+        self.assertIn("Rigor: heavy (task 2 raised from light; 1,000 source lines (python))",
+                      self._brief("- Rigor: heavy\n"))
+
+    def test_a_lowering_or_unknown_line_is_refused_with_nothing_written(self):
+        (self.tmp / "CLAUDE.md").write_text("Test rigor: heavy\n", encoding="utf-8")
+        for value in ("standard", "extreme"):
+            with self.subTest(value=value):
+                with self.assertRaises(task_brief.BriefValidationError) as ctx:
+                    self._brief(f"- Rigor: {value}\n")
+                for part in ("task 2", f"Rigor: {value}", "heavy: set in CLAUDE.md"):
+                    self.assertIn(part, str(ctx.exception))
+                self.assertFalse(any(self.store.rglob("*brief*")))
+
+    def test_a_store_outside_a_work_tree_takes_standard(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        self.store = Path(outside.name) / "store"
+        self.assertIn("Rigor: standard (", self._brief())
+
+
 def _file_note(store: Path, kind: str, text: str, **kwargs) -> str:
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

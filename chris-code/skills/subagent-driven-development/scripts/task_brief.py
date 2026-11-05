@@ -23,6 +23,10 @@ ever-growing set of punctuation apologies. See find_consumes_pointers.
 Every task entry must also carry a `Cases:` line (the cases its rule
 covers, or `n/a — <reason>`); the brief carries it verbatim with the entry.
 
+Every brief opens with the task's rigor level and its reasons (rigor.py),
+resolved in the repo the store lives in. A task's `Rigor:` line can raise
+its level above the project's, never lower it.
+
 Cross-task notes come only from the ledger store: every open task-note for
 the task, every active run-note, and every open disclosure the task owns.
 After writing the brief, the script logs a delivery listing exactly the
@@ -32,7 +36,9 @@ Exit codes: 2 usage (bad args, missing files, task not found, --spec
 required but absent, an unreadable progress log), 3 missing/empty
 --intent, a stale Consumes: pointer (naming each), a missing/empty
 Cases: line, a Cases: row that states no result or is still an open
-question, or a Verify: line without a backticked command.
+question, a Verify: line without a backticked command, a Rigor: line
+below the project level or naming no level, or a bad CLAUDE.md
+`Test rigor:` value.
 
 Usage: python3 task_brief.py PLAN_FILE TASK_N --intent TEXT
            [--spec PATH] [--constraints-from PLAN] [--store DIR] [-o OUT]
@@ -53,6 +59,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 # to import it as a sibling module.
 sys.path.insert(0, str(SCRIPTS_DIR))
 import ledger  # noqa: E402
+import rigor  # noqa: E402
 
 __all__ = [
     "EXIT_USAGE", "EXIT_INVALID",
@@ -633,15 +640,30 @@ def _cases_blocks(task_entry: str) -> list[list[str]]:
     return blocks
 
 
+def task_rigor(task_entry: str, task_n: str, store_dir: Path) -> rigor.Resolution:
+    """The task's rigor level, resolved in the repo the store lives in.
+    A `Rigor:` line below the project level, an unknown one, or a bad
+    CLAUDE.md value raises BriefValidationError."""
+    try:
+        project = rigor.project_level(store_dir.parent)
+        return rigor.task_level(project, rigor_line(task_entry), task_n)
+    except rigor.RigorError as e:
+        raise BriefValidationError(str(e)) from e
+
+
 def build_brief(*, task_n: str, task_entry: str, intent: str, notes: tuple[str, ...],
                  constraints: str | None, shapes_text: str,
-                 disclosures: tuple[str, ...] = ()) -> str:
-    """Assemble the brief markdown (spec Sec 4): the task's plan entry,
-    the intent, the cross-task notes, the disclosures the task owes (only
-    when it owes one), the verbatim Constraints section (only when
-    --constraints-from was given), and the always-present shared-shapes
-    section (no flag disables it)."""
-    parts = [f"# Task {task_n} brief", "", "## Task entry", "", task_entry.rstrip("\n"), ""]
+                 disclosures: tuple[str, ...] = (),
+                 level: rigor.Resolution | None = None) -> str:
+    """Assemble the brief markdown (spec Sec 4): the task's rigor level
+    (when resolved), its plan entry, the intent, the cross-task notes, the
+    disclosures the task owes (only when it owes one), the verbatim
+    Constraints section (only when --constraints-from was given), and the
+    always-present shared-shapes section (no flag disables it)."""
+    parts = [f"# Task {task_n} brief", ""]
+    if level is not None:
+        parts += [f"Rigor: {level.level} ({'; '.join(level.reasons)})", ""]
+    parts += ["## Task entry", "", task_entry.rstrip("\n"), ""]
     parts += ["## Intent", "", intent, ""]
     parts += ["## Cross-task notes", ""]
     parts += [f"- {note}" for note in notes] if notes else ["(none)"]
@@ -700,6 +722,7 @@ def run(request: BriefRequest) -> Path:
         store_dir = ledger.get_store_dir(request.store)
     except RuntimeError as e:
         raise UsageError(str(e)) from e
+    level = task_rigor(task_entry, request.task_n, store_dir)
     shapes_text = ledger.render_shapes(ledger.list_shapes(ledger.load_records(store_dir)))
     try:
         required = ledger.required_notes(ledger.load_progress_log(store_dir), int(request.task_n))
@@ -710,7 +733,7 @@ def run(request: BriefRequest) -> Path:
 
     brief = build_brief(task_n=request.task_n, task_entry=task_entry, intent=intent,
                          notes=notes, constraints=constraints, shapes_text=shapes_text,
-                         disclosures=disclosures)
+                         disclosures=disclosures, level=level)
 
     try:
         if request.output is not None:
