@@ -47,10 +47,13 @@ Agent tool:
       search (`searched` command and result, or `inspected`), and write a
       failing test first for each finding of severity 3 or more
       (`tests_first`, or an `n/a` category: structural, docs, unreachable,
-      existing). A ruling round implements the quoted ruling.
+      existing). A ruling round implements the quoted ruling; one that
+      sends no finding overrides an open behavior choice, so change the
+      behavior and its tests to match.
     - holistic: implement the decision doc case by case, tests first; map
       each case to its hunk in `decision_rows` and set `decision` to the
-      doc's path.
+      doc's path. A finding the doc escalates goes in `contested` with the
+      doc's evidence, unfixed; the reviewer that raised it answers.
     - polish: fix each note, or skip it with a reason in `notes_skipped`.
     Notes (severity 1-2) ride along in any round the same way. A finding
     you believe is wrong, or that conflicts with the plan, goes in
@@ -76,12 +79,15 @@ Agent tool:
        concerns as `unlisted case: ...`. Behavior the brief leaves
        undefined: do what the codebase already does for the nearest
        analogous case and record it in `open` with that `precedent` site
-       (or `no_precedent` and your reasoning); the user confirms these in a
-       batch. A root cause you trace to code the brief doesn't cover is not
+       (or `no_precedent` and your reasoning); a contract change the plan
+       didn't specify goes there too. The user confirms these in a batch;
+       re-list each verbatim on every attempt until the user answers it.
+       A root cause you trace to code the brief doesn't cover is not
        yours to fix: report it in concerns as `root cause: <path>[:<line>]
        <evidence and reach>`, outside your task's files, re-listed verbatim
-       on every attempt until a fix implements it. None of these entries
-       alone makes your status DONE_WITH_CONCERNS
+       on every attempt until a decision doc claims it (a fix choice's
+       `findings`, or its `excluded`). None of these entries alone makes
+       your status DONE_WITH_CONCERNS
     2. Write tests (following TDD if the brief says to). RED proofs and pinned
        fixtures must be produced by the real path under test, or a documented
        mirror of it: a hand-built shape the production path never emits
@@ -210,8 +216,10 @@ Agent tool:
       record path: read your own prior record first and write its cycle + 1.
       Exception: if that prior record's status was needs_context or
       blocked, keep its cycle (an answered question is not a new fix).
-      Keep it too when the orchestrator sends back only `labels` hits:
-      that is the same attempt, not a fix.
+      Keep it too when the orchestrator sends back only `labels` hits or
+      a gate lint failure: that is the same attempt, not a fix. A fix
+      dispatch with no prior record at the path (the first fix at `final`)
+      writes cycle 2.
     - `diagnosis` — required from cycle 2 on a done or done_with_concerns
       record (`check` enforces it): an object
       with non-empty `root_cause`, `end_state`, and `resolves_cluster`.
@@ -224,7 +232,8 @@ Agent tool:
       defended choices it records, not a mechanism of your own; your
       root_cause restates the doc's.
     - `hunk_map` — fix records only (cycle >= 2, done or done_with_concerns):
-      one entry per changed hunk (at least one), read from
+      one entry per changed hunk (empty only when the fix claims no hunk:
+      no sweep row with a `hunk`, no `decision_rows`), read from
       `python3 [SCRIPTS_DIR]/ledger.py diff-since [FIX_BASELINE] [TASK_FILES]`
       (cycle-1 work is uncommitted, so plain git diff mixes it in):
       `site` (file:lines) and `implements` (the finding or decision-doc
