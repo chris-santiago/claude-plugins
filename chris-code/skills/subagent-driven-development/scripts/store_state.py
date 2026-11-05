@@ -23,19 +23,25 @@ Verdict = Literal["fresh", "resume", "remediation", "finished", "foreign", "ambi
 
 CLOSE_ROUND_CAP = 2
 REMEDIATION_NOTE_PREFIX = "close-gate remediation r1:"
+# The skills whose close resumes after round 2 (verification's remediation note).
+FRONT_ENDS = ("remediating-issues", "coherent-change")
 _NOTE_FIELD_RE = re.compile(r"\b(?P<key>plan|front-end)\s+(?P<value>[^,\s]+)")
+# The note is free text the orchestrator wrote, and its fields come back as
+# instructions in `Next:`, so only a plain Markdown path counts as a plan.
+_PLAN_PATH_RE = re.compile(r"^[A-Za-z0-9._/+-]+\.md$")
 
 
 def parse_remediation_note(note: str) -> dict | None:
     """The plan and front-end a close-gate remediation note names, or None
-    when the note isn't one (or names no plan). A front-end of `none` is None."""
+    when the note isn't one or its plan isn't a plain `.md` path. A front-end
+    other than a known skill (`none` included) is None."""
     if not note.strip().lower().startswith(REMEDIATION_NOTE_PREFIX):
         return None
     fields = {m["key"]: m["value"] for m in _NOTE_FIELD_RE.finditer(note)}
-    if "plan" not in fields:
+    if not _PLAN_PATH_RE.match(fields.get("plan", "")):
         return None
     front_end = fields.get("front-end")
-    return {"plan": fields["plan"], "front_end": None if front_end in (None, "none") else front_end}
+    return {"plan": fields["plan"], "front_end": front_end if front_end in FRONT_ENDS else None}
 
 
 def classify(*, has_entries: bool, plans: list[str], plan: str | None,

@@ -85,6 +85,15 @@ def _triaged(store: Path, task: int | str = 1, kind: str = "patch") -> None:
                                     "recheck": "raising", "findings": []})
 
 
+_FIX_FIELDS = {"diagnosis": {"root_cause": "r", "end_state": "e", "resolves_cluster": "c"}, "hunk_map": [], "consumers_checked": []}
+
+
+def _baseline(store: Path, task: int | str = 3) -> str:
+    """The fix baseline triage took for the scope's latest fix step."""
+    return [e for e in ledger.load_progress_log(store)
+            if e.get("type") == "snapshot" and e.get("task") == task][-1]["tree"]
+
+
 def _completable(store: Path, task: int | str) -> None:
     """Make `task` ready to complete for tests about something else: a done
     triage entry and a passing gate (a store outside git skips the blob
@@ -2482,6 +2491,11 @@ class TriageStoreTestCase(GitRepoTestCase):
     def coder(self, **fields) -> Path:
         return self.write("task-3-python-coder.json", _coder(task=3, **fields))
 
+    def fixed(self, **fields) -> Path:
+        """The coder's finished fix from the round triage just routed."""
+        return self.coder(**{"cycle": 2, "baseline": _baseline(self.store, 3), **_FIX_FIELDS,
+                             **fields})
+
     def triage(self, task: int | str = 3) -> str:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -2557,13 +2571,13 @@ class TestTriageCommand(TriageStoreTestCase):
         issue, other = _finding(sites=["a.py:1"]), _finding(sites=["a.py:1"], rule="other rule")
         self.spec(issue, other)
         self.triage()  # patch
-        self.coder(cycle=1, contested=[{"finding": self.spec_id(issue), "reason": "wrong",
-                                        "evidence": "a.py:1 already guards size"}])
+        self.fixed(contested=[{"finding": self.spec_id(issue), "reason": "wrong",
+                               "evidence": "a.py:1 already guards size"}])
         self.spec(issue, other, contests=[{"finding": self.spec_id(issue), "verdict": "hold",
                                            "reason": "the guard skips None"}])
         self.triage()  # second patch for `other`; issue held
         self.assertEqual(self.entries()[-1]["held"], [self.spec_id(issue)])
-        self.coder(report="the second fix")  # it lands, and `other` is still raised
+        self.fixed(cycle=3, report="the second fix")  # it lands, and `other` is still raised
         self.triage()  # rounds spent: escalate
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
         ledger.cmd_resolve(self.store, _entry_id("task-3-spec-reviewer", "issues", other),
@@ -2579,7 +2593,7 @@ class TestTriageCommand(TriageStoreTestCase):
         self.spec(issue, other)
         self.triage()
         ledger.cmd_resolve(self.store, self.spec_id(other), "user ruling: waive")
-        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        self.fixed(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
         self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "concede",
                                     "reason": "the guard exists"}])
         self.triage()
@@ -2587,6 +2601,88 @@ class TestTriageCommand(TriageStoreTestCase):
         self.assertEqual(last["kind"], "done")
         self.assertEqual(set(last["settled"]), {self.spec_id(issue), self.spec_id(other)})
         self.assertTrue(last["tree"])
+
+
+class TestTriageBaseline(TriageStoreTestCase):
+    """A fix step takes its own snapshot and prints it; an open fix is
+    reprinted, never re-derived."""
+
+    def snapshots(self) -> list[dict]:
+        return [e for e in ledger.load_progress_log(self.store) if e.get("type") == "snapshot"]
+
+    def finish(self, baseline: str, **fields) -> None:
+        self.coder(cycle=2, baseline=baseline, **_FIX_FIELDS, **fields)
+
+    def test_a_fix_step_snapshots_right_after_its_entry_and_prints_the_dispatch_lines(self):
+        for kind, issue in (("patch", _finding()), ("holistic", _finding(reach="contract")),
+                            ("polish", _finding(severity=1))):
+            with self.subTest(kind=kind):
+                self.store = ledger.ensure_store(self.repo / f".sdd-{kind}")
+                ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+                self.spec(issue)
+                out = self.triage()
+                log = ledger.load_progress_log(self.store)
+                self.assertEqual([e["type"] for e in log[-2:]], ["triage", "snapshot"])
+                self.assertEqual(log[-2]["kind"], kind)
+                self.assertEqual(log[-1]["label"], f"triage {kind} round {log[-2]['round']}")
+                self.assertIn(f"Fix baseline: {log[-1]['tree']}", out)
+                self.assertIn("Task files: a.py", out)
+
+    def test_done_and_escalate_take_no_snapshot(self):
+        self.spec()
+        out = self.triage()
+        self.assertEqual(self.snapshots(), [])
+        self.assertNotIn("Fix baseline", out)
+
+    def test_an_unchanged_reprint_shows_the_same_baseline(self):
+        self.spec(_finding())
+        first = self.triage()
+        self.assertEqual(self.triage(), first)
+        self.assertEqual(len(self.snapshots()), 1)
+
+    def test_an_open_fix_is_reprinted_when_the_coder_pauses(self):
+        self.spec(_finding())
+        first = self.triage()
+        tree = self.snapshots()[0]["tree"]
+        self.coder(cycle=1, status="needs_context")
+        (self.repo / "a.py").write_text("x = 1\npartial = True\n", encoding="utf-8")
+        self.assertEqual(self.triage(), first)
+        self.assertEqual(len(self.entries()), 1)
+        self.assertEqual([s["tree"] for s in self.snapshots()], [tree])
+
+    def test_a_finished_fix_and_a_re_check_start_the_next_step(self):
+        issue, other = _finding(), _finding(rule="other rule")
+        self.spec(issue, other)
+        self.triage()
+        tree = self.snapshots()[0]["tree"]
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.finish(tree)
+        self.spec(other)
+        out = self.triage()
+        self.assertEqual(len(self.entries()), 2)
+        [_, second] = self.snapshots()
+        self.assertNotEqual(second["tree"], tree)
+        self.assertIn(f"Fix baseline: {second['tree']}", out)
+
+    def test_the_first_fix_at_final_stays_open_until_a_final_coder_carries_it(self):
+        self.write("final-python-review-lite.json",
+                   _review_lite(task="final", status="block", findings=[_finding()]))
+        first = self.triage("final")
+        self.write("final-python-review-lite.json",
+                   _review_lite(task="final", status="block", findings=[_finding(), _finding(rule="r2")]))
+        self.assertEqual(self.triage("final"), first)
+        tree = self.snapshots()[0]["tree"]
+        self.write("final-python-coder.json", _coder(task="final", cycle=2, baseline=tree, **_FIX_FIELDS))
+        self.triage("final")
+        self.assertEqual(len([e for e in self.entries() if e["task"] == "final"]), 2)
+
+    def test_baseline_resolves_a_triage_taken_snapshot(self):
+        self.spec(_finding())
+        self.triage()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, self.snapshots()[0]["tree"], 3)
+        self.assertIn("round: patch", out.getvalue())
 
 
 class TestResolveFindings(TriageStoreTestCase):
@@ -2666,6 +2762,10 @@ class TestFixChecks(TriageStoreTestCase):
         return [self.spec_id(i) for i in issues]
 
     def snapshot(self) -> str:
+        """The baseline triage took for the round `review` routed."""
+        return _baseline(self.store, 3)
+
+    def manual_snapshot(self) -> str:
         tree = ledger.snapshot_tree(self.repo)
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
@@ -2697,7 +2797,7 @@ class TestFixChecks(TriageStoreTestCase):
 
     def test_a_fix_with_no_triage_before_its_snapshot_is_refused(self):
         self.spec(self.issue)
-        tree = self.snapshot()
+        tree = self.manual_snapshot()
         self.edit()
         with self.assertRaises(ledger.RecordError) as ctx:
             self.fix(tree, [self.spec_id(self.issue)])
@@ -2832,10 +2932,11 @@ class TestFixChecks(TriageStoreTestCase):
 
     def test_a_fix_whose_window_ends_in_a_non_fix_step_is_refused(self):
         # Triage moved on (done) after routing the round: the fix is stale.
-        sent = self.review()
+        self.spec(self.issue)
+        sent = [self.spec_id(self.issue)]
         ledger.cmd_resolve(self.store, sent[0], "user ruling: waive")
         self.triage()
-        tree = self.snapshot()
+        tree = self.manual_snapshot()
         self.edit()
         with self.assertRaises(ledger.RecordError) as ctx:
             self.fix(tree, sent)
@@ -2867,9 +2968,7 @@ class TestHolisticFix(TriageStoreTestCase):
         self.write("task-3-decision-c2.json", _decision(
             [fid], task=3, reviewer_records=["task-3-spec-reviewer"],
             choices=[_fix_choice([fid])]))
-        tree = ledger.snapshot_tree(self.repo)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
+        tree = _baseline(self.store, 3)
         (self.repo / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
         fields = dict(cycle=2, baseline=tree, changed_files=["a.py"],
                       diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
@@ -2889,10 +2988,7 @@ class TestHolisticFix(TriageStoreTestCase):
         self.spec(*issues)
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "holistic")
-        tree = ledger.snapshot_tree(self.repo)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, "pre-fix c2", tree)
-        return tree
+        return _baseline(self.store, 3)
 
     def holistic_fix(self, tree: str, **fields) -> None:
         record = dict(cycle=2, baseline=tree, changed_files=["a.py"], decision="task-3-decision-c2",
@@ -2972,7 +3068,7 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
         self.write("task-3-decision-c2.json", _decision(
             [], task=3, reviewer_records=["task-3-spec-reviewer"], choices=[],
             excluded=[{"finding": self.root_id(), "reason": "moving the guard is its own refactor"}]))
-        self.coder(concerns=[self.root], report="still lists it")
+        self.fixed(concerns=[self.root], report="still lists it")
         self.triage()
         self.coder(report="dropped it once the decision claimed it")
         self.triage()
@@ -2985,6 +3081,7 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
         self.coder(concerns=[self.root])
         self.spec()
         self.triage()
+        self.fixed(concerns=[self.root])
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_resolve(self.store, self.root_id(), "not needed")
         ledger.cmd_resolve(self.store, self.root_id(), "user ruling: leave the guard where it is")
@@ -3037,10 +3134,8 @@ class TestEndToEnd(TriageStoreTestCase):
         ledger.cmd_check(str(path))
 
     def snapshot(self, label: str) -> str:
-        tree = ledger.snapshot_tree(self.repo)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_snapshot(self.store, 3, label, tree)
-        return tree
+        """The baseline triage took for the round it just routed."""
+        return _baseline(self.store, 3)
 
     def fix(self, cycle: int, tree: str, **fields) -> None:
         self.check(self.coder(cycle=cycle, baseline=tree, changed_files=["a.py", "tests/test_size.py"],
@@ -3423,7 +3518,7 @@ class TestReady(TriageStoreTestCase):
         issue = _finding()
         self.spec(issue)
         self.triage()
-        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        self.fixed(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
         self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])
         self.triage()
         self.assertIn(self.spec_id(issue), self.ready()[1])
@@ -3609,7 +3704,7 @@ class TestRoundRendering(TriageStoreTestCase):
         choice = {"question": "size=None?", "choice": "ValueError", "precedent": "a.py:1"}
         self.spec(issue)
         self.triage()
-        self.coder(open=[choice], contested=[{"finding": self.spec_id(issue), "reason": "wrong",
+        self.fixed(open=[choice], contested=[{"finding": self.spec_id(issue), "reason": "wrong",
                                               "evidence": "e"}])
         self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])
         self.triage()

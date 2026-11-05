@@ -2854,11 +2854,15 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
     with store_lock(store_dir):
         inputs, reviewers, coder = triage_inputs(store_dir, task)
         digest = _inputs_digest(inputs, reviewers, coder)
-        latest = latest_triage(load_progress_log(store_dir), task)
-        if latest is not None and latest.get("inputs") == digest:
-            # Nothing changed since the last step: asking again (after a
-            # compaction, say) must not start another round.
-            print(_render_triage(latest, []))
+        log = load_progress_log(store_dir)
+        latest = latest_triage(log, task)
+        baseline = _round_baseline(log, task)
+        if latest is not None and (latest.get("inputs") == digest
+                                   or _fix_is_open(store_dir, log, task, baseline)):
+            # Nothing changed since the last step, or its fix hasn't
+            # finished: asking again (after a compaction or a paused coder)
+            # must not start another round.
+            print(_render_triage(latest, [], baseline, task_footprint(log, task)))
             return
         result = triage_rules.derive(**inputs)
         texts = {c["id"]: c for c in inputs["file_candidates"]}
@@ -2874,7 +2878,41 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             cycle = (coder.data["cycle"] if coder else 1) + 1
             entry["decision"] = f"{scope_prefix(log, task)}-decision-c{cycle}"
         _append_progress(store_dir, entry)
-    print(_render_triage(entry, filed_notes))
+        snapshot = None
+        if entry["kind"] in triage_rules.FIX_KINDS and entry["tree"] is not None:
+            # The fix's baseline, taken in the same lock so nothing sits
+            # between the step and the snapshot that `fix_round` pairs.
+            snapshot = {"type": "snapshot", "task": task, "tree": entry["tree"],
+                        "label": f"triage {entry['kind']} round {entry['round']}"}
+            _append_progress(store_dir, snapshot)
+        footprint = task_footprint(load_progress_log(store_dir), task)
+    print(_render_triage(entry, filed_notes, snapshot, footprint))
+
+
+def _round_baseline(log: list[dict], task: int | str) -> dict | None:
+    """The snapshot triage took for the scope's latest step, or None when
+    that step is not a fix or took none (a store from before triage
+    snapshotted, or one outside git)."""
+    at = max((i for i, e in enumerate(log) if e.get("type") == TRIAGE_ENTRY
+              and e.get("task") == task), default=None)
+    if at is None or at + 1 >= len(log):
+        return None
+    following = log[at + 1]
+    if following.get("type") == "snapshot" and following.get("task") == task \
+            and str(following.get("label", "")).startswith("triage "):
+        return following
+    return None
+
+
+def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
+                 baseline: dict | None) -> bool:
+    """True while the latest step's fix hasn't finished: no coder record in
+    the scope is done (or done with concerns) from that step's baseline."""
+    if baseline is None:
+        return False
+    coders = _scope_records(store_dir, scope_prefix(log, task)).coders
+    return not any(r.data.get("status") in DIAGNOSIS_STATUSES
+                   and r.data.get("baseline") == baseline["tree"] for r in coders)
 
 
 def _inputs_digest(inputs: dict, reviewers: list[Record], coder: Record | None) -> str:
@@ -2907,9 +2945,13 @@ def _is_gate_stem(stem: str) -> bool:
     return stem.endswith("-gate")
 
 
-def _render_triage(entry: dict, filed: list[str]) -> str:
+def _render_triage(entry: dict, filed: list[str], baseline: dict | None = None,
+                   footprint: set[str] | None = None) -> str:
     lines = [f"{_scope_name(entry['task'])} triage: {entry['kind']} "
              f"(round {entry['round']}, recheck {entry['recheck']})"]
+    if baseline is not None:
+        lines.append(f"Fix baseline: {baseline['tree']}")
+        lines.append(f"Task files: {' '.join(sorted(footprint or ()))}")
     for finding in entry["findings"]:
         lines.append(f"  [{finding['id']}] {finding['tier']}: {finding['rule']} "
                      f"({finding['source']})")

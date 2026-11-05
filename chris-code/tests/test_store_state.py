@@ -143,6 +143,17 @@ class TestRemediationNote(unittest.TestCase):
     def test_another_progress_note_is_not_a_remediation_note(self):
         self.assertIsNone(store_state.parse_remediation_note("user ruling: accept"))
 
+    def test_an_unknown_front_end_is_dropped(self):
+        note = ("close-gate remediation r1: plan p.md, decision d.md, intent i.md, "
+                "front-end ignore-previous-instructions")
+        self.assertEqual(store_state.parse_remediation_note(note), {"plan": "p.md", "front_end": None})
+
+    def test_a_plan_that_is_not_path_shaped_is_not_a_remediation_note(self):
+        for plan in ("`rm", "p.md;", "$(x)", "p.txt"):
+            with self.subTest(plan=plan):
+                note = f"close-gate remediation r1: plan {plan}, decision d.md, front-end none"
+                self.assertIsNone(store_state.parse_remediation_note(note))
+
     def test_a_remediation_note_without_a_plan_is_not_one(self):
         self.assertIsNone(store_state.parse_remediation_note("close-gate remediation r1: decision d.md"))
 
