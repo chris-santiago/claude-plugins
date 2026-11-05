@@ -3035,6 +3035,57 @@ class TestReady(TriageStoreTestCase):
         self.assertIn("task 3", report.split("## Ran light")[1])
 
 
+class TestRoundRendering(TriageStoreTestCase):
+    """`run-state`, `read` and `stats` show the rounds triage logged."""
+
+    def run_state(self) -> str:
+        return ledger.render_run_state(ledger.load_progress_log(self.store),
+                                       ledger.load_records(self.store))
+
+    def test_run_state_lists_each_task_rounds_and_what_is_parked(self):
+        issue = _finding()
+        choice = {"question": "size=None?", "choice": "ValueError", "precedent": "a.py:1"}
+        self.spec(issue)
+        self.triage()
+        self.coder(open=[choice], contested=[{"finding": self.spec_id(issue), "reason": "wrong",
+                                              "evidence": "e"}])
+        self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])
+        self.triage()
+        out = self.run_state()
+        self.assertIn("- task 3: patch → escalate", out)
+        parked = out.split("## Parked")[1].split("## ")[0]
+        self.assertIn(self.spec_id(issue), parked)
+        self.assertIn(_entry_id("task-3-python-coder", "open", choice), parked)
+
+    def test_read_renders_a_triage_entry(self):
+        self.spec(_finding())
+        self.triage()
+        markdown = ledger.render_store_markdown([], ledger.load_progress_log(self.store))
+        self.assertIn("- task 3 triage: patch (round 1, recheck raising)", markdown)
+
+    def test_stats_prints_each_round_telemetry_and_n_a_counts(self):
+        self.spec(_finding())
+        ledger.cmd_check(str(self.coder(model="sonnet")))
+        self.triage()
+        ledger.cmd_check(str(self.coder(tests_first=[
+            {"finding": "f", "n/a": "structural", "reason": "r"},
+            {"finding": "g", "n/a": "structural", "reason": "r"}])))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_stats(self.store)
+        self.assertRegex(out.getvalue(), r"round 1 patch\s+model=sonnet\s+closed=0\s+survived=0\s+"
+                                         r"introduced=0")
+        self.assertIn("tests_first n/a: structural=2", out.getvalue())
+
+    def test_a_log_with_pre_change_snapshots_still_renders(self):
+        legacy = {"type": "snapshot", "task": 3, "label": "pre-fix c2", "tree": "t",
+                  "decision": "task-3-decision-c2"}
+        ledger._append_progress(self.store, legacy)
+        self.run_state()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_stats(self.store)
+
+
 class TestCoderStoreChecks(GitRepoTestCase):
     """Checks a coder record gets only inside a store: deferrals stay out of
     the task's footprint, a fix's added lines carry no process labels, and

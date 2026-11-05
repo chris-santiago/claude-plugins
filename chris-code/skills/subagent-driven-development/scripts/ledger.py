@@ -1066,6 +1066,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         elif entry.get("type") == "close_round":
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
+        elif entry.get("type") == TRIAGE_ENTRY:
+            lines.append(f"- {_scope_name(entry.get('task'))} triage: {entry.get('kind')} "
+                          f"(round {entry.get('round')}, recheck {entry.get('recheck')})")
         elif entry.get("type") == "note":
             lines.append(f"- note `{entry.get('id')}` {_describe_note(entry)}")
         elif entry.get("type") == "delivery":
@@ -1316,6 +1319,10 @@ def render_run_state(log: list[dict], records: list[Record]) -> str:
                                      or "(no triage yet)") for task in in_flight]
               or ["(no task in flight)"])
 
+    lines += ["", "## Parked (for the stage's batched question)"]
+    parked = [f"- task {task}: {item}" for task in in_flight for item in _parked_items(log, records, task)]
+    lines += parked or ["(none)"]
+
     lines += ["", "## Notes owed"]
     owed = [f"- task {task}: [{n['id']}] {_describe_note(n)}"
             for task in in_flight for n in undelivered_notes(log, task)]
@@ -1400,6 +1407,28 @@ def render_report(log: list[dict], records: list[Record]) -> str:
     lines += [f"- {_scope_name(e.get('task'))}" for e in log
               if e.get("type") == "complete" and e.get("light")] or ["(none)"]
     return "\n".join(lines)
+
+
+def _parked_items(log: list[dict], records: list[Record], task: int) -> list[str]:
+    """What waits on the user for `task`: an escalation, held findings, and
+    open behavior choices nobody has answered."""
+    items = []
+    entry = latest_triage(log, task)
+    if entry and entry["kind"] == "escalate":
+        open_ids = [f["id"] for f in entry["findings"] if f["tier"] in ("patch", "holistic")]
+        items.append(f"escalated after round {entry['round']}: {', '.join(open_ids) or 'held only'}")
+    if entry and entry.get("held"):
+        items.append(f"held: {', '.join(entry['held'])}")
+    coders = [r for r in records if r.ok and r.data["role"] == "coder"
+              and _scope(r.stem) == f"task-{task}"]
+    coder = _latest_coder(coders)
+    if coder is not None:
+        waived = _user_waived(log)
+        for choice in coder.data.get("open", []):
+            cid = _item_id(coder.stem, "open", choice)
+            if cid not in waived:
+                items.append(f"open choice [{cid}] {choice['question']} → {choice['choice']}")
+    return items
 
 
 def cmd_run_state(store_dir: Path) -> None:
@@ -3040,6 +3069,9 @@ def _history_entry(stem: str, data: dict) -> dict:
     if data.get("role") == "coder":
         entry["model"] = data.get("model")
         entry["baseline"] = data.get("baseline")
+        na = [t["n/a"] for t in data.get("tests_first", []) if isinstance(t, dict) and "n/a" in t]
+        if na:
+            entry["tests_first_na"] = {c: na.count(c) for c in sorted(set(na))}
     return entry
 
 
@@ -3094,6 +3126,27 @@ def cmd_stats(store_dir: Path) -> None:
         flagged = [f"{e.get('record')} c{e.get('cycle') or '?'} ({e[signal]})"
                    for e in history if e.get(signal)]
         print(f"{signal}: {', '.join(flagged) if flagged else 'none'}")
+    _print_rounds(load_progress_log(store_dir))
+    na: dict[str, int] = {}
+    for entry in history:
+        for category, n in (entry.get("tests_first_na") or {}).items():
+            na[category] = na.get(category, 0) + n
+    print("tests_first n/a: " + (", ".join(f"{c}={n}" for c, n in sorted(na.items())) or "none"))
+
+
+def _print_rounds(log: list[dict]) -> None:
+    """Each triage entry by task: its step, the coder model the review
+    judged, and how many findings it closed, saw survive, and saw a fix
+    introduce."""
+    entries = [e for e in log if e.get("type") == TRIAGE_ENTRY]
+    if entries:
+        print("rounds:")
+    for task in sorted({e.get("task") for e in entries}, key=_task_sort_key):
+        print(f"  {_scope_name(task)}")
+        for e in (e for e in entries if e.get("task") == task):
+            print(f"    round {e.get('round')} {e.get('kind')}  model={e.get('model')}  "
+                  f"closed={e.get('closed')}  survived={e.get('survived')}  "
+                  f"introduced={e.get('introduced')}")
 
 
 def _positive_int(value: str) -> int:
