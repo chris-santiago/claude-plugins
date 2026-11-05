@@ -163,8 +163,8 @@ Replace SDD's per-task review-fix loop with script-computed triage over tagged f
   - an S1-S2 `contract` finding, a `notes_skipped` entry, or a `sites_outside` site → filed once as a follow-up with its rule; an outside site covered by a later task's footprint → filed as a task-note for that task; a second `triage` → nothing refiled
   - `resolve <open finding id> --note "user ruling: waive"` → accepted, and the next triage excludes it; with a note not starting `user ruling:` → refused
   - `resolve <open-choice id> --note "user ruling: accept"` → accepted
-  - open: a re-check finding whose id equals a settled finding's id (identical text) but carries no `reopens`: does `check` refuse it?
-  - open: does a ruling round cover every open non-waived finding at the escalation, or only findings a ruling names by id?
+  - a re-check finding whose id equals a settled finding's id (identical text) with no `reopens` → refused, naming the settled id
+  - escalate, one finding waived by `resolve`, then a `user ruling:` entry → ruling round over every other finding open at the escalation
 - [ ] Add `triage_inputs` (records, log, undelivered notes, rulings since the last escalate, footprints) and `latest_triage`; add `cmd_triage` and its subparser; file deferrals through the existing note path.
 - [ ] Add the `contests` completeness and `reopens` store checks to `check_record`.
 - [ ] Extend `_check_resolvable` to finding and open-choice ids.
@@ -245,7 +245,7 @@ Replace SDD's per-task review-fix loop with script-computed triage over tagged f
   - sub-bullet rows each with `→` → accepted; one sub-bullet without → refused, naming it
   - `Cases: n/a — wiring only` → accepted; `Cases: preserves ordering; covered by tests/test_x.py` → accepted
   - a row `open: what does size=None do?` → refused, naming the question
-  - open: how is an inline `Cases:` value with `;`-separated segments checked: does each segment need its own arrow, or the value as a whole?
+  - `Cases: size>0; size=0 → ValueError` → refused, naming the segment `size>0`; `Cases: size>0 → grid; size=0 → ValueError` → accepted (each `;` segment needs its own arrow)
   - fixtures in `test_task_brief.py` that model a valid task → gain a `Verify:` line and arrow rows
 - [ ] Add `validate_verify` and the row-shape and `open:` checks alongside `validate_cases`, called where it is; update the module docstring's exit codes.
 - [ ] Add tests for every case above to `test_task_brief.py`.
@@ -308,9 +308,3 @@ Replace SDD's per-task review-fix loop with script-computed triage over tagged f
 - `! rg -n --glob '!**/site/**' --glob '!**/CHANGELOG.md' -e 'fix-count' -e '--settled-by' -e '--non-trivial' -e 'non_trivial_fix_count' -e '_check_reroute' chris-code` exits 0.
 - `python3 chris-code/skills/subagent-driven-development/scripts/ledger.py triage --help && python3 chris-code/skills/subagent-driven-development/scripts/ledger.py gate --help && python3 chris-code/skills/subagent-driven-development/scripts/ledger.py ready --help` exits 0.
 - After merge, in a new session: one real plan on the new loop; compare its `stats` with the baseline run (2.39 fix cycles per task, 144 rulings, 45% fix-introduced later findings, reviewer dispatches per task). The intent-reviewer checks the intent ledger against it.
-
-## 7. Open questions
-
-- Task 10: an inline `Cases:` value with `;`-separated segments (`size>0; size=0 → ValueError`): does each segment need its own arrow, or does the value need at least one?
-- Task 5: a re-check finding whose id equals a settled finding's id (identical text) but carries no `reopens`: should `check` refuse it? The spec says unmarked restatements can't be detected; identical text can be.
-- Task 5: which findings a ruling round covers: every open non-waived finding at the escalation, or only those a ruling names by id?
