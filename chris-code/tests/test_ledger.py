@@ -2087,6 +2087,9 @@ class TestEscalations(DecisionStoreTestCase):
         self.assertIn("resolve", str(ctx.exception))
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), [])
         ledger.cmd_resolve(self.store, item.id, "user ruling: fix it with a fixture")
+        for unverified in ledger.compute_open_items(ledger.load_records(self.store), set()):
+            if unverified.kind == "cannot_verify":
+                ledger.cmd_resolve(self.store, unverified.id, "claim-checker: holds")
         _completable(self.store, 1)
         ledger.cmd_append(self.store, "complete", 1, "shipped")
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["1"])
@@ -2935,6 +2938,101 @@ class TestGate(TriageStoreTestCase):
         with self.assertRaises(ledger.RecordError) as ctx:
             self.complete()
         self.assertIn("a.py", str(ctx.exception))
+
+
+class TestReady(TriageStoreTestCase):
+    """`ready` lists everything that stops a task from committing; `complete`
+    refuses on the same list."""
+
+    def ready(self, task: int | str = 3, light: bool = False) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_ready(self.store, task, light)
+        return code, out.getvalue()
+
+    def test_a_done_task_with_nothing_open_is_ready(self):
+        self.spec()
+        self.triage()
+        self.assertEqual(self.ready()[0], 0)
+
+    def test_no_triage_yet_blocks(self):
+        code, out = self.ready()
+        self.assertEqual(code, 1)
+        self.assertIn("triage", out)
+
+    def test_a_step_that_isnt_done_blocks(self):
+        self.spec(_finding())
+        self.triage()
+        code, out = self.ready()
+        self.assertEqual(code, 1)
+        self.assertIn("patch", out)
+
+    def test_a_held_finding_blocks(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])
+        self.triage()
+        self.assertIn(self.spec_id(issue), self.ready()[1])
+
+    def test_an_unanswered_open_choice_blocks_until_accepted(self):
+        choice = {"question": "size=None?", "choice": "ValueError", "precedent": "a.py:1"}
+        self.coder(open=[choice])
+        self.spec()
+        self.triage()
+        choice_id = _entry_id("task-3-python-coder", "open", choice)
+        self.assertIn(choice_id, self.ready()[1])
+        ledger.cmd_resolve(self.store, choice_id, "user ruling: accept")
+        self.assertEqual(self.ready()[0], 0)
+
+    def test_notes_escalations_cannot_verify_and_malformed_records_each_block(self):
+        self.spec(cannot_verify=[{"requirement": "r", "why": "w", "should_check": "s"}])
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_note(self.store, "task-note", "carry the helper", for_task=3)
+            ledger.cmd_note(self.store, "question", "bless the goldens?", owner=3)
+        (self.store / "task-3-rust-quality-reviewer.json").write_text("not json")
+        code, out = self.ready()
+        self.assertEqual(code, 1)
+        for fragment in ("undelivered", "question", "cannot_verify", "task-3-rust-quality-reviewer"):
+            self.assertIn(fragment, out)
+
+    def test_an_open_duplication_blocks_only_the_whole_change(self):
+        self.coder(duplication_pending=[{"sites": ["a.py:1"], "wants_owner": "b.py", "why": "x"}])
+        self.spec()
+        self.triage()
+        self.assertEqual(self.ready()[0], 0)
+        self.write("final-python-review-lite.json", _review_lite(task="final"))
+        self.triage("final")
+        self.assertIn("duplication_pending", self.ready("final")[1])
+
+    def test_light_skips_the_triage_checks_only(self):
+        code, _ = self.ready(light=True)
+        self.assertEqual(code, 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_note(self.store, "task-note", "carry the helper", for_task=3)
+        self.assertEqual(self.ready(light=True)[0], 1)
+
+    def test_complete_refuses_with_every_blocker(self):
+        self.spec(_finding())
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_note(self.store, "task-note", "carry the helper", for_task=3)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_append(self.store, "complete", 3, "shipped")
+        for fragment in ("patch", "undelivered"):
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_a_light_completion_is_recorded_and_reported(self):
+        _write(self.store, "task-3-gate.json", {
+            "schema": 2, "agent": "ledger", "role": "gate", "task": 3, "status": "pass",
+            "tree": self._git("write-tree").strip(), "files": [], "commands": [], "findings": [],
+            "recurring": [], "introduced_by_fix": []})
+        ledger.cmd_append(self.store, "complete", 3, "shipped", light=True)
+        self.assertTrue(ledger.load_progress_log(self.store)[-1]["light"])
+        report = ledger.render_report(ledger.load_progress_log(self.store), [])
+        self.assertIn("task 3", report.split("## Ran light")[1])
 
 
 class TestCoderStoreChecks(GitRepoTestCase):

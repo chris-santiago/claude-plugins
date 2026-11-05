@@ -651,6 +651,40 @@ class TestReport(DeliveryTestCase):
         self.assertIn(f"[{owed}] OPEN disclosure", out)
 
 
+class TestCloseBatch(DeliveryTestCase):
+    """Follow-ups carry the rule they fall under; the report groups them by
+    rule and offers one batch remediation over them."""
+
+    def test_a_follow_up_keeps_its_rule_without_changing_its_id(self):
+        with_rule = self._out(ledger.cmd_note, self.store, "follow-up", "pad check at c.py:4",
+                              rule="padding is validated").strip()
+        entry = next(n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                     if n["id"] == with_rule)
+        self.assertEqual(entry["rule"], "padding is validated")
+        self.assertEqual(with_rule, ledger.note_id("follow-up", "pad check at c.py:4"))
+
+    def test_a_rule_on_another_kind_or_a_blank_rule_is_refused(self):
+        self.assertRefused("--rule", ledger.cmd_note, self.store, "task-note", "x",
+                           for_task=3, rule="r")
+        self.assertRefused("--rule", ledger.cmd_note, self.store, "follow-up", "x", rule="  ")
+
+    def test_the_report_groups_open_follow_ups_by_rule_and_offers_one_batch(self):
+        for text, rule in (("a.py:1", "size is positive"), ("b.py:2", "size is positive"),
+                           ("c.py:3", "names are nouns"), ("free-form", None)):
+            self._out(ledger.cmd_note, self.store, "follow-up", text, rule=rule)
+        settled = self._note("follow-up", "already done")
+        ledger.cmd_resolve(self.store, settled, "fixed in task 2")
+        out = self._out(ledger.cmd_report, self.store)
+        body = out.split("## Follow-ups")[1].split("### Unlisted")[0]
+        headings = [line for line in body.splitlines() if line.startswith("### ")]
+        self.assertEqual(headings, ["### names are nouns", "### size is positive", "### (no rule)"])
+        self.assertEqual(body.count("Batch Path"), 1)
+        self.assertIn(f"[{settled}] already done: fixed in task 2", out)
+
+    def test_no_open_follow_up_means_no_batch_offer(self):
+        self.assertNotIn("Batch Path", self._out(ledger.cmd_report, self.store))
+
+
 class TestGuardedClear(StoreTestCase):
     def test_open_follow_ups_disclosures_or_questions_block_clear(self):
         for kind, kwargs in (("follow-up", {}), ("disclosure", {"owner": "close"}),

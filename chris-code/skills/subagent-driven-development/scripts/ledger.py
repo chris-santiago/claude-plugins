@@ -1223,22 +1223,6 @@ def cmd_notes(store_dir: Path, task: int, deliver: bool = False, waive: str | No
         print(f"[{n['id']}] for the user: {_describe_note(n)}")
 
 
-def _check_task_notes_settled(log: list[dict], task: int) -> None:
-    """A task completes only with every required note delivered and every
-    disclosure and question it owns resolved."""
-    undelivered = [n["id"] for n in undelivered_notes(log, task)]
-    owned = [n["id"] for n in owned_open_notes(log, task)]
-    problems = []
-    if undelivered:
-        problems.append(f"undelivered notes {undelivered} (rebuild the brief, or "
-                        "`notes --deliver`, or `notes --waive ID --reason ...`)")
-    if owned:
-        problems.append(f"open disclosures or questions it owns {owned} (`resolve` each: "
-                        f"where a disclosure landed, or \"{RULING_PREFIX} ...\" for a question)")
-    if problems:
-        raise RecordError(f"task {task} cannot complete with " + "; and ".join(problems))
-
-
 def _check_close_notes(log: list[dict]) -> None:
     """The close starts with no debt left: no open disclosure or question,
     and no task-note still waiting on a task that never completed."""
@@ -1378,8 +1362,18 @@ def render_report(log: list[dict], records: list[Record]) -> str:
     lines += rulings or ["(none)"]
 
     lines += ["", "## Follow-ups"]
-    lines += [f"- [{n['id']}] {_describe_note(n)}" for n in of_kind("follow-up")
-              if n["id"] not in resolutions] or ["(none open)"]
+    open_follow_ups = [n for n in of_kind("follow-up") if n["id"] not in resolutions]
+    by_rule: dict[str, list[dict]] = {}
+    for n in open_follow_ups:
+        by_rule.setdefault(n.get("rule") or "", []).append(n)
+    for rule in sorted(by_rule, key=lambda r: (r == "", r)):
+        lines += ["", f"### {rule or '(no rule)'}"]
+        lines += [f"- [{n['id']}] {_describe_note(n)}" for n in by_rule[rule]]
+    if open_follow_ups:
+        lines += ["", "Decide each: fix, file, or ignore. The fixes go through "
+                  "remediating-issues' Batch Path as one change."]
+    else:
+        lines.append("(none open)")
     lines += ["", "### Unlisted cases the coders reported"]
     unlisted = [f"- [{cid}] {concern} ({rec.stem})" for rec in records
                 if rec.ok and rec.data.get("role") == "coder"
@@ -1401,6 +1395,10 @@ def render_report(log: list[dict], records: list[Record]) -> str:
         lines += [f"- [{n['id']}] {_describe_note(n)}: {resolutions[n['id']]}"
                   if n["id"] in resolutions else f"- [{n['id']}] OPEN {_describe_note(n)}"
                   for n in of_kind(kind)] or ["(none)"]
+
+    lines += ["", "## Ran light (executing-plans: no triage, lighter assurance)"]
+    lines += [f"- {_scope_name(e.get('task'))}" for e in log
+              if e.get("type") == "complete" and e.get("light")] or ["(none)"]
     return "\n".join(lines)
 
 
@@ -1428,14 +1426,18 @@ def _scope_name(scope: int | str) -> str:
 
 
 def cmd_note(store_dir: Path, kind: str, text: str, for_task: int | None = None,
-             owner: int | str | None = None, source: int | str | None = None) -> None:
+             owner: int | str | None = None, source: int | str | None = None,
+             rule: str | None = None) -> None:
     """File a note and print its id. Refused: a flag the kind doesn't take
     or lacks, empty text, a target that has already completed (the note
-    could never be consumed), or a note already filed."""
+    could never be consumed), or a note already filed. A follow-up may
+    carry the rule it falls under, which groups it in the report."""
     _check_note_flags(kind, text, for_task, owner)
+    if rule is not None and (kind != "follow-up" or not _non_empty_str(rule)):
+        raise RecordError("--rule takes a non-empty rule, and only on a follow-up")
     with store_lock(store_dir):
         nid = _file_note(store_dir, load_progress_log(store_dir), kind, text, for_task,
-                         owner, source)
+                         owner, source, rule)
     print(nid)
 
 
@@ -1538,31 +1540,80 @@ def cmd_store_dir(store_dir: Path) -> None:
     print(ensure_store(store_dir))
 
 
-def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str) -> None:
+def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str,
+               light: bool = False) -> None:
     if entry_type == "complete" and task == RUN_SCOPE:
         raise RecordError(f"task {RUN_SCOPE!r} is a scope for run-level rulings and is never "
                           "completed; complete a task number or 'final'")
     with store_lock(store_dir):
+        entry: dict = {"type": entry_type, "task": task, "note": note}
         if entry_type == "complete":
-            _check_no_open_escalation(store_dir, task)
-            if isinstance(task, int):
-                _check_task_notes_settled(load_progress_log(store_dir), task)
+            blockers = ready_blockers(store_dir, task, light)
+            if blockers:
+                raise RecordError(f"{_scope_name(task)} cannot complete: " + "; ".join(blockers))
             _check_gate_matches_commit(store_dir, task)
-        _append_progress(store_dir,
-                      {"type": entry_type, "task": task, "note": note})
+            if light:
+                entry["light"] = True
+        _append_progress(store_dir, entry)
 
 
-def _check_no_open_escalation(store_dir: Path, task: int | str) -> None:
-    """A task waiting on the user's ruling is not complete. A ruling logged
-    as a progress note leaves the escalation open, so completion names the
-    ids to `resolve` with that ruling."""
-    resolved = set(resolutions_from_log(load_progress_log(store_dir)))
-    pending = [item.id for item in compute_open_items(load_records(store_dir), resolved)
-               if item.kind == ESCALATION_KIND and _scope(item.source) in _task_scopes(task)]
-    if pending:
-        raise RecordError(f"task {task!r} has escalations awaiting the user's ruling: {pending}; "
-                          f"`resolve` each with --note \"{RULING_PREFIX} <the ruling, verbatim>\" "
-                          "before completing it")
+def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> list[str]:
+    """Everything that stops `task` from committing. `light` (the inline
+    executor, which runs no triage) skips the triage, held-finding, and
+    open-choice checks."""
+    log = load_progress_log(store_dir)
+    records = load_records(store_dir)
+    resolved = set(resolutions_from_log(log))
+    found = _scope_records(store_dir, scope_prefix(log, task))
+    blockers = []
+    if not light:
+        entry = latest_triage(log, task)
+        if entry is None:
+            blockers.append("no triage entry yet (run `ledger.py triage`)")
+        elif entry["kind"] != "done":
+            blockers.append(f"the last triage step is {entry['kind']}, not done")
+        if entry and entry.get("held"):
+            blockers.append(f"held for the user: {', '.join(entry['held'])}")
+        coder = _latest_coder(found.coders)
+        unanswered = [_item_id(coder.stem, "open", e) for e in coder.data.get("open", [])
+                      ] if coder else []
+        unanswered = [i for i in unanswered if i not in _user_waived(log)]
+        if unanswered:
+            blockers.append(f"open behavior choices awaiting the user: {', '.join(unanswered)}")
+    if isinstance(task, int):
+        undelivered = [n["id"] for n in undelivered_notes(log, task)]
+        owned = [n["id"] for n in owned_open_notes(log, task)]
+        if undelivered:
+            blockers.append(f"undelivered notes {undelivered} (rebuild the brief, or "
+                            "`notes --deliver`, or `notes --waive ID --reason ...`)")
+        if owned:
+            blockers.append(f"open disclosures or questions it owns {owned} (`resolve` each: "
+                            f"where a disclosure landed, or \"{RULING_PREFIX} ...\" for a question)")
+    items = compute_open_items(records, resolved)
+    scopes = _task_scopes(task)
+    escalations = [i.id for i in items if i.kind == ESCALATION_KIND and _scope(i.source) in scopes]
+    if escalations:
+        blockers.append(f"escalations awaiting the user's ruling: {escalations}; `resolve` each "
+                        f"with --note \"{RULING_PREFIX} <the ruling, verbatim>\"")
+    unverified = [i.id for i in items if i.kind == "cannot_verify" and _scope(i.source) in scopes]
+    if unverified:
+        blockers.append(f"open cannot_verify items: {', '.join(unverified)}")
+    if found.problems:
+        blockers.append("malformed or misfiled records: " + "; ".join(found.problems))
+    if task == "final":
+        pending = [i.id for i in items if i.kind == "duplication_pending"]
+        if pending:
+            blockers.append(f"open duplication_pending items: {', '.join(pending)}")
+    return blockers
+
+
+def cmd_ready(store_dir: Path, task: int | str, light: bool = False) -> int:
+    """Print each blocker and return 1, or say the task is ready and return 0."""
+    blockers = ready_blockers(store_dir, task, light)
+    for blocker in blockers:
+        print(f"- {blocker}")
+    print(f"{_scope_name(task)}: {'not ready' if blockers else 'ready'}")
+    return 1 if blockers else 0
 
 
 def _task_scopes(task: int | str) -> tuple[str, ...]:
@@ -3116,6 +3167,16 @@ def build_parser() -> argparse.ArgumentParser:
                            help="positive task number, 'final' for the whole-change gate, "
                                 f"or '{RUN_SCOPE}' for a ruling about the whole run")
     p_append.add_argument("--note", required=True)
+    p_append.add_argument("--light", action="store_true",
+                          help="complete only: executing-plans' light path, which runs no "
+                               "triage; recorded so the report shows it")
+
+    p_ready = sub.add_parser("ready", parents=[store_parent],
+                             help="list everything that stops the task from committing; "
+                                  "exit 1 while anything does")
+    p_ready.add_argument("--task", required=True, type=_task_arg)
+    p_ready.add_argument("--light", action="store_true",
+                         help="executing-plans' light path: skip the triage checks")
 
     p_note = sub.add_parser("note", parents=[store_parent],
                              help="file an orchestrator note and print its id")
@@ -3128,6 +3189,8 @@ def build_parser() -> argparse.ArgumentParser:
                               f"or '{CLOSE_OWNER}'")
     p_note.add_argument("--from", dest="source", type=_append_task_arg,
                          help=f"where it arose: a task number, 'final' or '{RUN_SCOPE}'")
+    p_note.add_argument("--rule", help="follow-up only: the rule it falls under; the report "
+                                       "groups follow-ups by it")
 
     p_notes = sub.add_parser("notes", parents=[store_parent],
                               help="list the notes a task must receive; --deliver records "
@@ -3287,9 +3350,12 @@ def main() -> None:
         elif args.command == "stats":
             cmd_stats(store_dir)
         elif args.command == "append":
-            cmd_append(store_dir, args.type, args.task, args.note)
+            cmd_append(store_dir, args.type, args.task, args.note, args.light)
+        elif args.command == "ready":
+            sys.exit(cmd_ready(store_dir, args.task, args.light))
         elif args.command == "note":
-            cmd_note(store_dir, args.kind, args.text, args.for_task, args.owner, args.source)
+            cmd_note(store_dir, args.kind, args.text, args.for_task, args.owner, args.source,
+                     args.rule)
         elif args.command == "notes":
             cmd_notes(store_dir, args.task, args.deliver, args.waive, args.reason)
         elif args.command == "stage":
