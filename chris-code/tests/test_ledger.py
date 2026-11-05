@@ -3512,6 +3512,158 @@ class TestGate(TriageStoreTestCase):
         self.assertIn("a.py", str(ctx.exception))
 
 
+class TestCommit(TriageStoreTestCase):
+    """`commit` takes a ready task from staging to a completed commit, and
+    touches nothing when it stops."""
+
+    MESSAGE = "Guard size against zero\n\nA second paragraph, kept verbatim."
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "p.py").write_text("p = 1\n", encoding="utf-8")
+        self._git("add", "p.py")
+        self._git("commit", "-qm", "p")
+
+    def ready_to_commit(self) -> None:
+        self.spec()
+        self.triage()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+
+    def commit(self, task: int | str = 3, test: str = "true", light: bool = False) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, task, self.MESSAGE, test, None, light)
+        return code, out.getvalue()
+
+    def head(self) -> str:
+        return self._git("rev-parse", "HEAD").strip()
+
+    def completes(self) -> list[dict]:
+        return [e for e in ledger.load_progress_log(self.store) if e.get("type") == "complete"]
+
+    def test_a_blocker_stages_nothing_and_commits_nothing(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        before = self.head()
+        code, out = self.commit()
+        self.assertEqual(code, 1)
+        self.assertIn("no triage entry", out)
+        self.assertEqual((self.head(), self._git("diff", "--cached", "--name-only")), (before, ""))
+
+    def test_a_coder_file_outside_the_footprint_is_refused_by_name(self):
+        self.ready_to_commit()
+        self.coder(changed_files=["a.py", "b.py"])
+        self.triage()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.commit()
+        self.assertIn("b.py", str(ctx.exception))
+        self.assertEqual(self._git("diff", "--cached", "--name-only"), "")
+
+    def test_a_ready_task_becomes_one_commit_with_the_message_and_a_complete_entry(self):
+        (self.repo / "n.py").write_text("n = 1\n", encoding="utf-8")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "n.py", "p.py"])
+        (self.repo / "p.py").unlink()
+        self.ready_to_commit()
+        before = self.head()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        after = self.head()
+        self.assertEqual(self._git("rev-list", "--count", f"{before}..{after}").strip(), "1")
+        self.assertEqual(self._git("log", "-1", "--format=%B").rstrip("\n"), self.MESSAGE)
+        self.assertEqual(self._git("show", "--name-status", "--format=", "HEAD").split(),
+                         ["M", "a.py", "A", "n.py", "D", "p.py"])
+        [entry] = self.completes()
+        self.assertEqual(entry["note"], f"commits {before[:7]}..{after[:7]}")
+        self.assertIn(f"committed {after}", out)
+        self.assertIn("task 3 complete", out)
+
+    def test_a_path_another_task_staged_stays_staged_and_out_of_the_commit(self):
+        self.ready_to_commit()
+        (self.repo / "p.py").write_text("p = 2\n", encoding="utf-8")
+        self._git("add", "p.py")
+        self.assertEqual(self.commit()[0], 0)
+        self.assertEqual(self._git("show", "--name-only", "--format=", "HEAD").split(), ["a.py"])
+        self.assertEqual(self._git("diff", "--cached", "--name-only").split(), ["p.py"])
+
+    def test_a_failing_gate_writes_its_record_and_commits_nothing(self):
+        self.ready_to_commit()
+        before = self.head()
+        code, out = self.commit(test="exit 1")
+        self.assertEqual(code, 1)
+        self.assertIn("gate: fail", out)
+        self.assertEqual(self.head(), before)
+        self.assertEqual(self.completes(), [])
+        gate = json.loads((self.store / "task-3-gate.json").read_text())
+        self.assertEqual(gate["status"], "fail")
+
+    def test_a_gate_already_passed_on_the_same_files_is_not_rerun(self):
+        self.ready_to_commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, "true", None), 0)
+        code, out = self.commit(test="exit 1")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("gate: fail", out)
+
+    def test_a_file_changed_since_the_passing_gate_is_gated_again(self):
+        self.ready_to_commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_gate(self.store, 3, "true", None)
+        (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
+        self.assertEqual(self.commit(test="exit 1")[0], 1)
+
+    def test_the_light_path_commits_without_triage(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.assertEqual(self.commit(light=True)[0], 0)
+        self.assertTrue(self.completes()[0]["light"])
+
+    def test_final_commits_the_final_coders_changed_files(self):
+        (self.repo / "lib").mkdir()
+        (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
+        self.write("final-python-review-lite.json", _review_lite(task="final"))
+        self.write("final-python-coder.json", _coder(task="final", changed_files=["lib/x.py"]))
+        self.triage("final")
+        self.assertEqual(self.commit(task="final")[0], 0)
+        self.assertIn("lib/x.py", self._git("show", "--name-only", "--format=", "HEAD").split())
+
+    def test_a_commit_git_refuses_appends_nothing(self):
+        self.ready_to_commit()
+        hook = self.repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+        before = self.head()
+        code, out = self.commit()
+        self.assertEqual(code, 1)
+        self.assertIn("hook says no", out)
+        self.assertEqual((self.head(), self.completes()), (before, []))
+
+    def test_a_refused_complete_after_the_commit_reports_it_and_keeps_it(self):
+        self.ready_to_commit()
+        before = self.head()
+        with mock.patch.object(ledger, "_check_gate_matches_commit",
+                               side_effect=ledger.RecordError("a.py changed between the gate and the commit")):
+            code, out = self.commit()
+        self.assertEqual(code, 1)
+        self.assertNotEqual(self.head(), before)
+        self.assertIn(f"committed {self.head()}", out)
+        self.assertIn("a.py changed", out)
+        self.assertEqual(self.completes(), [])
+
+    def test_nothing_left_to_commit_never_commits_another_tasks_staged_files(self):
+        self.ready_to_commit()
+        self.assertEqual(self.commit()[0], 0)
+        (self.repo / "p.py").write_text("p = 2\n", encoding="utf-8")
+        self._git("add", "p.py")
+        before = self.head()
+        self.assertEqual(self.commit()[0], 1)
+        self.assertEqual(self.head(), before)
+        self.assertEqual(self._git("diff", "--cached", "--name-only").split(), ["p.py"])
+
+    def test_an_empty_message_is_refused(self):
+        self.ready_to_commit()
+        with self.assertRaises(ledger.RecordError):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ledger.cmd_commit(self.store, 3, "  ", "true", None)
+
+
 class TestReady(TriageStoreTestCase):
     """`ready` lists everything that stops a task from committing; `complete`
     refuses on the same list."""

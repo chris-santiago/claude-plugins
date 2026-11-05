@@ -3069,6 +3069,83 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
     return 0 if record["status"] == "pass" else 1
 
 
+def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: str | None,
+               light: bool = False) -> int:
+    """Take a ready scope from staging to a completed commit: `ready`, the
+    footprint check, staging, the gate (skipped when the last passing gate
+    checked these very files), `git commit` of the footprint alone, then
+    `complete`. Returns 1, printing why, at the first step that stops it;
+    a commit already made is never undone."""
+    if not message.strip():
+        raise RecordError("--message is empty: give the commit its message")
+    blockers = ready_blockers(store_dir, task, light)
+    if blockers:
+        for blocker in blockers:
+            print(f"- {blocker}")
+        print(f"{_scope_name(task)}: not committed")
+        return 1
+    log = load_progress_log(store_dir)
+    footprint = scope_footprint(store_dir, log, task)
+    if not footprint:
+        raise RecordError(f"task {task!r} has no recorded footprint; record it with "
+                          "`ledger.py stage` before committing it")
+    top = _store_repo(store_dir)
+    if top is None:
+        raise RecordError(f"{store_dir} isn't inside a git work tree; nothing to commit")
+    files = sorted(footprint)
+    _check_coder_inside_footprint(store_dir, log, task, footprint)
+    _stage_footprint(top, files)
+    if not _gate_passed_on_staged(store_dir, log, task, top) \
+            and cmd_gate(store_dir, task, test, lint) != 0:
+        return 1
+    before = _git(top, "rev-parse", "HEAD").strip()
+    staged = _staged_scope(top, files)
+    if not staged:
+        # An empty path list would commit the whole index, other tasks' too.
+        print(f"{_scope_name(task)}: nothing to commit in {', '.join(files)}")
+        return 1
+    done = subprocess.run(["git", "commit", "--only", "-m", message, "--", *staged], cwd=top,
+                          capture_output=True, text=True, errors="replace")
+    if done.returncode != 0:
+        print((done.stdout + done.stderr).strip())
+        print(f"{_scope_name(task)}: git refused the commit")
+        return 1
+    after = _git(top, "rev-parse", "HEAD").strip()
+    print(f"committed {after}")
+    try:
+        cmd_append(store_dir, "complete", task, f"commits {before[:7]}..{after[:7]}", light)
+    except RecordError as e:
+        print(f"{_scope_name(task)} not completed: {e}")
+        return 1
+    print(f"{_scope_name(task)} complete")
+    return 0
+
+
+def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | str,
+                                  footprint: set[str]) -> None:
+    """A task's coder changed only files its footprint lists: a file outside
+    it would be left out of the gate and the commit."""
+    if not isinstance(task, int):
+        return
+    coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
+    outside = sorted({_normalize_path(f) for f in (coder.data.get("changed_files", [])
+                                                   if coder else [])} - footprint)
+    if outside:
+        raise RecordError(f"task {task}'s coder changed {', '.join(outside)}, outside its "
+                          "recorded footprint: re-issue `ledger.py stage` with those files")
+
+
+def _gate_passed_on_staged(store_dir: Path, log: list[dict], task: int | str, top: Path) -> bool:
+    """The scope's last gate passed on exactly the staged contents of the
+    files it gated, so running it again would check nothing new."""
+    path = _gate_path(store_dir, log, task)
+    if not path.is_file():
+        return False
+    gate = json.loads(path.read_text(encoding="utf-8"))
+    return gate.get("status") == "pass" and all(
+        _blob(top, gate["tree"], f) == _blob(top, "", f) for f in gate.get("files", []))
+
+
 def _gate_record(task: int | str, tree: str, commands: list[dict], files: list[str]) -> dict:
     """The gate's record. A failing test is one finding whose text never
     carries the run's output (that stays in the command's excerpt), so the
@@ -3602,6 +3679,18 @@ def build_parser() -> argparse.ArgumentParser:
                         help="the task's Verify: command; passes only on exit 0")
     p_gate.add_argument("--lint", help="the project's lint command; passes only on exit 0")
 
+    p_commit = sub.add_parser("commit", parents=[store_parent],
+                              help="ready, stage the task's footprint, gate, git commit it "
+                                   "with the message, and complete the task; exit 1 at the "
+                                   "first step that stops it")
+    p_commit.add_argument("--task", required=True, type=_task_arg)
+    p_commit.add_argument("--message", required=True, help="the commit message, verbatim")
+    p_commit.add_argument("--test", required=True,
+                          help="the task's Verify: command (the full suite at final)")
+    p_commit.add_argument("--lint", help="the project's lint command")
+    p_commit.add_argument("--light", action="store_true",
+                          help="executing-plans' light path: no triage")
+
     p_diff = sub.add_parser("diff-since",
                              help="show what changed since a snapshot tree, new "
                                   "files included (never touches the working tree or "
@@ -3722,6 +3811,9 @@ def main() -> None:
             cmd_triage(store_dir, args.task)
         elif args.command == "gate":
             sys.exit(cmd_gate(store_dir, args.task, args.test, args.lint))
+        elif args.command == "commit":
+            sys.exit(cmd_commit(store_dir, args.task, args.message, args.test, args.lint,
+                                args.light))
         elif args.command == "close-round":
             cmd_close_round(store_dir, args.note, _git_head(), args.expect)
         elif args.command == "resolve":
