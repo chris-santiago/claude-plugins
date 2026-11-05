@@ -2992,6 +2992,18 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
+    def test_a_decision_stays_valid_after_the_coder_drops_the_root_cause_it_claimed(self):
+        self.coder(concerns=[self.root])
+        self.spec()
+        self.triage()
+        decision = self.write("task-3-decision-c2.json", _decision(
+            [], task=3, reviewer_records=["task-3-spec-reviewer"], choices=[],
+            excluded=[{"finding": self.root_id(), "reason": "its own refactor"}]))
+        ledger.check_record(decision)
+        self.coder(cycle=2, baseline="t", hunk_map=[], consumers_checked=[],
+                   diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"})
+        ledger.check_record(decision)
+
     def test_a_per_task_decision_escalation_never_blocks_ready(self):
         # The coder contests it and the reviewer's hold parks the task instead.
         fid = self.spec_id(_finding())
@@ -3004,6 +3016,148 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
         items = ledger.compute_open_items(ledger.load_records(self.store), set())
         self.assertNotIn(ledger.ESCALATION_KIND, [i.kind for i in items])
         self.assertEqual(ledger.ready_blockers(self.store, 3), [])
+
+
+class TestEndToEnd(TriageStoreTestCase):
+    """A task walked through the whole loop on a real repo and store, every
+    record passing `check` the way the agents' records must."""
+
+    DIAGNOSIS = {"root_cause": "r", "end_state": "e", "resolves_cluster": "c"}
+
+    def setUp(self):
+        super().setUp()
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "tests/test_size.py"])
+        (self.repo / "tests").mkdir()
+        self.files("def size(n):\n    return n\n", "def test_one():\n    assert size(1) == 1\n")
+
+    def files(self, a_py: str, test_size: str) -> None:
+        (self.repo / "a.py").write_text(a_py, encoding="utf-8")
+        (self.repo / "tests" / "test_size.py").write_text(test_size, encoding="utf-8")
+
+    def check(self, path: Path) -> None:
+        ledger.cmd_check(str(path))
+
+    def snapshot(self, label: str) -> str:
+        tree = ledger.snapshot_tree(self.repo)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 3, label, tree)
+        return tree
+
+    def fix(self, cycle: int, tree: str, **fields) -> None:
+        self.check(self.coder(cycle=cycle, baseline=tree, changed_files=["a.py", "tests/test_size.py"],
+                              diagnosis=self.DIAGNOSIS, consumers_checked=[], **fields))
+
+    def blockers(self) -> list[str]:
+        return ledger.ready_blockers(self.store, 3)
+
+    def commit(self) -> None:
+        self._git("add", "a.py", "tests/test_size.py")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, "grep -q 'def size' a.py", None), 0)
+        self._git("commit", "-qm", "task 3")
+        ledger.cmd_append(self.store, "complete", 3, "commits a..b")
+        self.assertIn("3", ledger.completed_task_ids(ledger.load_progress_log(self.store)))
+
+    def test_a_patch_then_an_overridden_choice_then_the_commit(self):
+        choice = {"question": "size(None)?", "choice": "raise TypeError", "precedent": "a.py:1"}
+        choice_id = _entry_id("task-3-python-coder", "open", choice)
+        self.check(self.coder(open=[choice]))
+        issue = _finding(sites=["a.py:2"], rule="size must be positive")
+        note = _finding(severity=1, sites=["a.py:1"], rule="name says what it holds")
+        self.check(self.spec(issue, note))
+        self.triage()
+        step = self.entries()[-1]
+        self.assertEqual((step["kind"], step["recheck_records"]), ("patch", ["task-3-spec-reviewer"]))
+
+        tree = self.snapshot("pre-fix c2")
+        self.files("def size(n):\n    if n <= 0:\n        raise ValueError(n)\n    return n\n",
+                   "def test_one():\n    assert size(1) == 1\n\n\ndef test_zero():\n"
+                   "    with pytest.raises(ValueError):\n        size(0)\n")
+        self.fix(2, tree, open=[choice], hunk_map=[{"site": "a.py:2-3", "implements": "the guard"}],
+                 sweeps=[{"findings": [self.spec_id(issue)], "rule": issue["rule"],
+                          "rows": [{"site": "a.py:2", "hunk": "a.py:2-3"}],
+                          "searched": {"command": "rg -n 'def size' .", "result": "a.py:1 only"}}],
+                 notes_skipped=[{"finding": self.spec_id(note), "reason": "callers use the name"}],
+                 tests_first=[{"finding": self.spec_id(issue), "test": "tests/test_size.py::test_zero",
+                               "command": "pytest tests/test_size.py", "failed_output": "DID NOT RAISE"}])
+        self.check(self.spec())
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertTrue(any(choice_id in b for b in self.blockers()))  # parked for the batch
+
+        ledger.cmd_append(self.store, "progress", 3, f"user ruling: override {choice_id}: size(None) is 0")
+        ledger.cmd_resolve(self.store, choice_id, "user ruling: override, size(None) is 0")
+        self.triage()
+        step = self.entries()[-1]
+        self.assertEqual((step["kind"], step["recheck_records"]), ("ruling", ["task-3-spec-reviewer"]))
+
+        tree = self.snapshot("pre-fix c3")
+        self.files("def size(n):\n    if n is None:\n        return 0\n    if n <= 0:\n"
+                   "        raise ValueError(n)\n    return n\n",
+                   "def test_one():\n    assert size(1) == 1\n\n\ndef test_zero():\n"
+                   "    with pytest.raises(ValueError):\n        size(0)\n\n\n"
+                   "def test_none():\n    assert size(None) == 0\n")
+        self.fix(3, tree, hunk_map=[{"site": "a.py:2-3", "implements": "the user's ruling"}])
+        self.check(self.spec())
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self.blockers(), [])
+        self.commit()
+        follow_ups = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                      if n["kind"] == "follow-up"]
+        self.assertEqual(len(follow_ups), 1)  # the skipped note, for the close batch
+
+    def test_a_holistic_round_that_defers_a_root_cause_and_escalates_a_finding(self):
+        root = "root cause: lib/callers.py:4 callers pass sizes unchecked"
+        self.check(self.coder(concerns=[root]))
+        api = _finding(reach="contract", sites=["a.py:1"], rule="size() keeps its public signature")
+        bug = _finding(sites=["a.py:2"], rule="size must be positive")
+        self.check(self.spec(api))
+        quality = self.write("task-3-python-quality-reviewer.json",
+                             _quality_reviewer(task=3, status="issues", findings=[bug]))
+        self.check(quality)
+        self.triage()
+        step = self.entries()[-1]
+        self.assertEqual((step["kind"], step["decision"]), ("holistic", "task-3-decision-c2"))
+        self.assertEqual(step["recheck_records"], ["task-3-python-quality-reviewer", "task-3-spec-reviewer"])
+
+        api_id, bug_id = self.spec_id(api), _entry_id("task-3-python-quality-reviewer", "findings", bug)
+        root_id = _entry_id("task-3-python-coder", "concerns", root)
+        escalate = {"kind": "escalate", "findings": [api_id], "why": "the plan fixes this signature",
+                    "evidence": "plan Task 3: size(n) -> int"}
+        self.check(self.write("task-3-decision-c2.json", _decision(
+            [bug_id], task=3, status="escalated",
+            reviewer_records=["task-3-python-quality-reviewer", "task-3-spec-reviewer"],
+            choices=[_fix_choice([bug_id], cases=[
+                {"case": "size(0)", "site": "a.py:2", "test": "tests/test_size.py::test_zero",
+                 "today": "returns 0", "under_fix": "raises ValueError", "result": "fixed"}]), escalate],
+            excluded=[{"finding": root_id, "reason": "validating callers is its own task"}])))
+
+        tree = self.snapshot("pre-fix c2")
+        self.files("def size(n):\n    if n <= 0:\n        raise ValueError(n)\n    return n\n",
+                   "def test_one():\n    assert size(1) == 1\n\n\ndef test_zero():\n"
+                   "    with pytest.raises(ValueError):\n        size(0)\n")
+        self.fix(2, tree, decision="task-3-decision-c2",
+                 hunk_map=[{"site": "a.py:2-3", "implements": "decision choice 0"}],
+                 decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2-3"}],
+                 contested=[{"finding": api_id, "reason": "plan-conflict",
+                             "evidence": "plan Task 3 fixes size(n) -> int; the decision escalates it"}])
+        self.check(self.spec(api, contests=[{"finding": api_id, "verdict": "hold",
+                                             "reason": "the plan predates the caller"}]))
+        self.check(self.write("task-3-python-quality-reviewer.json", _quality_reviewer(task=3)))
+        self.triage()
+        step = self.entries()[-1]
+        self.assertEqual((step["kind"], step["held"]), ("escalate", [api_id]))
+        self.assertTrue(any(api_id in b for b in self.blockers()))
+
+        ledger.cmd_resolve(self.store, api_id, "user ruling: waive, the plan's signature stands")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self.blockers(), [])
+        self.commit()
+        rules = [n.get("rule") for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                 if n["kind"] == "follow-up"]
+        self.assertEqual(rules, ["validating callers is its own task"])
 
 
 class TestTriageOutput(TriageStoreTestCase):

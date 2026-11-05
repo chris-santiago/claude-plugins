@@ -3095,6 +3095,10 @@ def _check_decision_context(path: Path, data: dict) -> None:
     required = {i for r in reviewers for i in finding_ids(r)}
     known = required | {i for r in reviewers for i in finding_ids(r, OPTIONAL_FINDING_FIELDS)}
     known |= {i for r in found.coders for i in concern_ids(r)}
+    # A root cause triage sent stays citable after the fix drops it, since
+    # the fix's own check re-reads this decision.
+    log = load_progress_log(path.parent)
+    known |= {cid for e in triage_entries(log, _scope_task(scope)) for cid in e.get("root_causes", [])}
     accounted = {f for c in data["choices"] for f in c["findings"]}
     accounted |= {e["finding"] for e in data["excluded"]}
     unknown = sorted(accounted - known)
