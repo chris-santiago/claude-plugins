@@ -2158,8 +2158,46 @@ def _check_note_resolvable(log: list[dict], resolve_id: str, note: str) -> None:
 # records): briefs, reports, gate reports, and review packages. Gate
 # reviewers read their own report path as their prior verdict, so these
 # must not outlive the run that wrote them.
-HANDOFF_FILE_PATTERNS = ("task-*-*.md", "design-review-*.md", "intent-recheck.md",
-                         "intent-issue.md", "mutation-review.md", "review-*.diff")
+HANDOFF_FILE_PATTERNS = ("task-*-*.md", "final-*.md", "gate-*-report.md", "intent-issue.md",
+                         "review-*.diff",
+                         # names from before `path` named every report
+                         "design-review-*.md", "intent-recheck.md", "mutation-review.md")
+# `path` scopes beyond a task number, and the kinds of file it names.
+PATH_SCOPES = ("final", "close", "ruling", "gate")
+PATH_KINDS = ("record", "report", "brief")
+
+
+def handoff_path(store_dir: Path, log: list[dict], scope: int | str, agent: str | None,
+                 kind: str = "record") -> Path:
+    """The store path of a handoff file: a task's or a scope's record or
+    report for `agent`, a gate's report, or a task's brief. `final` follows
+    `scope_prefix` (final-r2 once a close round has started), `close` the
+    latest close round, and `gate` keeps one path across rounds so a re-run
+    reads its prior report."""
+    if kind == "brief":
+        if not isinstance(scope, int):
+            raise UsageError("a brief belongs to a task: --task N --kind brief")
+        return store_dir / f"task-{scope}-brief.md"
+    if not agent or "/" in agent or "\\" in agent or ".." in agent:
+        raise UsageError(f"--agent {agent!r}: give the agent's registered name")
+    if scope == "gate":
+        if kind != "report":
+            raise UsageError("the close-round gates write reports only: --kind report")
+        stem = f"gate-{agent}"
+    elif scope in ("close", "ruling"):
+        rounds = close_rounds(log)
+        if not rounds:
+            raise UsageError(f"--task {scope} names a close-round fix, but no close round "
+                             "has started")
+        stem = f"final-close-r{rounds}-{agent}" if scope == "close" \
+            else f"final-close-ruling-{agent}"
+    else:
+        stem = f"{scope_prefix(log, scope)}-{agent}"
+    return store_dir / (f"{stem}.json" if kind == "record" else f"{stem}-report.md")
+
+
+def cmd_path(store_dir: Path, scope: int | str, agent: str | None, kind: str = "record") -> None:
+    print(handoff_path(store_dir, load_progress_log(store_dir), scope, agent, kind))
 
 
 def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
@@ -3551,6 +3589,17 @@ def _append_task_arg(value: str) -> int | str:
             f"must be a positive integer, 'final' or '{RUN_SCOPE}'") from None
 
 
+def _path_scope_arg(value: str) -> int | str:
+    """A positive task number, or one of the PATH_SCOPES."""
+    if value in PATH_SCOPES:
+        return value
+    try:
+        return _positive_int(value)
+    except argparse.ArgumentTypeError:
+        raise argparse.ArgumentTypeError(
+            f"must be a positive integer or one of {', '.join(PATH_SCOPES)}") from None
+
+
 def _owner_arg(value: str) -> int | str:
     """A positive task number, or 'close' for the close."""
     if value == CLOSE_OWNER:
@@ -3678,6 +3727,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_gate.add_argument("--test", required=True,
                         help="the task's Verify: command; passes only on exit 0")
     p_gate.add_argument("--lint", help="the project's lint command; passes only on exit 0")
+
+    p_path = sub.add_parser("path", parents=[store_parent],
+                            help="print a handoff file's path: a record or report for an "
+                                 "agent in a task or scope, a gate's report, or a brief")
+    p_path.add_argument("--task", required=True, type=_path_scope_arg,
+                        help=f"a task number, or one of {', '.join(PATH_SCOPES)}")
+    p_path.add_argument("--agent", help="the agent's registered name (not for a brief)")
+    p_path.add_argument("--kind", default="record", choices=PATH_KINDS)
 
     p_commit = sub.add_parser("commit", parents=[store_parent],
                               help="ready, stage the task's footprint, gate, git commit it "
@@ -3811,6 +3868,8 @@ def main() -> None:
             cmd_triage(store_dir, args.task)
         elif args.command == "gate":
             sys.exit(cmd_gate(store_dir, args.task, args.test, args.lint))
+        elif args.command == "path":
+            cmd_path(store_dir, args.task, args.agent, args.kind)
         elif args.command == "commit":
             sys.exit(cmd_commit(store_dir, args.task, args.message, args.test, args.lint,
                                 args.light))

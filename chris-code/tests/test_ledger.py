@@ -3869,6 +3869,81 @@ class TestPlansAndVerdict(GitRepoTestCase):
         self.assertTrue(done.stdout.startswith("Verdict: resume\n"))
 
 
+class TestPath(LedgerTestCase):
+    """`path` names every handoff file, so no skill builds one by hand."""
+
+    def path(self, scope, agent=None, kind="record") -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_path(self.store, scope, agent, kind)
+        return out.getvalue().strip()
+
+    def close_round(self, n: int) -> None:
+        ledger._append_progress(self.store, {"type": "close_round", "round": n, "head": "h",
+                                             "note": "plan.md"})
+
+    def test_a_task_names_its_record_report_and_brief(self):
+        self.assertEqual(self.path(3, "python-coder"), str(self.store / "task-3-python-coder.json"))
+        self.assertEqual(self.path(3, "spec-reviewer", "report"),
+                         str(self.store / "task-3-spec-reviewer-report.md"))
+        self.assertEqual(self.path(3, kind="brief"), str(self.store / "task-3-brief.md"))
+
+    def test_final_switches_to_final_r2_once_a_close_round_exists(self):
+        self.assertEqual(self.path("final", "python-review-lite"),
+                         str(self.store / "final-python-review-lite.json"))
+        self.close_round(1)
+        self.assertEqual(self.path("final", "python-coder", "report"),
+                         str(self.store / "final-r2-python-coder-report.md"))
+
+    def test_close_follows_the_latest_round_and_ruling_has_its_own_stem(self):
+        self.close_round(1)
+        self.assertEqual(self.path("close", "rust-coder"), str(self.store / "final-close-r1-rust-coder.json"))
+        self.close_round(2)
+        self.assertEqual(self.path("close", "rust-coder"), str(self.store / "final-close-r2-rust-coder.json"))
+        self.assertEqual(self.path("ruling", "rust-coder", "report"),
+                         str(self.store / "final-close-ruling-rust-coder-report.md"))
+
+    def test_gate_reports_keep_one_path_every_round(self):
+        self.assertEqual(self.path("gate", "intent-reviewer", "report"),
+                         str(self.store / "gate-intent-reviewer-report.md"))
+        self.close_round(1)
+        self.assertEqual(self.path("gate", "intent-reviewer", "report"),
+                         str(self.store / "gate-intent-reviewer-report.md"))
+
+    def test_refusals(self):
+        cases = [("close", "rust-coder", "record"), ("ruling", "rust-coder", "record"),
+                 ("gate", "intent-reviewer", "record"), ("final", None, "brief"),
+                 (3, None, "record"), (3, None, "report"), (3, "a/b", "record"),
+                 (3, "a\\b", "record"), (3, "..", "record"), (3, "", "record")]
+        for scope, agent, kind in cases:
+            with self.subTest(scope=scope, agent=agent, kind=kind):
+                with self.assertRaises(ledger.UsageError):
+                    self.path(scope, agent, kind)
+
+    def test_clear_removes_the_new_and_the_old_report_names(self):
+        ledger.ensure_store(self.store)
+        names = ["gate-intent-reviewer-report.md", "final-python-coder-report.md",
+                 "final-close-r1-python-coder-report.md", "task-3-python-coder-report.md",
+                 "design-review-python-design-reviewer.md", "intent-recheck.md", "mutation-review.md"]
+        for name in names:
+            (self.store / name).write_text("x", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_clear(self.store)
+        self.assertEqual([n for n in names if (self.store / n).exists()], [])
+
+    def test_the_cli_exits_2_on_a_refusal(self):
+        ledger.ensure_store(self.store)
+        run = subprocess.run([sys.executable, str(LEDGER_PY), "path", "--task", "close",
+                              "--agent", "rust-coder", "--store", str(self.store)],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        ok = subprocess.run([sys.executable, str(LEDGER_PY), "path", "--task", "3", "--agent",
+                             "python-coder", "--kind", "report", "--store", str(self.store)],
+                            capture_output=True, text=True)
+        self.assertEqual(ok.stdout.strip(),
+                         str(self.store.resolve() / "task-3-python-coder-report.md"))
+
+
 class TestRoundRendering(TriageStoreTestCase):
     """`run-state`, `read` and `stats` show the rounds triage logged."""
 
