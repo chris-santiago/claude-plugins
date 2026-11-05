@@ -158,7 +158,7 @@ Because it breaks committed state, the gate assumes the branch work is committed
 
 ## Grounding agent
 
-Dispatched by `subagent-driven-development` to ground a judgment-shaped review finding, or to resolve a spec-reviewer `cannot_verify` item at repo scope, without the orchestrator reading the changed code itself. It writes no record — its inline answer is quotation, not a verdict, so it sits outside the typed-record roster deliberately.
+Dispatched by `subagent-driven-development` to resolve a spec-reviewer `cannot_verify` item at repo scope, without the orchestrator reading the changed code itself. It writes no record — its inline answer is quotation, not a verdict, so it sits outside the typed-record roster deliberately.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|

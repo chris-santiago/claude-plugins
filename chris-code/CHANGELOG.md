@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-05
+
+### Fixed
+- **The superpowers comparison and the docs describe `claim-checker` as it works now.** Since 0.11.0 it only settles a spec reviewer's `cannot_verify` item, but the comparison deck, *The assurance model*, *Execution mechanics*, *Context and dispatch* and the agents reference still had it grounding any judgment-shaped finding, and the deck still told reviewers to flag their lossiness. They now say findings route by their tags through `triage` and contests, and `claim-checker` handles only `cannot_verify`. The deck also matches the README on the per-task commit gate (labels, lint and the task's verify command, scripted) and on review-lite, which runs over the whole change rather than before every commit.
+
 ## [0.14.0] - 2026-11-05 — SDD's mechanical rules move into the scripts
 
 Several of SDD's rules were deterministic decisions the orchestrator carried out by reading prose: take a snapshot after triage and re-send it on a resume, recognize a stale store or a close-gate remediation run from the log, stage exactly the task's files, gate, commit and append the completion, and build a dozen record and report names by convention. Each was a place to slip. They are now commands, and the prose that described them is gone.
