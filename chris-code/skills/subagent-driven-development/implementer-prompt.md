@@ -75,7 +75,13 @@ Agent tool:
     ## Your Job
 
     1. Implement exactly what the brief specifies: every row on its
-       `Cases:` line, each with a test. An unlisted case you handle goes in
+       `Cases:` line, each with a test. Test to the level on the brief's
+       `Rigor:` line, using that level's row in
+       `[SCRIPTS_DIR]/../rigor.md`: realistic cases first, and the TDD
+       edge-case list only at `heavy`. Every test must be able to fail: an
+       assertion the broken code also satisfies ("not None", "no
+       exception", a mock's own return value) is a review finding. An
+       unlisted case you handle goes in
        concerns as `unlisted case: ...`. Behavior the brief leaves
        undefined: do what the codebase already does for the nearest
        analogous case and record it in `open` with that `precedent` site

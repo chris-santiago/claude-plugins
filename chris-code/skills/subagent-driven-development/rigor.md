@@ -13,7 +13,7 @@ How deep a change is tested, reviewed for missing cases, and mutated. There are 
    - Numeric or ML dependencies (numpy, scipy, pandas, polars, torch, jax, tensorflow, scikit-learn, ndarray, nalgebra or arrow) raise it one step, capped at `heavy`.
 3. **No git work tree, or no tracked source:** `standard`.
 
-A plan task can carry `- Rigor: standard|heavy` to raise that task above the project level. It can never lower it: `task_brief.py` refuses a lower or unknown value. Every brief opens with `Rigor: <level> (<reasons>)`. That line is the level for the task's coder and every reviewer of the task. A dispatch never restates or lowers it.
+A plan task can carry `- Rigor: standard|heavy` to raise that task above the project level. It can never lower it: `task_brief.py` refuses a lower or unknown value. Every brief opens with `Rigor: <level> (<reasons>)`. That line is the level for the task's coder and every reviewer of the task. A dispatch never restates or lowers it. A role run without a brief, such as a standalone review or TDD on its own, uses the project level from `python3 <scripts-path>/rigor.py`, or `standard` when it has no scripts path.
 
 ## The table
 

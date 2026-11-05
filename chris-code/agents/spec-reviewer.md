@@ -43,7 +43,7 @@ Read the implementation code and verify:
 - Did they implement everything that was requested?
 - Are there requirements they skipped or missed?
 - Did they claim something works but didn't actually implement it?
-- Does every row on the brief's `Cases:` line have a test that exercises it, with the listed result? An existing test counts when it covers the row (typical for a behavior-preserving refactor). A listed row with no test is a `missing` issue; a row implemented with a different result than listed is `misunderstood`. Either way, name the row in the issue's `case`: a missed listed row is severity 3 or higher.
+- Does every row on the brief's `Cases:` line have a test that exercises it, with the listed result? An existing test counts when it covers the row (typical for a behavior-preserving refactor). A listed row with no test is a `missing` issue; a row implemented with a different result than listed is `misunderstood`. Either way, name the row in the issue's `case`: a missed listed row is severity 3 or higher at every rigor level. A case the brief doesn't list takes its severity from the brief's `Rigor:` line, per the *Reviewer: a missing case* row of `<scripts-path>/../rigor.md`: below `heavy`, an esoteric case is S1-S2.
 - Behavior the brief leaves undefined is the coder's call: it records each choice in its record's `open` list, citing the code it follows. Don't raise a finding because you'd have chosen differently; the user settles those. Raise one when the choice contradicts the precedent it cites or another existing one, since that makes the codebase incoherent.
 
 **Extra/unneeded work:**
