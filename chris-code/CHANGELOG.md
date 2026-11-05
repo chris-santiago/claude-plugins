@@ -8,6 +8,10 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-05 — Leaner contracts, verdicts by path
+
+The biggest skills and agent contracts had grown by accretion: shared protocol text was copied across files and drifted, rules were restated in several places, and every per-task reviewer returned its full verdict into the orchestrator's context although triage reads only the typed record. This release cuts the words without dropping a rule, sends reviewer verdicts by path, retires a field nothing reads, and adds a test that keeps the shared copies identical.
+
 ### Changed
 - **Shorter contracts, same rules.** SDD, verification, remediating-issues, coherent-change and the three coders are about 12% shorter with every rule kept. remediating-issues now points at coherent-change for the discipline they share instead of restating it.
 - **Reviewers return one line.** The spec and quality reviewers write their verdict to a report path the dispatch supplies (`$STORE/task-N-<agent-name>-review.md`) and return only the verdict word and that path, as the design reviewers already did. Triage reads their typed records, so the verdict's prose no longer fills the orchestrator's context. Standalone, they still return the review inline.
