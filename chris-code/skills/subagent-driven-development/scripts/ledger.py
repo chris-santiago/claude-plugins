@@ -1358,6 +1358,8 @@ def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[s
     if not footprint or "." in footprint:
         raise RecordError(f"--files: got {files!r}, expected the paths task {task} will touch")
     if task == "final":
+        if stage is not None:
+            raise RecordError("the whole-change gate runs in no stage: drop --stage")
         with store_lock(store_dir):
             _append_progress(store_dir, {"type": "stage", "task": "final", "files": footprint,
                                          "at": _now()})
@@ -2540,7 +2542,7 @@ def task_footprint(log: list[dict], task: int | str) -> set[str] | None:
     stages = stage_map(log)
     if task == "final":
         added = [e for e in log if e.get("type") == "stage" and e.get("task") == "final"]
-        return {f for entry in [*stages.values(), *added[-1:]] for f in entry.get("files", [])}
+        return {f for entry in [*stages.values(), *added] for f in entry.get("files", [])}
     entry = stages.get(task)
     return None if entry is None else set(entry.get("files", []))
 
@@ -3167,6 +3169,11 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     if not _gate_passed_on_staged(store_dir, log, task, top, files, test, lint) \
             and cmd_gate(store_dir, task, test, lint) != 0:
         return 1
+    rewritten = _git_paths(top, "diff", "--name-only", "-z", "--", *files)
+    if rewritten:
+        print(f"{', '.join(rewritten)} changed while the gate ran (a formatter, say), so the gate "
+              "didn't check what would be committed: run `commit` again to gate the new content")
+        return 1
     before = _git(top, "rev-parse", "HEAD").strip()
     staged = _staged_scope(top, files)
     if not staged:
@@ -3177,11 +3184,6 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
                                               f"{before[:7]}", light)
         # An empty path list would commit the whole index, other tasks' too.
         print(f"{_scope_name(task)}: nothing to commit in {', '.join(files)}")
-        return 1
-    rewritten = _git_paths(top, "diff", "--name-only", "-z", "--", *staged)
-    if rewritten:
-        print(f"{', '.join(rewritten)} changed while the gate ran (a formatter, say), so the gate "
-              "didn't check what would be committed: run `commit` again to gate the new content")
         return 1
     done = subprocess.run(["git", "commit", "--only", "--cleanup=verbatim", "-m", message,
                            "--", *staged], cwd=top, capture_output=True, text=True,

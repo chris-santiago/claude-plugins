@@ -3474,12 +3474,15 @@ class TestGate(TriageStoreTestCase):
         self.assertEqual(self._git("diff", "--cached", "--name-only").split(), ["a.py"])
         self.assertEqual(self._git("diff", "--name-only").split(), ["z.py"])
 
-    def test_stage_final_adds_a_file_to_the_whole_change_footprint(self):
+    def test_stage_final_adds_files_to_the_whole_change_footprint(self):
         ledger.cmd_stage(self.store, "final", None, ["lib/y.py"])
+        ledger.cmd_stage(self.store, "final", None, ["lib/z.py"])
         footprint = ledger.scope_footprint(self.store, ledger.load_progress_log(self.store), "final")
-        self.assertEqual(footprint, {"a.py", "lib/y.py"})
+        self.assertEqual(footprint, {"a.py", "lib/y.py", "lib/z.py"})
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_stage(self.store, 4, None, ["b.py"])
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_stage(self.store, "final", 2, ["lib/w.py"])
 
     def test_the_final_footprint_adds_the_final_coders_changed_files(self):
         (self.repo / "lib").mkdir()
@@ -3777,6 +3780,24 @@ class TestCommit(TriageStoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ledger.cmd_commit(self.store, 3, message, "true", None), 0)
         self.assertEqual(self._git("cat-file", "commit", "HEAD").split("\n\n", 1)[1], message)
+
+    def test_a_rewrite_during_finals_gate_over_head_stops_completion(self):
+        self.write("final-python-review-lite.json", _review_lite(task="final"))
+        self.triage("final")
+        code, out = self.commit(task="final", test="printf 'x = 9\\n' > a.py")
+        self.assertEqual(code, 1, out)
+        self.assertIn("a.py", out)
+        self.assertEqual(self.completes(), [])
+
+    def test_complete_refuses_after_the_footprint_grows_past_the_gate(self):
+        self.ready_to_commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, "true", None), 0)
+        self._git("commit", "-qm", "task 3")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "new.py"])
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_append(self.store, "complete", 3, "commits a..b")
+        self.assertIn("footprint changed", str(ctx.exception))
 
     def test_an_unreadable_gate_record_means_gate_again(self):
         self.ready_to_commit()
