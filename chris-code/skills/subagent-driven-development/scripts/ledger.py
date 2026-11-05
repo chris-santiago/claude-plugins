@@ -81,6 +81,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import triage as triage_rules  # this script's directory: the loop's pure routing rules
+
 __all__ = [
     "RecordError", "Record", "OpenItem", "Shape",
     "get_store_dir", "ensure_store", "validate_record",
@@ -1427,21 +1429,31 @@ def cmd_note(store_dir: Path, kind: str, text: str, for_task: int | None = None,
     could never be consumed), or a note already filed."""
     _check_note_flags(kind, text, for_task, owner)
     with store_lock(store_dir):
-        log = load_progress_log(store_dir)
-        _check_note_target(log, kind, for_task, owner)
-        nid = note_id(kind, text, for_task, owner, source)
-        existing = next((n for n in notes_from_log(log) if n["id"] == nid), None)
-        if existing is not None:
-            raise RecordError(f"this note is already filed as {nid} "
-                              f"({_note_state(log, existing)}); file a different text to "
-                              "say something new")
-        entry: dict = {"type": "note", "id": nid, "kind": kind, "text": text}
-        for key, value in (("for", for_task), ("owner", owner), ("from", source)):
-            if value is not None:
-                entry[key] = value
-        entry["at"] = _now()
-        _append_progress(store_dir, entry)
+        nid = _file_note(store_dir, load_progress_log(store_dir), kind, text, for_task,
+                         owner, source)
     print(nid)
+
+
+def _file_note(store_dir: Path, log: list[dict], kind: str, text: str,
+               for_task: int | None = None, owner: int | str | None = None,
+               source: int | str | None = None, rule: str | None = None) -> str:
+    """Append a note entry and return its id; the caller holds the lock.
+    `rule` (a follow-up's rule) groups follow-ups in the report and isn't
+    part of the id."""
+    _check_note_target(log, kind, for_task, owner)
+    nid = note_id(kind, text, for_task, owner, source)
+    existing = next((n for n in notes_from_log(log) if n["id"] == nid), None)
+    if existing is not None:
+        raise RecordError(f"this note is already filed as {nid} "
+                          f"({_note_state(log, existing)}); file a different text to "
+                          "say something new")
+    entry: dict = {"type": "note", "id": nid, "kind": kind, "text": text}
+    for key, value in (("for", for_task), ("owner", owner), ("from", source), ("rule", rule)):
+        if value is not None:
+            entry[key] = value
+    entry["at"] = _now()
+    _append_progress(store_dir, entry)
+    return nid
 
 
 def _note_state(log: list[dict], note: dict) -> str:
@@ -2004,6 +2016,11 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
         return
 
     records = load_records(store_dir)
+    if resolve_id in _user_settleable_ids(records):
+        if not note.lower().startswith(RULING_PREFIX):
+            raise RecordError(f"{resolve_id!r} is settled only by the user: resolve it with "
+                              f"--note \"{RULING_PREFIX} <the ruling, verbatim>\"")
+        return
     items = compute_open_items(records, set(already_resolved))
     open_ids = sorted([item.id for item in items if item.kind in RESOLVABLE_KINDS]
                       + [n["id"] for n in open_notes(log)])
@@ -2022,6 +2039,21 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     if f"#{ESCALATION_KIND}[" in resolve_id and not note.lower().startswith(RULING_PREFIX):
         raise RecordError(f"{resolve_id!r} waits on the user: resolve it with --note "
                           f"\"{RULING_PREFIX} <the ruling, verbatim>\"")
+
+
+def _user_settleable_ids(records: list[Record]) -> set[str]:
+    """Ids only the user settles: reviewer findings (a waiver) and a coder's
+    open behavior choices (an acceptance or an override)."""
+    ids = set()
+    for rec in records:
+        if not rec.ok:
+            continue
+        role = rec.data["role"]
+        if role in FINDING_LIST_FIELD or role == "gate":
+            ids |= set(finding_ids(rec, (FINDING_LIST_FIELD.get(role, "findings"),)))
+        elif role == "coder":
+            ids |= {_item_id(rec.stem, "open", e) for e in rec.data.get("open", [])}
+    return ids
 
 
 # What a note's resolution must say, by kind.
@@ -2149,6 +2181,9 @@ def check_record(path: Path) -> dict:
             f"{path}: passes validation but fails to render as an open item: {e}") from e
     if data["role"] == "decision":
         _check_decision_context(path, data)
+    elif data["role"] in FINDING_LIST_FIELD and _is_store(path.parent):
+        _check_contest_answers(path, data)
+        _check_reraised_findings(path, data)
     elif data["role"] == "coder":
         _check_coder_model(path, data)
         _check_fix_baseline(path, data)
@@ -2359,6 +2394,286 @@ def _scope_records(store_dir: Path, scope: str) -> ScopeRecords:
         coders=[r for r in in_scope if r.ok and r.data["role"] == "coder"],
         problems=problems,
         decisions=[r for r in records if r.ok and r.data["role"] == "decision"])
+
+
+# --- triage: the per-task review-fix loop (schema 2) ---
+
+TRIAGE_ENTRY = "triage"
+
+
+def _scope_log(log: list[dict], task: int | str) -> list[dict]:
+    """The log entries that count for `task`: everything for a numbered
+    task, and only what follows the last close round for the whole-change
+    gate, whose remediation run starts fresh (final-r2-* records)."""
+    if task != "final":
+        return log
+    starts = [i for i, e in enumerate(log) if e.get("type") == "close_round"]
+    return log[starts[-1] + 1:] if starts else log
+
+
+def scope_prefix(log: list[dict], task: int | str) -> str:
+    """The record-name prefix of `task`'s current records."""
+    if task != "final":
+        return f"task-{task}"
+    return "final-r2" if close_rounds(log) else "final"
+
+
+def triage_entries(log: list[dict], task: int | str) -> list[dict]:
+    return [e for e in _scope_log(log, task) if e.get("type") == TRIAGE_ENTRY
+            and e.get("task") == task]
+
+
+def latest_triage(log: list[dict], task: int | str) -> dict | None:
+    entries = triage_entries(log, task)
+    return entries[-1] if entries else None
+
+
+def _latest_coder(coders: list[Record]) -> Record | None:
+    return max(coders, key=lambda r: (r.data.get("cycle", 0), r.stem), default=None)
+
+
+def _finding_inputs(reviewers: list[Record]) -> list[dict]:
+    """Each raised finding as triage reads it: its tags, and whether its
+    reviewer flagged one of its sites as recurring or fix-introduced."""
+    findings = []
+    for rec in reviewers:
+        field_name = FINDING_LIST_FIELD.get(rec.data["role"], "findings")
+        flagged = {flag: {e.get("site") for e in rec.data.get(flag, [])} for flag in FLAG_FIELDS}
+        for fid, entry in finding_ids(rec, (field_name,)).items():
+            sites = set(entry["sites"])
+            findings.append({"id": fid, "source": rec.stem, "gate": rec.data["role"] == "gate",
+                             "severity": entry["severity"], "reach": entry["reach"],
+                             "rule": entry["rule"], "sites": entry["sites"],
+                             "recurring": bool(sites & flagged["recurring"]),
+                             "introduced": bool(sites & flagged["introduced_by_fix"])})
+    return findings
+
+
+def _coder_deferrals(coder: Record | None, rules: dict[str, str]) -> list[dict]:
+    """A coder's skipped notes and outside sites, each with an id, the rule
+    it falls under, and the follow-up text to file."""
+    if coder is None:
+        return []
+    out = []
+    for entry in coder.data.get("notes_skipped", []):
+        out.append({"id": _item_id(coder.stem, "notes_skipped", entry),
+                    "rule": rules.get(entry["finding"], entry["reason"]),
+                    "text": f"skipped note {entry['finding']}: {entry['reason']}"})
+    for sweep in coder.data.get("sweeps", []):
+        for site in sweep.get("sites_outside", []):
+            out.append({"id": _item_id(coder.stem, "sites_outside", {"site": site,
+                                                                     "rule": sweep["rule"]}),
+                        "rule": sweep["rule"], "site": site,
+                        "text": f"outside site {site}: {sweep['rule']}"})
+    return out
+
+
+def _ruled_since_escalation(log: list[dict], task: int | str) -> bool:
+    """A user ruling logged for `task` after its last escalate entry."""
+    scoped = _scope_log(log, task)
+    escalations = [i for i, e in enumerate(scoped) if e.get("type") == TRIAGE_ENTRY
+                   and e.get("task") == task and e.get("kind") == "escalate"]
+    if not escalations:
+        return False
+    return any(e.get("type") == "progress" and e.get("task") == task
+               and str(e.get("note", "")).lower().startswith(RULING_PREFIX)
+               for e in scoped[escalations[-1] + 1:])
+
+
+def _user_waived(log: list[dict]) -> set[str]:
+    return {i for i, note in resolutions_from_log(log).items()
+            if note.lower().startswith(RULING_PREFIX)}
+
+
+def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record], Record | None]:
+    """Everything `triage.derive` reads for `task`, from the store; plus the
+    scope's reviewer records and its latest coder record."""
+    log = load_progress_log(store_dir)
+    found = _scope_records(store_dir, scope_prefix(log, task))
+    if found.problems:
+        raise RecordError(f"record(s) named for task {task!r} can't be triaged; fix them "
+                          "first: " + "; ".join(found.problems))
+    if not found.reviewers:
+        raise RecordError(f"task {task!r} has no reviewer record yet; triage reads the "
+                          "review, so dispatch the reviewers first")
+    coder = _latest_coder(found.coders)
+    findings = _finding_inputs(found.reviewers)
+    coder_data = coder.data if coder else {}
+    root_causes = [cid for cid, text in (concern_ids(coder).items() if coder else [])
+                   if text.lower().startswith(ROOT_CAUSE_PREFIX)]
+    answers = {a["finding"]: a["verdict"] for rec in found.reviewers
+               for a in rec.data.get("contests", [])}
+    rules = {f["id"]: f["rule"] for f in findings}
+    inputs = {
+        "findings": findings, "root_causes": root_causes,
+        "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
+        "answers": answers, "waived": _user_waived(log),
+        "prior": triage_entries(log, task), "ruled": _ruled_since_escalation(log, task),
+        "undelivered_note": isinstance(task, int) and bool(undelivered_notes(log, task)),
+        "model": coder_data.get("model"),
+        "file_candidates": _coder_deferrals(coder, rules),
+    }
+    return inputs, found.reviewers, coder
+
+
+def _file_deferrals(store_dir: Path, log: list[dict], task: int | str,
+                    to_file: list[dict], texts: dict[str, dict]) -> list[str]:
+    """File each new deferral: an outside site a later task's footprint
+    covers goes to that task as a task-note; everything else is a
+    follow-up carrying its rule, for the close batch."""
+    done = set(completed_task_ids(log))
+    owners = {f: other for other, entry in stage_map(log).items()
+              if other != task and str(other) not in done for f in entry.get("files", [])}
+    filed = []
+    for item in to_file:
+        detail = texts.get(item["id"], item)
+        text = detail.get("text") or f"deferred {item['id']}: {item['rule']}"
+        site = detail.get("site")
+        owner = owners.get(_normalize_path(SITE_RE.match(site)["path"])) if site else None
+        source = task if isinstance(task, int) else "final"
+        if note_id("task-note" if owner else "follow-up", text, owner, None, source) in {
+                n["id"] for n in notes_from_log(log)}:
+            continue
+        if owner is not None:
+            filed.append(_file_note(store_dir, log, "task-note", text, for_task=owner,
+                                    source=source))
+        else:
+            filed.append(_file_note(store_dir, log, "follow-up", text, source=source,
+                                    rule=item["rule"]))
+        log = load_progress_log(store_dir)
+    return filed
+
+
+def _tree_or_none(store_dir: Path) -> str | None:
+    repo = _store_repo(store_dir)
+    return snapshot_tree(repo) if repo is not None else None
+
+
+def cmd_triage(store_dir: Path, task: int | str) -> None:
+    """Derive the scope's next step from its records, append it as a triage
+    entry, file its new deferrals, and print the step and its dispatch."""
+    with store_lock(store_dir):
+        inputs, reviewers, coder = triage_inputs(store_dir, task)
+        result = triage_rules.derive(**inputs)
+        texts = {c["id"]: c for c in inputs["file_candidates"]}
+        log = load_progress_log(store_dir)
+        filed_notes = _file_deferrals(store_dir, log, task, result.pop("to_file"), texts)
+        recheck_records = _recheck_records(result, reviewers)
+        entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
+                 **result, "recheck_records": recheck_records, "at": _now()}
+        _append_progress(store_dir, entry)
+    print(_render_triage(entry, filed_notes))
+
+
+def _recheck_records(result: dict, reviewers: list[Record]) -> list[str]:
+    """The reviewer records to re-dispatch for the step."""
+    if result["recheck"] == "all":
+        return sorted(r.stem for r in reviewers)
+    if result["recheck"] == "raising":
+        return sorted({f["source"] for f in result["findings"]
+                       if f["tier"] in ("patch", "holistic", "held")})
+    return []
+
+
+def _render_triage(entry: dict, filed: list[str]) -> str:
+    lines = [f"{_scope_name(entry['task'])} triage: {entry['kind']} "
+             f"(round {entry['round']}, recheck {entry['recheck']})"]
+    for finding in entry["findings"]:
+        lines.append(f"  [{finding['id']}] {finding['tier']}: {finding['rule']} "
+                     f"({finding['source']})")
+    for cid in entry["root_causes"]:
+        lines.append(f"  [{cid}] holistic: root cause")
+    if entry["recheck_records"]:
+        lines.append("re-check: " + ", ".join(entry["recheck_records"]))
+    if entry["held"]:
+        lines.append("held for the user: " + ", ".join(entry["held"]))
+    for nid in filed:
+        lines.append(f"filed {nid}")
+    return "\n".join(lines)
+
+
+def _check_contest_answers(path: Path, data: dict) -> None:
+    """A re-checking reviewer answers every contest the coder raised against
+    one of its findings, so a finding closes only after it read the evidence."""
+    scope = _scope(path.stem)
+    coder = _latest_coder(_scope_records(path.parent, scope).coders) if scope else None
+    if coder is None:
+        return
+    sent = {c["finding"] for c in coder.data.get("contested", [])
+            if c["finding"].startswith(f"{path.stem}#")}
+    missing = sorted(sent - {a["finding"] for a in data.get("contests", [])})
+    if missing:
+        raise RecordError(f"{path}: the coder contested {', '.join(missing)}; answer each in "
+                          "`contests` with a concede or hold verdict and your reason")
+
+
+def changed_lines(diff: str) -> dict[str, set[int]]:
+    """New-side line numbers each file's hunks added or changed; a hunk that
+    only deletes marks the line it deleted before."""
+    changed: dict[str, set[int]] = {}
+    path, line_no, new_left = None, 0, 0
+    for raw in diff.split("\n"):
+        if raw.startswith("+++ "):
+            target = raw[4:].rstrip("\t")
+            path = target[2:] if target.startswith("b/") else None
+            continue
+        header = HUNK_HEADER_RE.match(raw)
+        if header:
+            line_no, new_left = int(header.group(2)), int(header.group(3) or 1)
+            if new_left == 0 and path is not None:
+                changed.setdefault(path, set()).add(max(line_no, 1))
+            continue
+        if path is None or not raw:
+            continue
+        if raw[0] == "+":
+            changed.setdefault(path, set()).add(line_no)
+            line_no += 1
+        elif raw[0] == " ":
+            line_no += 1
+    return changed
+
+
+def site_touches(site: str, changed: dict[str, set[int]]) -> bool:
+    """Whether a site overlaps the changed lines (a bare path: any change)."""
+    match = SITE_RE.match(site)
+    lines = changed.get(_normalize_path(match["path"]), set())
+    if match["start"] is None:
+        return bool(lines)
+    start = int(match["start"])
+    end = int(match["end"]) if match["end"] else start
+    return any(start <= n <= end for n in lines)
+
+
+def _check_reraised_findings(path: Path, data: dict) -> None:
+    """A settled finding raised again unchanged is refused; one marked
+    `reopens` must name a settled finding and sit in code changed since it
+    was settled."""
+    log = load_progress_log(path.parent)
+    settled_at: dict[str, str | None] = {}
+    for entry in triage_entries(log, data["task"]):
+        for fid in entry.get("settled", []):
+            settled_at.setdefault(fid, entry.get("tree"))
+    field_name = FINDING_LIST_FIELD[data["role"]]
+    rec = Record(stem=path.stem, ok=True, data=data)
+    repo = _store_repo(path.parent)
+    for fid, finding in finding_ids(rec, (field_name,)).items():
+        if fid in settled_at:
+            raise RecordError(f"{path}: {fid} was settled; drop it, or mark a new finding "
+                              "`reopens` with a site in code changed since")
+        target = finding.get("reopens")
+        if target is None:
+            continue
+        if target not in settled_at:
+            raise RecordError(f"{path}: `reopens` names {target!r}, which isn't a settled "
+                              "finding of this task")
+        tree = settled_at[target]
+        if repo is None or tree is None:
+            continue
+        paths = sorted({SITE_RE.match(site)["path"] for site in finding["sites"]})
+        changed = changed_lines(diff_trees(repo, tree, snapshot_tree(repo), paths))
+        if not any(site_touches(site, changed) for site in finding["sites"]):
+            raise RecordError(f"{path}: reopens {target} at {', '.join(finding['sites'])}, but "
+                              "none of those lines changed since it was settled")
 
 
 def _check_decision_context(path: Path, data: dict) -> None:
@@ -2725,6 +3040,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_findings.add_argument("decision_path", help="the decision's output path; a bare "
                                                   "filename resolves against --store")
 
+    p_triage = sub.add_parser("triage", parents=[store_parent],
+                              help="derive the task's next step from its review, log it, file "
+                                   "its deferrals, and print the dispatch to make")
+    p_triage.add_argument("--task", required=True, type=_task_arg)
+
     p_count = sub.add_parser("fix-count", parents=[store_parent],
                               help="print how many non-trivial fixes the task has had "
                                    "(snapshots taken with --non-trivial)")
@@ -2841,6 +3161,8 @@ def main() -> None:
             cmd_baseline(store_dir, args.tree, args.task)
         elif args.command == "findings":
             cmd_findings(_resolve_check_path(args.decision_path, args.store))
+        elif args.command == "triage":
+            cmd_triage(store_dir, args.task)
         elif args.command == "fix-count":
             print(non_trivial_fix_count(load_progress_log(store_dir), args.task))
         elif args.command == "close-round":

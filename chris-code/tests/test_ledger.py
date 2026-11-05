@@ -2726,6 +2726,179 @@ class TestHistory(LedgerTestCase):
 
 # --- fix-loop integrity (2026-10-30) ---
 
+class TriageStoreTestCase(GitRepoTestCase):
+    """A store inside a throwaway repo, with task 3's footprint recorded."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = ledger.ensure_store(self.repo / ".sdd")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+
+    def write(self, name: str, data: dict) -> Path:
+        return _write(self.store, name, data)
+
+    def spec(self, *issues: dict, **extra) -> Path:
+        status = "issues" if any(i["severity"] >= 3 for i in issues) else "compliant"
+        return self.write("task-3-spec-reviewer.json",
+                          _spec_reviewer(task=3, status=status, issues=list(issues), **extra))
+
+    def coder(self, **fields) -> Path:
+        return self.write("task-3-python-coder.json", _coder(task=3, **fields))
+
+    def triage(self, task: int | str = 3) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_triage(self.store, task)
+        return out.getvalue()
+
+    def entries(self) -> list[dict]:
+        return [e for e in ledger.load_progress_log(self.store) if e.get("type") == "triage"]
+
+    def spec_id(self, issue: dict) -> str:
+        return _entry_id("task-3-spec-reviewer", "issues", issue)
+
+
+class TestTriageCommand(TriageStoreTestCase):
+    def test_a_clean_review_is_done(self):
+        self.spec()
+        self.assertIn("done", self.triage())
+        [entry] = self.entries()
+        self.assertEqual((entry["task"], entry["kind"]), (3, "done"))
+
+    def test_one_local_s3_prints_a_patch_with_the_finding_and_its_reviewer(self):
+        issue = _finding(sites=["a.py:1"])
+        self.spec(issue)
+        out = self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "patch")
+        for expected in ("patch", self.spec_id(issue), issue["rule"], "task-3-spec-reviewer"):
+            self.assertIn(expected, out)
+
+    def test_a_malformed_record_in_scope_is_refused_and_nothing_written(self):
+        self.spec()
+        (self.store / "task-3-python-quality-reviewer.json").write_text("not json")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.triage()
+        self.assertIn("task-3-python-quality-reviewer", str(ctx.exception))
+        self.assertEqual(self.entries(), [])
+
+    def test_a_task_nobody_reviewed_is_refused(self):
+        self.coder()
+        with self.assertRaises(ledger.RecordError):
+            self.triage()
+        self.assertEqual(self.entries(), [])
+
+    def test_an_s2_contract_finding_is_filed_once_as_a_follow_up_with_its_rule(self):
+        self.spec(_finding(severity=2, reach="contract", rule="public names are nouns"))
+        self.triage()
+        self.triage()
+        follow_ups = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                      if n["kind"] == "follow-up"]
+        self.assertEqual([n.get("rule") for n in follow_ups], ["public names are nouns"])
+
+    def test_skipped_notes_and_outside_sites_are_filed(self):
+        ledger.cmd_stage(self.store, 5, 2, ["lib/x.py"])
+        note = _finding(severity=1, rule="name says what it holds")
+        self.spec(note)
+        self.coder(notes_skipped=[{"finding": self.spec_id(note), "reason": "renaming breaks callers"}],
+                   sweeps=[{"findings": [self.spec_id(note)], "rule": "size must be positive",
+                            "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                            "searched": {"command": "rg size", "result": "2 matches"},
+                            "sites_outside": ["lib/x.py:4", "lib/y.py:2"]}])
+        self.triage()
+        notes = ledger.notes_from_log(ledger.load_progress_log(self.store))
+        kinds = sorted((n["kind"], n.get("for")) for n in notes)
+        self.assertEqual(kinds, [("follow-up", None), ("follow-up", None), ("task-note", 5)])
+
+    def test_a_held_contest_parks_and_a_ruling_then_rules_the_rest(self):
+        issue, other = _finding(sites=["a.py:1"]), _finding(sites=["a.py:1"], rule="other rule")
+        self.spec(issue, other)
+        self.triage()  # patch
+        self.coder(cycle=1, contested=[{"finding": self.spec_id(issue), "reason": "wrong",
+                                        "evidence": "a.py:1 already guards size"}])
+        self.spec(issue, other, contests=[{"finding": self.spec_id(issue), "verdict": "hold",
+                                           "reason": "the guard skips None"}])
+        self.triage()  # second patch for `other`; issue held
+        self.assertEqual(self.entries()[-1]["held"], [self.spec_id(issue)])
+        self.triage()  # rounds spent: escalate
+        self.assertEqual(self.entries()[-1]["kind"], "escalate")
+        ledger.cmd_resolve(self.store, _entry_id("task-3-spec-reviewer", "issues", other),
+                           "user ruling: waive, it's out of scope")
+        ledger.cmd_append(self.store, "progress", 3, "user ruling: fix the None guard")
+        self.triage()
+        last = self.entries()[-1]
+        self.assertEqual(last["kind"], "ruling")
+        self.assertEqual([f["id"] for f in last["findings"]], [self.spec_id(issue)])
+
+    def test_a_conceded_contest_and_a_waiver_are_settled_with_the_tree(self):
+        issue, other = _finding(), _finding(rule="other rule")
+        self.spec(issue, other)
+        self.triage()
+        ledger.cmd_resolve(self.store, self.spec_id(other), "user ruling: waive")
+        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "concede",
+                                    "reason": "the guard exists"}])
+        self.triage()
+        last = self.entries()[-1]
+        self.assertEqual(last["kind"], "done")
+        self.assertEqual(set(last["settled"]), {self.spec_id(issue), self.spec_id(other)})
+        self.assertTrue(last["tree"])
+
+
+class TestResolveFindings(TriageStoreTestCase):
+    def test_an_open_finding_is_waived_only_by_a_user_ruling(self):
+        issue = _finding()
+        self.spec(issue)
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_resolve(self.store, self.spec_id(issue), "not needed")
+        ledger.cmd_resolve(self.store, self.spec_id(issue), "user ruling: waive")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_an_open_choice_is_accepted_by_a_user_ruling(self):
+        choice = {"question": "size=None?", "choice": "ValueError", "precedent": "a.py:1"}
+        self.coder(open=[choice])
+        ledger.cmd_resolve(self.store, _entry_id("task-3-python-coder", "open", choice),
+                           "user ruling: accept")
+
+
+class TestContestAnswersAndReopens(TriageStoreTestCase):
+    def test_a_recheck_must_answer_every_contest_sent_to_it(self):
+        issue = _finding()
+        self.spec(issue)
+        self.coder(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_check(str(self.spec(issue)))
+        self.assertIn(self.spec_id(issue), str(ctx.exception))
+        ledger.cmd_check(str(self.spec(issue, contests=[
+            {"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])))
+
+    def _settle(self, issue: dict) -> None:
+        self.spec(issue)
+        ledger.cmd_resolve(self.store, self.spec_id(issue), "user ruling: waive")
+        self.triage()
+
+    def test_the_same_finding_raised_again_without_reopens_is_refused(self):
+        issue = _finding()
+        self._settle(issue)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_check(str(self.spec(issue)))
+        self.assertIn(self.spec_id(issue), str(ctx.exception))
+
+    def test_a_reopen_needs_a_site_in_code_changed_since_settlement(self):
+        issue = _finding()
+        self._settle(issue)
+        (self.repo / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+        ledger.cmd_check(str(self.spec(_finding(sites=["a.py:2"], reopens=self.spec_id(issue)))))
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(self.spec(_finding(sites=["a.py:1"], reopens=self.spec_id(issue)))))
+
+    def test_a_reopen_must_name_a_settled_finding(self):
+        self.spec()
+        self.triage()
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_check(str(self.spec(_finding(reopens="task-3-spec-reviewer#issues[00000000]"))))
+
+
 class TestCoderStoreChecks(GitRepoTestCase):
     """Checks a coder record gets only inside a store: deferrals stay out of
     the task's footprint, a fix's added lines carry no process labels, and
