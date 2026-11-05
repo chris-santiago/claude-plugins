@@ -45,9 +45,9 @@ PLAN_TEXT = """# Fixture Plan
 ### Task 2: the real task
 
 - Consumes: contract from spec §6 → `{consumed_path}`
-- Cases: size>0; size=0, size<0, size=None → ValueError
+- Cases: size>0 → grid; size=0, size<0, size=None → ValueError
 - [ ] Concrete action
-- [ ] Verify: something
+- [ ] Verify: `make check`
 
 ### Task 3: cool-down
 
@@ -457,7 +457,7 @@ class TestValidateCases(unittest.TestCase):
     size=None surfaced one review cycle at a time."""
 
     def test_listed_cases_pass(self):
-        task_brief.validate_cases("### Task 2: x\n- Cases: size>0; size=None → ValueError\n")
+        task_brief.validate_cases("### Task 2: x\n- Cases: size>0 → grid; size=None → ValueError\n")
 
     def test_na_with_a_reason_passes(self):
         for dash in ("—", "-", "–"):
@@ -488,11 +488,11 @@ class TestValidateCases(unittest.TestCase):
             task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
 
     def test_bold_and_unbulleted_cases_lines_count(self):
-        for line in ("- **Cases:** size>0", "Cases: size>0", "**Cases:** size>0"):
+        for line in ("- **Cases:** size>0 → grid", "Cases: size>0 → grid", "**Cases:** size>0 → grid"):
             task_brief.validate_cases(f"### Task 2: x\n{line}\n")
 
     def test_cases_as_an_indented_sub_list_counts(self):
-        entry = "### Task 2: x\n- Cases:\n  - size>0\n  - size=None → ValueError\n- [ ] do it\n"
+        entry = "### Task 2: x\n- Cases:\n  - size>0 → grid\n  - size=None → ValueError\n- [ ] do it\n"
         task_brief.validate_cases(entry)
 
     def test_empty_cases_header_followed_by_a_sibling_bullet_still_raises(self):
@@ -502,17 +502,17 @@ class TestValidateCases(unittest.TestCase):
 
     def test_sub_bullet_placeholders_raise(self):
         for sub in ("tbd", "n/a", "none.", "—"):
-            entry = f"### Task 2: x\n- Cases:\n  - size>0\n  - {sub}\n"
+            entry = f"### Task 2: x\n- Cases:\n  - size>0 → grid\n  - {sub}\n"
             with self.assertRaises(task_brief.BriefValidationError, msg=sub):
                 task_brief.validate_cases(entry)
 
     def test_more_markdown_forms_count(self):
-        for line in ("- **Cases**: size>0", "1. Cases: size>0", "- [ ] Cases: size>0",
-                     "- [x] Cases: size>0"):
+        for line in ("- **Cases**: size>0 → grid", "1. Cases: size>0 → grid", "- [ ] Cases: size>0 → grid",
+                     "- [x] Cases: size>0 → grid"):
             task_brief.validate_cases(f"### Task 2: x\n{line}\n")
 
     def test_blank_line_before_sub_bullets_still_counts(self):
-        task_brief.validate_cases("### Task 2: x\n- Cases:\n\n  - size>0\n  - size=None → ValueError\n")
+        task_brief.validate_cases("### Task 2: x\n- Cases:\n\n  - size>0 → grid\n  - size=None → ValueError\n")
 
     def test_more_placeholders_raise(self):
         for value in ("—", "–", "none.", "TBD.", "NA", "n.a.", "n/a — tbd", "n/a — none"):
@@ -534,9 +534,60 @@ class TestValidateCases(unittest.TestCase):
         task_brief.validate_cases("### Task 2: x\n- Cases: n/a — config-only (refactored file names)\n")
 
     def test_cases_line_inside_a_code_fence_does_not_count(self):
-        entry = "### Task 2: x\n```\n- Cases: size>0\n```\n- [ ] do it\n"
+        entry = "### Task 2: x\n```\n- Cases: size>0 → grid\n```\n- [ ] do it\n"
         with self.assertRaises(task_brief.BriefValidationError):
             task_brief.validate_cases(entry)
+
+
+class TestPlanContract(unittest.TestCase):
+    """A row states its result; an undecided behavior is an `open:` row the
+    user answers before the build; every Verify: line is a command."""
+
+    def assertRefused(self, entry: str, *fragments: str) -> None:
+        with self.assertRaises(task_brief.BriefValidationError) as ctx:
+            task_brief.validate_cases(entry)
+            task_brief.validate_verify(entry, "2")
+        for fragment in fragments:
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_rows_with_a_result_pass(self):
+        for value in ("size=0, size<0 → ValueError", "size=0 -> ValueError",
+                      "size>0 → grid; size=0 → ValueError"):
+            task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_a_principle_is_refused_naming_it(self):
+        self.assertRefused("### Task 2: x\n- Cases: validate sizes\n", "validate sizes")
+
+    def test_a_segment_without_its_own_result_is_refused(self):
+        self.assertRefused("### Task 2: x\n- Cases: size>0; size=0 → ValueError\n", "size>0")
+
+    def test_each_sub_bullet_row_needs_a_result(self):
+        task_brief.validate_cases("### Task 2: x\n- Cases:\n  - size=0 → ValueError\n"
+                                  "  - empty data → []\n")
+        self.assertRefused("### Task 2: x\n- Cases:\n  - size=0 → ValueError\n  - empty data\n",
+                           "empty data")
+
+    def test_n_a_and_the_refactor_form_need_no_arrow(self):
+        for value in ("n/a — wiring only", "preserves ordering; covered by tests/test_x.py"):
+            task_brief.validate_cases(f"### Task 2: x\n- Cases: {value}\n")
+
+    def test_an_open_row_is_refused_naming_its_question(self):
+        self.assertRefused("### Task 2: x\n- Cases:\n  - size=0 → ValueError\n"
+                           "  - open: what does size=None do?\n", "what does size=None do?")
+
+    def test_a_verify_line_with_a_command_passes_in_each_form(self):
+        for line in ("- [ ] Verify: `python3 -m unittest`", "- Verify: `make check`",
+                     "**Verify:** `! rg -q TODO src/`"):
+            task_brief.validate_verify(f"### Task 2: x\n{line}\n", "2")
+
+    def test_a_verify_line_without_a_command_is_refused_naming_the_task(self):
+        with self.assertRaises(task_brief.BriefValidationError) as ctx:
+            task_brief.validate_verify("### Task 2: x\n- [ ] Verify: run the tests\n", "2")
+        self.assertIn("task 2", str(ctx.exception))
+
+    def test_no_verify_line_outside_a_fence_is_refused(self):
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.validate_verify("### Task 2: x\n```\n- Verify: `make`\n```\n", "2")
 
 
 class TestExtractSection(unittest.TestCase):
@@ -722,7 +773,7 @@ class TestRunEndToEnd(TaskBriefTestCase):
         consumed = self.tmp / "consumed.py"
         consumed.write_text("x = 1\n", encoding="utf-8")
         plan = _plan_with_pointer(f"contract from spec §6 → `{consumed}`").replace(
-            "- Cases: size>0; size=0, size<0, size=None → ValueError\n", "")
+            "- Cases: size>0 → grid; size=0, size<0, size=None → ValueError\n", "")
         self.plan_path.write_text(plan, encoding="utf-8")
         with self.assertRaisesRegex(task_brief.BriefValidationError, "Cases:"):
             task_brief.run(self._args(spec=str(self.spec_path)))
@@ -825,7 +876,7 @@ class TestCLI(TaskBriefTestCase):
         self.assertFalse(any(self.store.rglob("*brief*")))
 
     def test_missing_cases_line_exits_3(self):
-        plan = PLAN_TEXT.replace("- Cases: size>0; size=0, size<0, size=None → ValueError\n", "")
+        plan = PLAN_TEXT.replace("- Cases: size>0 → grid; size=0, size<0, size=None → ValueError\n", "")
         self.plan_path.write_text(plan.replace("§6 → `{consumed_path}`", "nothing"),
                                   encoding="utf-8")
         result = self._run("--intent", "x")

@@ -30,8 +30,9 @@ notes it embedded, which is what `ledger.py append --type complete` checks.
 
 Exit codes: 2 usage (bad args, missing files, task not found, --spec
 required but absent, an unreadable progress log), 3 missing/empty
---intent, a stale Consumes: pointer (naming each), or a missing/empty
-Cases: line.
+--intent, a stale Consumes: pointer (naming each), a missing/empty
+Cases: line, a Cases: row that states no result or is still an open
+question, or a Verify: line without a backticked command.
 
 Usage: python3 task_brief.py PLAN_FILE TASK_N --intent TEXT
            [--spec PATH] [--constraints-from PLAN] [--store DIR] [-o OUT]
@@ -79,6 +80,15 @@ SUB_BULLET_RE = re.compile(r"^(\s*)" + _LIST_MARKER + r"(\S.*)$")
 # "n/a" must carry a real reason: the planner has to decide a task has no
 # input domain, not skip the question. Placeholders count as no answer.
 CASES_NA_RE = re.compile(r"^n/a\b(?P<rest>.*)$", re.IGNORECASE)
+# A row states its result: "<situation> → <expected result>".
+CASES_RESULT_RE = re.compile(r"→|->")
+# A behavior-preserving refactor lists what it keeps, not results.
+CASES_REFACTOR_RE = re.compile(r"^preserves\b", re.IGNORECASE)
+# A behavior the planner couldn't decide, answered by the user before the build.
+CASES_OPEN_RE = re.compile(r"^open:\s*(?P<question>.*)$", re.IGNORECASE)
+# A `Verify:` line, with or without a list marker or bold label.
+VERIFY_LINE_RE = re.compile(
+    r"^(\s*)(?:[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)?(?:\*\*)?Verify(?:\*\*)?:(?:\*\*)?\s*(.*)$")
 CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "—", "–", "?", "na", "n.a", "n/a"})
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
@@ -499,13 +509,15 @@ def _is_placeholder(value: str) -> bool:
 
 
 def _validate_case_item(value: str) -> None:
-    """One inline value or one sub-bullet: not a placeholder, and an
-    `n/a` carries a real reason that isn't itself a placeholder."""
+    """One inline value or one sub-bullet: not a placeholder; an `n/a`
+    carries a real reason; otherwise each `;`-separated row states its
+    result with an arrow, and no row is an unanswered `open:` question."""
     if _is_placeholder(value):
         raise BriefValidationError(
             f"'Cases: {value}' is a placeholder: list the cases, or 'n/a — <reason>'")
     na = CASES_NA_RE.match(value.strip())
     if na is None:
+        _validate_case_rows(value)
         return
     reason = re.sub(r"^[\s—–:\-(]+", "", na.group("rest")).rstrip(" .)")
     if _is_placeholder(reason):
@@ -517,6 +529,44 @@ def _validate_case_item(value: str) -> None:
             f"'Cases: {value}': a refactor has an input domain; list what it "
             "preserves and the tests that cover it ('preserves <behavior>; covered "
             "by <tests>')")
+
+
+def _validate_case_rows(value: str) -> None:
+    """A row decides behavior: `size=0 → ValueError`, never `validate
+    sizes`. Coders given a principle build one reading of it, and the
+    other readings come back one review at a time."""
+    if CASES_REFACTOR_RE.match(value.strip()):
+        return
+    for row in (part.strip() for part in value.split(";")):
+        if not row:
+            continue
+        question = CASES_OPEN_RE.match(row)
+        if question:
+            raise BriefValidationError(
+                f"'Cases:' row '{row}' is still open: ask the user '{question['question']}' and "
+                "write the answer into the plan as a row with its result")
+        if not CASES_RESULT_RE.search(row):
+            raise BriefValidationError(
+                f"'Cases:' row '{row}' states no result: write it as '<situation> → <expected "
+                "result>' (e.g. 'size=0 → ValueError')")
+
+
+def validate_verify(task_entry: str, task_n: str) -> None:
+    """Raise BriefValidationError unless the entry has a `Verify:` line
+    outside a code fence and every such line carries a backticked command:
+    the gate runs it, and it passes only on exit 0."""
+    lines = [m for line, in_fence in _iter_fence_aware(task_entry.splitlines())
+             if not in_fence and (m := VERIFY_LINE_RE.match(line))]
+    if not lines:
+        raise BriefValidationError(
+            f"task {task_n} has no 'Verify:' line: give it a command where exit 0 means pass")
+    for match in lines:
+        commands = [c for c in BACKTICK_SPAN_RE.findall(match.group(2)) if c.strip()]
+        if not commands:
+            raise BriefValidationError(
+                f"task {task_n}: 'Verify: {match.group(2).strip()}' has no command; write it in "
+                "backticks, one where exit 0 means pass (a zero-matches check is "
+                "`! rg -q '<pattern>' <paths>`)")
 
 
 def _cases_blocks(task_entry: str) -> list[list[str]]:
@@ -599,6 +649,7 @@ def run(request: BriefRequest) -> Path:
         _require_existing_file(request.spec, "spec file")
     validate_consumes(task_entry, request.spec)
     validate_cases(task_entry)
+    validate_verify(task_entry, request.task_n)
 
     constraints = None
     if request.constraints_from is not None:
