@@ -136,6 +136,13 @@ class TestMarkers(RepoTestCase):
         self.assertEqual(result.level, "heavy")
         self.assertEqual(result.reasons, ("40,000 source lines (python)",))
 
+    def test_any_separator_spelling_of_a_marker_matches(self):
+        for name in ("scikit.learn", "Scikit_Learn", "scikit--learn"):
+            with self.subTest(name=name):
+                self.write("src/app.py", _lines(1000))
+                self.write("requirements.txt", f"{name}>=1.4\n")
+                self.assertEqual(self.level().level, "standard")
+
     def test_a_name_containing_a_marker_is_not_the_marker(self):
         self.write("src/app.py", _lines(1000))
         self.write("pyproject.toml", '[project]\nname = "x"\n'

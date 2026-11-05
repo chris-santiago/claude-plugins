@@ -150,7 +150,8 @@ def _count_source(top: Path, files: list[str]) -> tuple[int, list[str]]:
 
 
 def _normalize_dep(name: str) -> str:
-    return name.lower().replace("_", "-")
+    """PEP 503: case and any run of `-`, `_` or `.` don't distinguish names."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def _dep_name(spec: str) -> str | None:
