@@ -63,11 +63,11 @@ Every reviewer finding carries `severity` (1-5), `reach`, `rule`, and `sites`. T
 
 ### 4.2 Rounds
 
-`ledger.py triage` derives the next step from the records and the scope's prior triage entries. *Open work* is every S3+ finding and every `root cause:` concern that is not closed, waived, or held. A finding closes only when a re-check stops raising it, or by a logged user ruling. The orchestrator never assigns, changes, or drops a tier.
+`ledger.py triage` derives the next step from the records and the scope's prior triage entries. *Open work* is every S3+ finding and every `root cause:` concern that is not closed, waived, or held. A `root cause:` concern a decision doc of the scope lists in `excluded` is deferred: it is no longer open work, and `triage` files it once as a follow-up whose rule is the exclusion's reason. A finding closes only when a re-check stops raising it, or by a logged user ruling. The orchestrator never assigns, changes, or drops a tier.
 
 1. Open work and fewer than two fix rounds so far: a **holistic** round if any holistic item is open, else a **patch** round.
 2. Open work after two fix rounds: **escalate**.
-3. After escalation, a logged user ruling: a **ruling** round over the ruled findings. Waived findings are excluded. A ruling round that leaves open work escalates again.
+3. A user ruling logged since the last triage entry, when that entry is `escalate` or `done`: a **ruling** round over the ruled findings. Waived findings are excluded. From `done` the ruling overrides an open behavior choice, so the round sends no finding. A ruling round that leaves open work escalates again. A ruling that only names the coder's model starts no round.
 4. No open work, and notes not yet sent to a coder, or a note filed for the task not yet delivered: one **polish** dispatch.
 5. Otherwise: **done**.
 
@@ -78,6 +78,7 @@ Re-checks, which `triage` names in the entry's `recheck`:
 | Step | Who re-checks | Over what |
 |---|---|---|
 | patch, ruling | the reviewers whose S3+ findings were sent (notes are never re-reviewed); a gate finding re-runs the gate | the fix diff (`diff-since` the round's baseline) and consumers of every symbol it changed |
+| ruling with no finding (an override) | the spec reviewer | the fix diff and consumers |
 | holistic | every reviewer | the whole task |
 | polish | none (the gate is its check) | n/a |
 
@@ -94,9 +95,10 @@ Each re-check dispatch carries the round's contests with their evidence, and the
   - `docs`: only text changes that no test asserts.
   - `unreachable`: no fixture can reach the site, with evidence.
   - `existing`: an existing test, which the entry names, already fails on the defect (a gate test failure is the common case).
-- **Contract discovered.** If a fix turns out to need a contract change, the coder stops before making it and records `reach_raised`. The task goes holistic at the next triage.
+- **Contract discovered.** If a fix turns out to need a contract change, the coder stops before making it and records `reach_raised`. The task goes holistic at the next triage. A contract change the plan didn't specify, made on a first attempt or by a holistic decision, is an open choice instead (Section 4.4).
+- **Nothing to change.** A fix whose every sent finding was contested, raised, or skipped, or a polish that changed nothing, claims no hunk and may leave `hunk_map` empty.
 
-**Holistic round.** An opus research agent runs the remediating-issues per-task variant over the whole task: its diff, every reviewer record from every round, and the coder records. It may redo the task's implementation shape. It writes one decision doc that accounts for every open finding and `root cause:` concern. Each fix choice's `cases` table gives every affected case its site, its named test, and its expected result. The choice lists the couplings it touches, each of which must also be a case, and records the premise it rests on with the probe that confirmed it. The original sonnet coder implements the doc test-first and maps every case to a hunk.
+**Holistic round.** An opus research agent runs the remediating-issues per-task variant over the whole task: its diff, every reviewer record from every round, and the coder records. It may redo the task's implementation shape. It writes one decision doc that accounts for every open finding and `root cause:` concern. Each fix choice's `cases` table gives every affected case its site, its named test, and its expected result. The choice lists the couplings it touches, each of which must also be a case, and records the premise it rests on with the probe that confirmed it. The original sonnet coder implements the doc test-first and maps every case to a hunk. A finding the doc escalates is contested by the coder with the doc's evidence, and the raising reviewer answers in the round's all-reviewer re-check. Notes no fix choice takes are fixed or skipped as in any round. A decision may consist only of exclusions.
 
 **Ruling round.** The coder implements the user's ruling with the same rows and tests-first obligations.
 
@@ -104,11 +106,12 @@ Each re-check dispatch carries the round's contests with their evidence, and the
 
 ### 4.4 Open behavior choices
 
-When the brief leaves a behavior undefined, the coder doesn't stop. It picks the behavior the codebase already uses for the nearest analogous case, implements it, and records an `open` entry: the question, the choice, and the `precedent` site, or `no precedent` with its reasoning.
+When the brief leaves a behavior undefined, or the work needs a contract change the plan didn't specify, the coder doesn't stop. It picks the behavior the codebase already uses for the nearest analogous case, implements it, and records an `open` entry: the question, the choice, and the `precedent` site, or `no precedent` with its reasoning.
 
 - A reviewer doesn't raise a finding against a declared choice for disagreeing with it. A reviewer may raise a finding when the choice contradicts an existing precedent, since that is a coherence defect.
 - Open choices join the stage's batch (Section 4.5) with the coder's choice as the default. `no precedent` items are flagged as design choices.
-- Accepting costs nothing. Overriding is a ruling and costs one ruling round.
+- Accepting costs nothing. Overriding is a ruling and costs one ruling round, re-checked by the spec reviewer.
+- The coder re-lists every open choice verbatim on every attempt until the user answers it.
 
 ### 4.5 Contest, settlement, and the stage batch
 
@@ -116,7 +119,9 @@ When the brief leaves a behavior undefined, the coder doesn't stop. It picks the
 
 - The coder records `contested` with a reason (`wrong` or `plan-conflict`) and evidence instead of fixing.
 - At re-check, the raising reviewer gets the evidence and answers every contest it was sent in its record's `contests`, with a `concede` or `hold` verdict and a reason. A concede closes the finding. A hold marks it held for the user. `check` refuses a re-check record that leaves a forwarded contest unanswered, so a finding closes only after someone read the evidence.
-- A contest never consumes a fix round by itself.
+- A contest is settled in the round's re-check; it never starts a round of its own.
+- A held finding stays byte-identical in the reviewer's record, since its id is its content. A conceded one is dropped.
+- Only the reviewer that raised a finding answers its contest.
 
 **Settled findings.**
 
@@ -126,7 +131,7 @@ When the brief leaves a behavior undefined, the coder doesn't stop. It picks the
 
 **Stage batch.**
 
-- A task with open work after two rounds, a held finding, an unanswered open choice, or a contract change needing approval is parked. A parked task does not commit. The rest of the stage proceeds.
+- A task with open work after two rounds, a held finding, or an unanswered open choice is parked. Other `ready` blockers (a note, `cannot_verify`, a malformed record) are the orchestrator's to settle. A task's own decision escalations don't park it: they go through the contest. At `final`, a decision's escalation still waits on the user. A parked task does not commit. The rest of the stage proceeds.
 - Once no task in the stage has a dispatch in flight, the orchestrator sends one message covering every parked item:
   - each task's open findings (rule, sites), with the holistic decision's choice and rejected alternatives where one ran;
   - the round history, with each round's closed and introduced counts;
@@ -137,9 +142,9 @@ When the brief leaves a behavior undefined, the coder doesn't stop. It picks the
   - rule a fix, on an opus coder if they say so;
   - waive a finding, optionally filing a follow-up;
   - uphold or dismiss a held finding;
-  - accept or override an open choice;
-  - approve a contract change.
-- Each answer is logged as a `user ruling:` note on its item.
+  - accept or override an open choice (an unplanned contract change is one);
+  - waive a `root cause:` concern the task can't wait for.
+- Each answer is logged as a `user ruling:` note on its item. An override is logged both as a progress ruling on the task, which starts the ruling round, and as the choice's resolution.
 
 ### 4.6 Deferral and the close batch
 

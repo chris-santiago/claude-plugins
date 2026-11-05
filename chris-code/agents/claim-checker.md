@@ -4,9 +4,9 @@ model: haiku
 description: >
   Settles one decidable factual claim about code by reading it and quoting the lines that
   answer it. Returns holds / does-not-hold / not-decidable-by-reading plus verbatim evidence.
-  Forms no judgment and issues no verdict. Dispatched by subagent-driven-development to ground
-  a judgment-shaped review finding, or to resolve a spec-reviewer ⚠️ item, without the
-  orchestrator having to read the changed code itself.
+  Forms no judgment and issues no verdict. Dispatched by subagent-driven-development to resolve
+  a spec-reviewer ⚠️ (`cannot_verify`) item without the orchestrator having to read the code
+  itself.
 tools: [Read, Grep, Glob]
 ---
 

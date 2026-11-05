@@ -62,7 +62,7 @@ chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right
 A more recent pass hardens *assurance* — what the gates actually prove:
 
 - **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
-- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before integrating a *judgment-shaped* verdict (a cohesion call, a "cannot verify," a conflict), it states a decidable claim and dispatches `claim-checker`, which reads the code and answers with verbatim quoted lines — evidence mandatory, so the grounding costs the orchestrator no context and the quotation terminates the chain. Reviewers flag their own lossiness to say what to ground first.
+- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before resolving a spec reviewer's "cannot verify" item, it states a decidable claim and dispatches `claim-checker`, which reads the code and answers with verbatim quoted lines — evidence mandatory, so the grounding costs the orchestrator no context and the quotation terminates the chain. Everything else routes by its tags through `triage`.
 - **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only a few axes are truly independent (a deterministic linter, a spec-blind check, a mutation gate that breaks the code and runs the real tests), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun
@@ -131,7 +131,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
 | `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes, and runs advisory on-demand. |
-| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can ground a judgment-shaped finding without reading the code; forms no verdict. |
+| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can resolve a `cannot_verify` item without reading the code; forms no verdict. |
 
 ---
 
@@ -348,7 +348,7 @@ Language-agnostic, dispatched by name from `subagent-driven-development`. Read-o
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `claim-checker` | haiku | one claim per dispatch | Settles one decidable factual claim about code (holds / does-not-hold / not-decidable-by-reading) with verbatim quoted lines, grounding a judgment-shaped finding or a spec-reviewer `cannot_verify` item without the orchestrator reading the code |
+| `claim-checker` | haiku | one claim per dispatch | Settles one decidable factual claim about code (holds / does-not-hold / not-decidable-by-reading) with verbatim quoted lines, resolving a spec-reviewer `cannot_verify` item without the orchestrator reading the code |
 
 ### Campaign Agent
 
@@ -379,7 +379,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
 | `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
 | `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 6), in an isolated worktree |
-| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to ground a judgment-shaped finding or a `cannot_verify` item |
+| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to resolve a spec reviewer's `cannot_verify` item |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 

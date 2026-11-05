@@ -135,6 +135,6 @@ After saving the plan, offer:
 
 **Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in four ways:
 - §2's spec references are the decision doc and the gate report paths.
-- Each task's `Cases:` line comes from the decision doc's correctness table, one row per affected case (`<case> → <its result>`), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or list the affected sites if the table names them.
+- Each task's `Cases:` line comes from the decision doc's correctness table, one row per affected case (`<case> → <its result>`), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or, if the table names the affected sites, list each as a row with its result (`<site> → <result>`).
 - Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
 - Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.
