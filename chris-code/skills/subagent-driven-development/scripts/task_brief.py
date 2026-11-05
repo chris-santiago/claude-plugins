@@ -24,7 +24,7 @@ Every task entry must also carry a `Cases:` line (the cases its rule
 covers, or `n/a — <reason>`); the brief carries it verbatim with the entry.
 
 Every brief opens with the task's rigor level and its reasons (rigor.py),
-resolved in the repo the store lives in. A task's `Rigor:` line can raise
+resolved in the current directory's work tree. A task's `Rigor:` line can raise
 its level above the project's, never lower it.
 
 Cross-task notes come only from the ledger store: every open task-note for
@@ -96,8 +96,10 @@ CASES_OPEN_RE = re.compile(r"^open:\s*(?P<question>.*)$", re.IGNORECASE)
 # A `Verify:` line, with or without a list marker or bold label.
 VERIFY_LINE_RE = re.compile(
     r"^(\s*)(?:[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)?(?:\*\*)?Verify(?:\*\*)?:(?:\*\*)?\s*(.*)$")
-# A task's `Rigor:` line, in the same forms as `Cases:`; group 1 is its value.
-RIGOR_LINE_RE = re.compile(r"^\s*" + _LIST_MARKER + r"?(?:\*\*)?Rigor(?:\*\*)?:(?:\*\*)?\s*(.*)$")
+# A task's `Rigor:` line, in the same forms as `Cases:` but at task level
+# (unindented, as lean-plan writes task lines), any case; group 1 is its value.
+RIGOR_LINE_RE = re.compile(
+    r"^" + _LIST_MARKER + r"?(?:\*\*)?Rigor(?:\*\*)?:(?:\*\*)?\s*(.*)$", re.IGNORECASE)
 CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "—", "–", "?", "na", "n.a", "n/a"})
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
@@ -601,14 +603,13 @@ def validate_verify(task_entry: str, task_n: str) -> None:
 
 
 def rigor_line(task_entry: str) -> str | None:
-    """The first word of the entry's first `Rigor:` line outside a code
-    fence, lowercased and undecorated, or None without one. Words after
-    it are the planner's note."""
+    """The level the entry's first task-level `Rigor:` line names (see
+    rigor.level_word), or None without one. Lines in a code fence and
+    indented sub-bullets, such as a `Cases:` row, don't count."""
     for line, in_fence in _iter_fence_aware(task_entry.splitlines()):
         m = None if in_fence else RIGOR_LINE_RE.match(line)
         if m is not None:
-            words = _normalize(m.group(1)).split()
-            return words[0] if words else ""
+            return rigor.level_word(m.group(1))
     return None
 
 
@@ -640,12 +641,13 @@ def _cases_blocks(task_entry: str) -> list[list[str]]:
     return blocks
 
 
-def task_rigor(task_entry: str, task_n: str, store_dir: Path) -> rigor.Resolution:
-    """The task's rigor level, resolved in the repo the store lives in.
-    A `Rigor:` line below the project level, an unknown one, or a bad
-    CLAUDE.md value raises BriefValidationError."""
+def task_rigor(task_entry: str, task_n: str, repo: Path) -> rigor.Resolution:
+    """The task's rigor level, resolved in the work tree holding repo (the
+    current directory, the same root `Consumes:` paths resolve against,
+    wherever the store lives). A `Rigor:` line below the project level, an
+    unknown one, or a bad CLAUDE.md value raises BriefValidationError."""
     try:
-        project = rigor.project_level(store_dir.parent)
+        project = rigor.project_level(repo)
         return rigor.task_level(project, rigor_line(task_entry), task_n)
     except rigor.RigorError as e:
         raise BriefValidationError(str(e)) from e
@@ -722,7 +724,7 @@ def run(request: BriefRequest) -> Path:
         store_dir = ledger.get_store_dir(request.store)
     except RuntimeError as e:
         raise UsageError(str(e)) from e
-    level = task_rigor(task_entry, request.task_n, store_dir)
+    level = task_rigor(task_entry, request.task_n, Path.cwd())
     shapes_text = ledger.render_shapes(ledger.list_shapes(ledger.load_records(store_dir)))
     try:
         required = ledger.required_notes(ledger.load_progress_log(store_dir), int(request.task_n))

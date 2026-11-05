@@ -87,7 +87,12 @@ class TestSizeBase(RepoTestCase):
             self.write(rel, _lines(10000))
         self.assertEqual(self.level().reasons, ("1,000 source lines (python)",))
 
-    def test_tracked_symlinks_are_not_followed(self):
+    def test_a_tracked_symlink_to_source_is_not_counted_twice(self):
+        self.write("src/app.py", _lines(1000))
+        (self.repo / "src/alias.py").symlink_to("app.py")
+        self.assertEqual(self.level().reasons, ("1,000 source lines (python)",))
+
+    def test_tracked_symlinks_to_devices_never_hang(self):
         self.write("src/app.py", _lines(1000))
         (self.repo / "src/zero.py").symlink_to("/dev/zero")
         (self.repo / "requirements.txt").symlink_to("/dev/zero")
@@ -169,7 +174,23 @@ class TestMarkers(RepoTestCase):
     def test_a_malformed_manifest_is_skipped(self):
         self.write("src/app.py", _lines(1000))
         self.write("Cargo.toml", "[dependencies\npyo3 = \n")
+        self.write("pyproject.toml", 'project = "x"\n[build-system]\nrequires = [1]\n')
         self.assertEqual(self.level().level, "light")
+
+    def test_a_setup_cfg_with_a_url_encoded_wheel_still_counts(self):
+        self.write("src/app.py", _lines(1000))
+        self.write("setup.cfg", "[options]\ninstall_requires =\n"
+                                "    torch @ https://x.org/torch-2.3%2Bcpu.whl\n    numpy\n")
+        self.assertEqual(self.level().level, "standard")
+
+    def test_a_large_python_and_rust_project_with_torch_is_heavy(self):
+        self.write("python/pkg/model.py", _lines(16000))
+        self.write("rust/src/lib.rs", _lines(15500))
+        self.write("rust/Cargo.toml", '[package]\nname = "x"\n\n[dependencies]\npyo3 = "0.21"\n')
+        self.write("pyproject.toml", '[project]\nname = "x"\ndependencies = ["torch>=2"]\n')
+        result = self.level()
+        self.assertEqual(result.level, "heavy")
+        self.assertEqual(result.reasons, ("31,500 source lines (python, rust)",))
 
 
 class TestClaudeMd(RepoTestCase):
@@ -198,8 +219,15 @@ class TestClaudeMd(RepoTestCase):
         self.write("CLAUDE.md", "Test rigor: medium\n")
         proc = self.cli()
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("medium", proc.stderr)
+        for word in ("medium", "light", "standard", "heavy"):
+            self.assertIn(word, proc.stderr)
         self.assertEqual(proc.stdout, "")
+
+    def test_a_fenced_example_is_not_the_line(self):
+        self.write("src/app.py", _lines(1000))
+        self.write("CLAUDE.md", "Set it like this:\n\n```\nTest rigor: light|standard|heavy\n```\n"
+                                "\nTest rigor: heavy. Numeric code.\n")
+        self.assertEqual(self.level().level, "heavy")
 
 
 class TestDefaults(RepoTestCase):
@@ -271,7 +299,12 @@ PLAN = """# Plan
 - Cases: x → y
 
 ### Task 3: wiring
-- Cases: n/a — wiring only
+- Cases:
+  - Rigor: extreme → refused
+
+### Task 4: numeric kernel
+- rigor: heavy, NaN inputs are realistic here
+- Cases: x → y
 
 ```markdown
 - Rigor: heavy
@@ -293,9 +326,13 @@ class TestPlanCli(RepoTestCase):
         self.assertEqual(proc.stdout,
                          "heavy: task 1 raised from light; 1,000 source lines (python)\n")
 
-    def test_a_fenced_line_is_ignored(self):
+    def test_fenced_and_sub_bullet_lines_are_ignored(self):
         proc = self.cli("--plan", str(self.repo / "plan.md"), "--task", "3")
         self.assertEqual(proc.stdout, "light: 1,000 source lines (python)\n")
+
+    def test_any_label_case_and_a_trailing_note(self):
+        proc = self.cli("--plan", str(self.repo / "plan.md"), "--task", "4")
+        self.assertTrue(proc.stdout.startswith("heavy: task 4 raised"), proc.stdout + proc.stderr)
 
     def test_a_lowering_line_exits_2(self):
         self.write("CLAUDE.md", "Test rigor: heavy\n")
@@ -308,9 +345,11 @@ class TestPlanCli(RepoTestCase):
         store = self.repo / ".sdd"
         ledger = rigor.ledger
         ledger.ensure_store(store)
-        ledger.cmd_stage(store, 1, 1, ["src/kernel.py", "src/shared.py"])
+        ledger.cmd_stage(store, 1, 1, ["src/old.py"])
+        ledger.cmd_stage(store, 1, 1, ["src/kernel.py", "src/shared.py"])  # re-staged: latest wins
         ledger.cmd_stage(store, 2, 2, ["src/shared.py", "src/parse.py"])
         ledger.cmd_stage(store, 3, 3, ["src/wire.py"])
+        ledger.cmd_stage(store, 9, 4, ["src/elsewhere.py"])  # not in this plan
         proc = self.cli("--plan", str(self.repo / "plan.md"), "--store", str(store), "--files")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.splitlines(), [

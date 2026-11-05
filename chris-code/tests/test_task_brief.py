@@ -655,6 +655,7 @@ class TestBriefRigor(TaskBriefTestCase):
         super().setUp()
         subprocess.run(["git", "init", "-q"], cwd=self.tmp, check=True)
         (self.tmp / "app.py").write_text("x = 1\n" * 1000, encoding="utf-8")
+        self._cd(self.tmp)
 
     def _brief(self, rigor_line: str = "") -> str:
         self.plan_path.write_text(
@@ -682,11 +683,19 @@ class TestBriefRigor(TaskBriefTestCase):
                     self.assertIn(part, str(ctx.exception))
                 self.assertFalse(any(self.store.rglob("*brief*")))
 
-    def test_a_store_outside_a_work_tree_takes_standard(self):
+    def test_a_store_outside_the_repo_keeps_the_repo_level(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
         self.store = Path(outside.name) / "store"
-        self.assertIn("Rigor: standard (", self._brief())
+        self.assertIn("Rigor: light (1,000 source lines (python))", self._brief())
+
+    def test_a_directory_outside_a_work_tree_takes_standard(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        self._brief()  # stage the plan while still in the repo
+        self._cd(Path(outside.name))
+        brief = task_brief.run(self._args()).read_text(encoding="utf-8")
+        self.assertIn("Rigor: standard (", brief)
 
 
 def _file_note(store: Path, kind: str, text: str, **kwargs) -> str:

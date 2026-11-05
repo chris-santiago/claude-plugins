@@ -109,14 +109,24 @@ def _read(path: Path) -> str | None:
         return None
 
 
+def level_word(value: str) -> str:
+    """The level a `Test rigor:` or `Rigor:` value names: its first word,
+    lowercased, without markdown decoration or trailing punctuation. Words
+    after it are a note ("heavy, NaN inputs are realistic")."""
+    words = value.replace("*", "").replace("`", "").split()
+    return words[0].rstrip(".,;:!?)").lower() if words else ""
+
+
 def _claude_md_level(top: Path) -> str | None:
     text = _read(top / "CLAUDE.md")
     if text is None:
         return None
-    for line in text.splitlines():
-        m = CLAUDE_MD_LINE_RE.match(line)
+    # Here, not at module level: task_brief imports this module.
+    from task_brief import _iter_fence_aware
+    for line, in_fence in _iter_fence_aware(text.splitlines()):
+        m = None if in_fence else CLAUDE_MD_LINE_RE.match(line)
         if m:
-            value = m.group(1).replace("*", "").replace("`", "").strip().rstrip(".").lower()
+            value = level_word(m.group(1))
             if value not in LEVELS:
                 raise RigorError(f"CLAUDE.md: 'Test rigor: {m.group(1).strip()}' is not a level; "
                                  f"write one of {', '.join(LEVELS)}")
@@ -176,19 +186,10 @@ def _pyproject_deps(data: dict) -> set[str]:
     return names | {_normalize_dep(k) for t in tables for k in t}
 
 
-def _toml(text: str) -> dict | None:
-    try:
-        return tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        return None
-
-
 def _setup_cfg_deps(text: str) -> set[str]:
-    parser = configparser.ConfigParser()
-    try:
-        parser.read_string(text)
-    except configparser.Error:
-        return set()
+    # No interpolation: a `%` in a wheel URL (`%2B`) is literal text.
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(text)
     specs = parser.get("options", "install_requires", fallback="").splitlines()
     if parser.has_section("options.extras_require"):
         for _, value in parser.items("options.extras_require"):
@@ -211,39 +212,47 @@ def _line_deps(text: str, *, item_prefix: str = "") -> set[str]:
     return names
 
 
+def _is_manifest(name: str) -> bool:
+    return name in ("Cargo.toml", "pyproject.toml", "setup.cfg", "environment.yml") or (
+        name.startswith("requirements") and name.endswith(".txt"))
+
+
+def _manifest_markers(name: str, text: str) -> tuple[set[str], set[str]]:
+    """(binding markers, numeric markers) in one manifest. Raises on a
+    manifest that doesn't parse, or parses to an unexpected shape."""
+    if name == "Cargo.toml":
+        deps = _cargo_deps(tomllib.loads(text))
+        return deps & CARGO_BINDINGS, deps & CARGO_NUMERIC
+    bindings = set()
+    if name == "pyproject.toml":
+        data = tomllib.loads(text)
+        build = data.get("build-system", {})
+        requires = {n for s in build.get("requires", []) if (n := _dep_name(s))}
+        if "maturin" in requires or "maturin" in str(build.get("build-backend", "")):
+            bindings.add("maturin")
+        deps = _pyproject_deps(data)
+    elif name == "setup.cfg":
+        deps = _setup_cfg_deps(text)
+    else:
+        deps = _line_deps(text, item_prefix="-" if name == "environment.yml" else "")
+    return bindings | (deps & PYTHON_BINDINGS), deps & PYTHON_NUMERIC
+
+
 def _markers(top: Path, files: list[str]) -> tuple[set[str], set[str]]:
-    """(binding markers, numeric markers) found in the tracked manifests."""
+    """(binding markers, numeric markers) found in the tracked manifests.
+    A manifest that doesn't parse is skipped: the level is a heuristic,
+    and a broken manifest fails its own build loudly enough."""
     bindings, numeric = set(), set()
     for rel in files:
-        if _excluded(top, rel):
-            continue
         name = rel.rsplit("/", 1)[-1]
-        if name not in ("Cargo.toml", "pyproject.toml", "setup.cfg", "environment.yml") and not (
-                name.startswith("requirements") and name.endswith(".txt")):
+        if not _is_manifest(name) or _excluded(top, rel) or (text := _read(top / rel)) is None:
             continue
-        text = _read(top / rel)
-        if text is None:
+        try:
+            found_bindings, found_numeric = _manifest_markers(name, text)
+        except (ValueError, TypeError, AttributeError, configparser.Error):
             continue
-        if name == "Cargo.toml":
-            deps = _cargo_deps(_toml(text) or {})
-            bindings |= deps & CARGO_BINDINGS
-            numeric |= deps & CARGO_NUMERIC
-            continue
-        if name == "pyproject.toml":
-            data = _toml(text) or {}
-            build = data.get("build-system", {})
-            requires = {n for s in build.get("requires", []) if (n := _dep_name(s))}
-            if "maturin" in requires or "maturin" in str(build.get("build-backend", "")):
-                bindings.add("maturin")
-            deps = _pyproject_deps(data)
-        elif name == "setup.cfg":
-            deps = _setup_cfg_deps(text)
-        elif name == "environment.yml":
-            deps = _line_deps(text, item_prefix="-")
-        else:
-            deps = _line_deps(text)
-        bindings |= deps & PYTHON_BINDINGS
-        numeric |= deps & PYTHON_NUMERIC
+        bindings |= found_bindings
+        numeric |= found_numeric
     return bindings, numeric
 
 
@@ -346,7 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     import task_brief
     try:
         lines = _run(args, task_brief)
-    except (RigorError, OSError, ledger.RecordError, task_brief.UsageError) as e:
+    except (RigorError, OSError, UnicodeDecodeError, ledger.RecordError,
+            task_brief.UsageError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
     print("\n".join(lines))
