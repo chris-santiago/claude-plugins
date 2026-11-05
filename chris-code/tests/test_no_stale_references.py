@@ -64,7 +64,15 @@ BARE_TASK_BRIEF_PATTERN = re.compile(r"\btask-brief\b")
 
 STALE_PATTERNS = [PROGRESS_PATH_PATTERN, TASK_BRIEF_PATH_PATTERN, BARE_TASK_BRIEF_PATTERN]
 
-SKIPPED_DIR_NAMES = {"__pycache__", ".git"}
+# The review-fix loop's removed routing (replaced by `ledger.py triage`).
+# Built from parts so this file never matches itself; CHANGELOG.md keeps
+# them as history.
+REMOVED_LOOP_NAMES = ["fix" + "-count", "--settled" + "-by", "--non" + "-trivial",
+                      "non_trivial" + "_fix_count", "_check" + "_reroute"]
+REMOVED_LOOP_PATTERNS = [re.compile(re.escape(name)) for name in REMOVED_LOOP_NAMES]
+
+# `site/` is generated from docs/, so it is checked at its source.
+SKIPPED_DIR_NAMES = {"__pycache__", ".git", "site"}
 
 # Minimum number of files the real scan must read before an empty offender
 # list is trusted — a scan that silently covered zero files (a relocated
@@ -117,7 +125,9 @@ def _scan(root: Path) -> list[str]:
         for lineno, line in enumerate(text.splitlines(), 1):
             if _is_excused(path, line):
                 continue
-            if any(pattern.search(line) for pattern in STALE_PATTERNS):
+            patterns = STALE_PATTERNS if path.name == CHANGELOG_PATH.name \
+                else STALE_PATTERNS + REMOVED_LOOP_PATTERNS
+            if any(pattern.search(line) for pattern in patterns):
                 offenders.append(f"{path}:{lineno}: {line.strip()}")
     if files_read < MIN_EXPECTED_FILE_COUNT:
         raise RuntimeError(
@@ -200,6 +210,31 @@ class TestScanFindsInjectedReference(unittest.TestCase):
 
         expected = f"{offending_file}:2: see {_RETIRED_PROGRESS_SCRIPT} for details"
         self.assertEqual(offenders, [expected])
+
+
+class TestRemovedLoopNamesAreCaught(unittest.TestCase):
+    """The removed routing names are flagged anywhere but the changelog
+    and the generated site."""
+
+    def _scan_with(self, name: str, text: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "site").mkdir()
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text, encoding="utf-8")
+            for i in range(MIN_EXPECTED_FILE_COUNT):
+                (root / f"filler-{i}.txt").write_text("nothing here\n", encoding="utf-8")
+            return _scan(root)
+
+    def test_each_removed_name_in_a_doc_is_reported(self):
+        for removed in REMOVED_LOOP_NAMES:
+            with self.subTest(name=removed):
+                offenders = self._scan_with("docs/guide.md", f"run {removed} first\n")
+                self.assertEqual(len(offenders), 1)
+
+    def test_the_changelog_and_the_generated_site_may_mention_them(self):
+        self.assertEqual(self._scan_with("CHANGELOG.md", f"Removed {REMOVED_LOOP_NAMES[0]}.\n"), [])
+        self.assertEqual(self._scan_with("site/guide.html", f"{REMOVED_LOOP_NAMES[0]}\n"), [])
 
 
 class TestScanFloorIsEnforced(unittest.TestCase):

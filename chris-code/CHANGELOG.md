@@ -8,6 +8,33 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-05 — The per-task loop routes by severity and reach
+
+SDD's per-task loop routed reviewer findings on the orchestrator's trivial/non-trivial call. Minor items went down the heavy route, every non-trivial finding got its own decision doc, and a two-fix counter with route flags decided when to stop. In a long real run that came to 2.39 fix cycles and about two user rulings per task, and 45% of later findings were introduced by the previous fix, most of them by a decision doc's choice. This release replaces the routing with a script-computed triage over findings the reviewers tag, holds each fix to the evidence its round requires, and moves plan gaps up front.
+
+### Added
+- **Tagged findings and `ledger.py triage`.** Every reviewer finding carries `severity`, `reach` (`local`, `class`, `contract`), `rule`, and `sites`. `triage` turns them into the task's next step: S1-S2 findings are notes, fixed or skipped by the coder and never re-reviewed; S1-S2 contract findings are deferred; S3+ local or class findings get a patch round; S3+ contract findings and a coder's `root cause:` concern get a holistic round, where an opus research agent writes one task-wide decision doc first. A task gets at most two patch or holistic rounds, then waits for the user. Re-checks go only to the reviewers triage names. Running `triage` again with nothing changed reprints the step.
+- **Fix evidence in the coder record, enforced by `check`.** Sweeps list every site of a finding's rule as a row mapped to the hunk that fixes it, with the search behind them. S3+ findings get a failing test first (or a named reason it can't have one). A fix covers each finding it was sent exactly once, and its rows must touch lines it really changed. Edits, deletions, and skips of tests that already existed need a reason. A holistic fix maps every case of its decision doc to a hunk.
+- **Contests.** A coder that believes a finding is wrong, or conflicts with the plan, contests it with evidence instead of fixing it. The reviewer that raised it answers `concede` or `hold`, and a held finding goes to the user. A settled finding can come back only with `reopens` and a site in code changed since.
+- **Open behavior choices.** When a brief leaves behavior undefined, the coder follows the nearest precedent in the codebase and records the choice, which the user confirms or overrides.
+- **The stage batch.** A task with open work after two rounds, a held contest, or an open choice parks without committing. Once the stage has nothing in flight, the user gets one message covering every parked item, each with a recommendation.
+- **`ledger.py gate` and `ledger.py ready`.** `gate` runs the process-label scan, lint, and the task's `Verify:` command on the staged task files, each passing only on exit 0, and records what it checked. `ready` lists everything that stops a commit. `complete` re-runs `ready` and refuses a commit that doesn't match the passing gate.
+- **Decision docs give every case a site and a test**, list the couplings the choice touches (each also a case), and record the premise the choice rests on.
+- **Follow-up rules and the close batch.** `note --kind follow-up --rule` groups follow-ups; `triage` files the loop's own deferrals with their rule. The completion report groups open follow-ups by rule for the user to fix, file, or ignore in one batch.
+- **Round telemetry.** `stats` prints each round's kind, the coder model, and the findings it closed, saw survive, and saw a fix introduce; `run-state` shows each task's rounds and what is parked.
+
+### Changed
+- **Record schema 2.** Records from earlier releases are refused with a message: finish that run on the release that started it, or `ledger.py clear` the store.
+- **Plans decide behavior as rows.** A `Cases:` row states its result (`size=0 → ValueError`); behavior the planner can't decide is an `open:` row the user answers before the build; a `Verify:` line is a command where exit 0 means pass. `task_brief.py` refuses a plan that breaks any of these, so a plan written for an earlier release may need its rows rewritten.
+- **The per-task commit gate is scripted.** Per-task review-lite is gone; review-lite runs only at the whole-change gate, under the same triage. The quality reviewers took over its CLAUDE.md and public-sentinel checks.
+- **executing-plans is the light path for small work:** briefs, quality reviewers, at most two fix rounds, and the same commit gate, with no triage loop (`ready --light`, `complete --light`).
+- **`snapshot` takes only a task and a label**, and `baseline` prints the round a fix starts.
+
+### Removed
+- The orchestrator's trivial/non-trivial triage, the fix counter and its two-fix cap, the snapshot route flags and the reroute check, and a decision doc for every non-trivial finding. The round structure bounds fixes, and the reviewers' tags route them.
+- `claim-checker` on reviewer findings and coder concerns. Contests settle between coder and reviewer; `claim-checker` stays for `cannot_verify` items.
+- Re-review by every reviewer after every fix.
+
 ## [0.10.1] - 2026-11-03
 
 ### Changed

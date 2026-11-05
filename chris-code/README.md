@@ -18,7 +18,7 @@ chris-code is derived from [obra/superpowers](https://github.com/obra/superpower
 
 **Shadow code.** Superpowers' writing-plans mandated "complete code in every step." In practice this produced prescriptive scaffolding that agents discarded — the work of writing it was wasted and the mismatch between plan code and actual codebase state caused confusion. chris-code plans tell executors *what* to do and *where*, trusting agents to read the spec and write code fit for the real codebase.
 
-**Inconsistent review discipline.** superpowers already runs two-stage review (spec compliance, then code quality) per task via dispatched reviewer subagents. chris-code keeps those gates but applies them uniformly through dedicated, scope-dispatched agents, adds a lint-aware pre-commit gate, and maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer agent keeps a "Do Not Trust the Report" check: verify implementations by reading actual code, not agent summaries.
+**Inconsistent review discipline.** superpowers already runs two-stage review (spec compliance, then code quality) per task via dispatched reviewer subagents. chris-code keeps those gates but applies them uniformly through dedicated, scope-dispatched agents, adds a scripted commit gate (labels, lint, the task's verify command), and maps file footprints before dispatch to serialize tasks with overlapping files. The spec-reviewer agent keeps a "Do Not Trust the Report" check: verify implementations by reading actual code, not agent summaries.
 
 **No coherence enforcement.** This is the largest divergence. superpowers applies changes wherever they're proposed — a review refactors in place, a fix is patched directly, a determined change is just coded. Nothing makes a change *fit the codebase it lands in*: the first implementation that works becomes the implementation, even when the repo already has a pattern for it, so changes accrete as debt. chris-code adds the missing piece — a single **application engine**, `coherent-change`, that every determined change routes through (a fix, a refactor, an API alignment, a review or audit finding). It discovers candidate implementations from the existing code, defends the most coherent one against the alternatives (the *defended choice*: a correctness table over every affected case plus a real rebuttal of each rejected option), sizes the work (build inline, or route to spec → plan → execution), and can **batch** a whole set of findings into one coordinated change. Crucially, *discovery is separated from application* — audits and reviews propose end-states and hand off; they never apply their own patches — so every change earns the same defend-and-prove discipline instead of unreviewed patches landing because a review happened to touch the code. (Detailed under *The determined-change engine* below.)
 
@@ -35,7 +35,7 @@ Day to day, three things feel different:
 
 1. **Your specs and plans get shorter.** chris-code refuses to write 2,500-word specs and 10,000-word plans full of code the implementer will throw away. Specs capture contracts, plans capture *what and where*, and the code gets written against the real codebase, not the plan.
 2. **Coding and review run through dedicated agents, not generic subagents.** chris-code ships named `*-coder`, `*-quality-reviewer`, and `*-review-lite` agents that auto-dispatch by file type. You rarely pick one by hand.
-3. **Every task passes the same review gates.** Spec compliance and code quality, reviewed together and triaged once, then a pre-commit idiom/lint gate. No task is "small enough to skip."
+3. **Every task passes the same review gates.** Spec compliance and code quality, reviewed together and triaged once by script, then a commit gate (labels, lint, the task's verify command). No task is "small enough to skip."
 
 Everything below is the reasoning behind those, then the specifics.
 
@@ -57,7 +57,7 @@ chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right
 
 ### 3. Review is a uniform, multi-stage gate
 
-**The why.** superpowers already reviews every task in two stages (spec compliance, then code quality) through dispatched reviewer subagents, plus a final whole-branch pass. chris-code keeps that spine and hardens it: the reviewers are dedicated, scope-dispatched agents rather than generic subagents driven by prompt templates; lint becomes its own mandatory gate; a `*-review-lite` idiom check runs pre-commit; and a final full-diff pass catches cross-task drift. Every gate re-reads the actual code, not the agent's summary ("Do Not Trust the Report").
+**The why.** superpowers already reviews every task in two stages (spec compliance, then code quality) through dispatched reviewer subagents, plus a final whole-branch pass. chris-code keeps that spine and hardens it: the reviewers are dedicated, scope-dispatched agents rather than generic subagents driven by prompt templates; lint becomes its own mandatory gate, scripted into each commit; and a `*-review-lite` full-diff pass catches cross-task drift. Every gate re-reads the actual code, not the agent's summary ("Do Not Trust the Report").
 
 A more recent pass hardens *assurance* — what the gates actually prove:
 
@@ -96,7 +96,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | Skill | superpowers | chris-code |
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
-| **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality → commit-lite), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
+| **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality review → scripted triage → commit gate), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step gate, run as a close round:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree) dispatched together, with the Requirements check alongside. Findings are triaged once; non-trivial ones go to remediation as one batch, capped at two rounds. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
@@ -126,7 +126,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
 | `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive quality review, dispatched alongside the spec reviewer; all matching fire. |
-| `python-review-lite`, `rust-review-lite` | Fast pre-commit idiom/lint gate returning clean / block / escalate. |
+| `python-review-lite`, `rust-review-lite` | Whole-change idiom/lint gate (also usable standalone pre-commit) returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
@@ -167,11 +167,12 @@ flowchart TB
         coder["*-coder agent<br/>(python-coder, rust-coder)"]:::agent
         spec_review["spec-reviewer<br/>(opus, agent)"]:::reviewer
         quality["*-quality-reviewer agent<br/>(python-quality-reviewer,<br/>rust-quality-reviewer)"]:::reviewer
-        triage{"triage once"}
-        commit_gate["*-review-lite agent<br/>(python-review-lite,<br/>rust-review-lite)"]:::gate
+        triage{"ledger.py triage<br/>(severity x reach)"}
+        commit_gate["ledger.py gate<br/>(labels, lint,<br/>the task's Verify)"]:::gate
     end
 
     subgraph Completion Phase
+        whole["*-review-lite agent<br/>(whole-change gate,<br/>same triage)"]:::gate
         verify["verification-before-completion<br/>1. Tests  2. Lints<br/>3. *-design-reviewer agents<br/>4. Requirements check<br/>5. Intent re-check (intent-reviewer)<br/>6. Mutation re-check (mutation-tester)"]
         finish["finishing-a-development-branch<br/>(merge / PR / keep / discard)"]
     end
@@ -186,10 +187,11 @@ flowchart TB
     coder -->|together<br/>dispatch by scope| quality
     spec_review --> triage
     quality --> triage
-    triage -.->|fix batch| coder
-    triage -->|clean<br/>dispatch by scope| commit_gate
+    triage -.->|"patch / holistic / ruling round<br/>(at most two, then you)"| coder
+    triage -->|done| commit_gate
     commit_gate -.->|next task<br/>staged parallelism| execute
-    execute -->|all tasks done| verify
+    execute -->|all tasks done| whole
+    whole --> verify
     verify --> finish
 
     classDef agent fill:#ccffcc,stroke:#333
@@ -202,11 +204,11 @@ flowchart TB
 Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, these keep `subagent-driven-development`'s orchestrator context lean and the run recoverable:
 
 - **File handoffs.** Task briefs, implementer reports, and review diffs are written to `.sdd/` at the repo toplevel (per-worktree, self-gitignored) via `scripts/task_brief.py`, `scripts/review-package`, and `scripts/ledger.py`, with implementer and reviewer reports written as typed records validated against a shared contract; dispatches pass file paths, never pasted text or diffs.
-- **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts and plan-mandated defects, raised as one batched question.
-- **Durable progress ledger.** Each clean task is appended to the store's `progress.jsonl` via `ledger.py append` (called through `$SDD_SCRIPTS`, the skill's absolute scripts directory); a controller that loses context after compaction resumes from `ledger.py run-state` instead of re-running finished work. TodoWrite stays the live view.
+- **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts, plan-mandated defects, `Cases:` rows that state no result, and `open:` rows (behavior the planner couldn't decide), raised as one batched question whose answers are written into the plan.
+- **Durable progress ledger.** Each committed task is appended to the store's `progress.jsonl` via `ledger.py append --type complete` (called through `$SDD_SCRIPTS`, the skill's absolute scripts directory), which refuses a commit that doesn't match what the gate passed; a controller that loses context after compaction resumes from `ledger.py run-state` instead of re-running finished work. TodoWrite stays the live view.
 - **Run notes.** The orchestrator's cross-task knowledge is typed notes in the same store (`ledger.py note`): notes for later tasks and standing rules that briefs carry automatically, disclosures and questions that block their owner task or the close, follow-ups, its own judgment calls, and checkpoints. Completion refuses a task with an undelivered note, and `ledger.py report` builds the completion report from the store. Every command that writes the store holds a lock on it, and `clear` won't drop open follow-ups, disclosures or questions unless you confirm the loss.
 - **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
-- **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage. Trivial findings go straight to the coder; non-trivial ones first get a per-task decision doc from `remediating-issues`, unless the plan's `Cases:` line already settles them (research once, defended choice per finding, no approval pause). The doc is a typed record `ledger.py check` verifies, and a non-trivial fix's baseline snapshot refuses to start without one that passes. From cycle 2 a fix must carry a `diagnosis` (root cause, end-state, why the findings resolve as a cluster, enforced by `ledger.py check`), and re-reviewers judge it against that stated cause. Fixes go back to the original coder (`SendMessage`) when it's reachable, are self-reviewed against the quality reviewer's checklist, and must map every hunk of the fix diff (`hunk_map`, read with `ledger.py diff-since` against a pre-fix `snapshot`, limited to the task's files) and verify every changed symbol's consumers (`consumers_checked`); reviewers flag fix regressions in `introduced_by_fix`. Case coverage is planned, not discovered: each plan task's `Cases:` line (enforced by `task_brief.py`) lists every case its rule covers, the spec reviewer checks each has a test, and findings name their rule's whole class so one fix covers every sibling. A `recurring` finding (same class, same site, across cycles), not merely a new one, forces the next decision doc to replace the failed mechanism. Each fix starts from its own snapshot: a finished fix record names its `baseline`, and `check` refuses one with no snapshot for the task or one an earlier cycle already used. While a reviewer flags `recurring` or `introduced_by_fix`, `snapshot` refuses a trivial fix or one settled by the `Cases:` line, so a flagged fix always counts. A task gets at most two non-trivial fix attempts (`ledger.py fix-count`): a non-trivial finding still open after them goes to the user, briefed with the decision docs, two routes for the next fix (a fresh researched decision or a fix the user names) and the option of an opus coder. Trivial leftovers never escalate. Before any review, `ledger.py labels` checks the coder's added lines for review-process labels (task and finding ids, cycle numbers, commit hashes) and sends hits straight back, and `ledger.py stats` shows each task's verdicts cycle by cycle.
+- **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage. Reviewers tag each finding with a severity (1-5), a reach (`local`, `class` or `contract`), the rule it breaks and its sites, and `ledger.py triage` computes the step from the tags alone: S1-S2 findings are notes (fixed or skipped by the coder and never re-reviewed, or deferred to the close at contract reach), S3+ local or class findings get a patch round, and S3+ contract findings or a coder's `root cause:` concern get a holistic round, where an opus `remediating-issues` research agent writes one task-wide decision doc (a typed record `ledger.py check` verifies, with a site, a named test and an expected result for every case) and the sonnet coder implements it case by case. A task gets at most two patch or holistic rounds, then it parks for one batched question per stage with a recommended answer for every item, so "accept all" settles it. The orchestrator makes no trivial or non-trivial call and keeps no fix counter. Each fix sweeps its finding's rule (every site as a row mapped to a hunk, with the search recorded), writes a failing test first for S3+ findings, declares behavior the brief left undefined as an `open` choice that cites a precedent, justifies any edit to a pre-existing test, and contests a finding it believes is wrong instead of fixing it: the raising reviewer answers `concede` or `hold`. Re-checks go only to the reviewers `triage` names, over the fix diff and its consumers. Fixes go back to the original coder (`SendMessage`) when it's reachable, from their own `snapshot`, and `ledger.py check` holds each finished fix to its round (`hunk_map`, `consumers_checked`, a `diagnosis` from cycle 2). The commit path is scripted: `ledger.py ready` lists what blocks the commit, `ledger.py gate` runs labels, lint and the task's `Verify:` command on the staged files (each must exit 0), and `append --type complete` checks the commit matches the gate. Case coverage is planned, not discovered: each plan task's `Cases:` rows state their results (`size=0 → ValueError`), undecided behavior is an `open:` row you answer before the build, and `Verify:` is a command where exit 0 means pass, all enforced by `task_brief.py`. After the last task, `*-review-lite` reviews the whole change with the same triage. The completion report groups open follow-ups by rule as one close batch, where you pick fix, file or ignore for each. `ledger.py stats` shows each round's closed, survived and introduced counts. `executing-plans` is the light path for small work (`ready --light`, `complete --light`, no triage). Records are schema version 2, and a store from an earlier release is refused: finish that run on the old release or `ledger.py clear` it.
 - **The close round.** `verification-before-completion` dispatches its design, intent, and mutation gates together and triages once; the non-trivial findings go to `remediating-issues` as one close-gate batch (decision doc with your approval → `lean-plan` → SDD, no `lean-spec`). Round 2 re-checks at the same report paths, and anything non-trivial left after it goes to the user. `ledger.py close-round --expect N` enforces the two-round cap and refuses a round the store disagrees with, so a stale store can't start a new run at round 2. It also refuses while a disclosure or question is still open, so the close settles them first.
 
 ## The determined-change engine
@@ -262,7 +264,7 @@ flowchart TB
 | `lean-plan` | Write thin execution handoff (what & where, no code) | brainstorming (step 10) |
 | `using-git-worktrees` | Isolated workspace via EnterWorktree | executing-plans / subagent-driven-dev |
 | `subagent-driven-development` | Execute plan per task: file-handoff dispatch, staged parallelism, durable progress ledger | lean-plan handoff |
-| `executing-plans` | Execute plan inline (no coder subagents; reviewers still dispatched) | lean-plan handoff (alternative) |
+| `executing-plans` | Light path for small work: execute inline (no coder subagents), quality reviewers and the same commit gate, no triage loop | lean-plan handoff (alternative) |
 | `dispatching-parallel-agents` | Dispatch 2+ independent tasks concurrently | Any skill needing parallelism |
 | `test-driven-development` | RED-GREEN-REFACTOR cycle | Coder agents during implementation |
 | `systematic-debugging` | Four-phase root cause investigation | When bugs arise |
@@ -311,9 +313,9 @@ Dispatched per task alongside the spec reviewer; both verdicts are triaged once.
 
 In a PyTorch project, `.py` files get **both** `python-quality-reviewer` and `pytorch-quality-reviewer`. If findings conflict, pytorch takes precedence.
 
-### Commit Gate Agents (additive — all matching fire)
+### Review-Lite Agents (additive — all matching fire)
 
-Dispatched before each commit and as a final full-diff pass at plan end.
+Dispatched as the whole-change gate over the full diff at plan end, with the same triage as a task's findings. Each task's own commit is checked by the scripted `ledger.py gate`.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
@@ -393,7 +395,7 @@ Each role has a fixed model, pinned in its agent's frontmatter; the orchestrator
 | **Opus** | Spec, quality and design reviewers, `intent-reviewer`, `mutation-tester`, `bug-hunter`, the `remediating-issues` research agent |
 | **Haiku** | `claim-checker` |
 
-Design judgment lives in the decision doc and the brief, so a coder implements choices already made. A coder runs on opus only by your ruling, which the fix-cap escalation and a blocked coder both offer; `ledger.py check` refuses a finished coder record above sonnet unless that ruling is logged for its task.
+Design judgment lives in the decision doc and the brief, so a coder implements choices already made. A coder runs on opus only by your ruling, which the stage's batched question and a blocked coder both offer; `ledger.py check` refuses a finished coder record above sonnet unless that ruling is logged for its task.
 
 Announce the model and agent on every dispatch: "Dispatching sonnet python-coder agent for Task 3 (add utility function)"
 

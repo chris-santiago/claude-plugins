@@ -35,10 +35,10 @@ Read the spec when prompted. It should be short; if it reads like a coding walkt
 
 1. dispatches the matching **coder agent** (`python-coder` / `rust-coder` / `pytorch-coder`) with a brief that carries the task's *why*,
 2. runs **spec review** (did it build what was asked?) and **quality review** (is the code sound?) together,
-3. triages their findings once: trivial ones go straight back to the coder in one batched fix, while non-trivial ones (and anything a reviewer flags as recurring or caused by a fix) first get a decision doc researched by a `remediating-issues` agent; after two non-trivial fixes, the next one comes to you,
-4. runs the **commit-lite gate** (idioms + linter) before each commit.
+3. triages their findings with a script, not a judgment call: each finding is tagged by its reviewer with a severity and a reach, so minor ones are fixed or skipped by the coder without a re-review, serious local ones get a patch round, and serious ones that reach a contract get one researched, task-wide decision doc before the fix. A task gets at most two such rounds, then it waits for one batched question per stage, with a recommended answer for every item,
+4. runs a **commit gate** before each commit: the staged files' labels, the linter, and the task's own verify command must each exit 0.
 
-You'll see each dispatch announced with its model and agent. Each role's model is fixed: coders run on sonnet and reviewers on opus, and a coder moves to opus only if you rule it. Independent tasks run in parallel; tasks that touch the same files are serialized automatically.
+You'll see each dispatch announced with its model and agent. Each role's model is fixed: coders run on sonnet and reviewers on opus, and a coder moves to opus only if you rule it. Independent tasks run in parallel; tasks that touch the same files are serialized automatically. Before the first task, pre-flight may ask you one batched question, including any behavior the plan left undecided. After the last task, `*-review-lite` reviews the whole change for cross-task drift, with the same triage. Findings a coder skips or defers as minor are grouped by rule in the completion report, where you pick fix, file or ignore for each. For small work, `executing-plans` is the lighter path: same briefs, quality review and commit gate, without the triage loop.
 
 ## Step 4: Verify before "done"
 

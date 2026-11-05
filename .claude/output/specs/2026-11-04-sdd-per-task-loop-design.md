@@ -77,7 +77,7 @@ Re-checks, which `triage` names in the entry's `recheck`:
 
 | Step | Who re-checks | Over what |
 |---|---|---|
-| patch, ruling | the reviewers whose findings were sent; a gate finding re-runs the gate | the fix diff (`diff-since` the round's baseline) and consumers of every symbol it changed |
+| patch, ruling | the reviewers whose S3+ findings were sent (notes are never re-reviewed); a gate finding re-runs the gate | the fix diff (`diff-since` the round's baseline) and consumers of every symbol it changed |
 | holistic | every reviewer | the whole task |
 | polish | none (the gate is its check) | n/a |
 
@@ -167,7 +167,7 @@ The completion report groups open follow-ups by rule and presents them as one ba
    - at `final`, no `duplication_pending` is open.
 
    A confirmed `cannot_verify` gap goes back to the spec reviewer with the claim-checker evidence, and the reviewer raises it as a tagged finding.
-2. **`gate`** stages nothing itself. It reads the staged scope files and runs labels on their added lines, then lint, then the task's `Verify:` command. Each passes only on exit 0.
+2. **`gate`** stages nothing itself, and refuses while a scope file has unstaged or untracked changes, since the tests run on the working tree. It reads the staged scope files and runs labels on their added lines, then lint, then the task's `Verify:` command. Each passes only on exit 0.
    - A labels or lint failure returns to the coder as the same attempt, with no round consumed.
    - A test failure becomes an S3 `local` gate finding over the scope's files and enters triage.
 3. **Commit, then `complete`.** `complete` re-runs `ready` and requires a passing gate whose tree matches the committed blobs of the scope's files.
@@ -186,7 +186,7 @@ executing-plans is the path for small work, and lean-plan's offer says so. Per t
 - It allows at most two fix rounds, then the user. The bound is a prose rule, not enforced.
 - It runs `gate`, then `ready --light`, commits, then `complete --light`.
 
-It writes no triage entries, sweep rows, or coder records. `--light` skips the triage, held, and open-choice checks and is recorded on the completion entry, so `report` shows which tasks ran light. The whole-change review stays on review-lite.
+It writes no triage entries, sweep rows, or coder records; an open behavior choice becomes a `question` note the task owns. `--light` skips the triage, held, and open-choice checks, is refused on a scope that has a triage entry or a dispatched coder's record, and is recorded on the completion entry, so `report` shows which tasks ran light. The whole-change review stays on review-lite.
 
 ### 4.10 Upstream: plan contract and pre-flight
 
@@ -255,7 +255,7 @@ A reviewer record also carries `contests` (required on a re-check that was sent 
 {"contests": [{"finding": "<contested id>", "verdict": "concede | hold", "reason": "..."}]}
 ```
 
-Every contest forwarded to the reviewer (listed in the triage entry for its findings) has exactly one answer.
+Every contest in the scope's latest coder record against one of this reviewer's findings (finding ids carry the raising record's name) has exactly one answer. The forwarding is derived at re-check time from the coder record, since a coder contests during a round, after its triage entry was written.
 - Spec findings stay in `issues`; quality, lite, and gate findings are in `findings`.
 - Status matches findings: spec `issues`, or quality `issues`, exactly when some finding is S3+.
 - Every `recurring` and `introduced_by_fix` entry's `site` equals one of some finding's `sites`.
@@ -346,7 +346,7 @@ A failing test adds one S3 `local` finding whose `rule` names the command and wh
 {"type": "triage", "task": 3, "kind": "patch | holistic | polish | ruling | escalate | done",
  "round": 1, "recheck": "raising | all | gate | none", "tree": "<tree at triage>",
  "findings": [{"id": "<id>", "tier": "note | defer | patch | holistic | held", "rule": "..."}],
- "contests": [{"finding": "<id>", "reviewer": "<record stem>"}],
+ "decision": "<scope>-decision-c<cycle>", "recheck_records": ["<reviewer record stem>"], "inputs": "<digest>",
  "settled": ["<id>"], "filed": ["<id>"],
  "model": "sonnet", "closed": 2, "survived": 0, "introduced": 1}
 ```
@@ -360,8 +360,8 @@ A failing test adds one S3 `local` finding whose `rule` names the command and wh
 
 | Command | Contract |
 |---|---|
-| `triage --task N\|final` | Computes Sections 4.1-4.2, files deferrals (Section 4.6), and appends one triage entry. Prints the step, the `recheck` set, each finding's id, tier, and rule, the contests to forward with each one's reviewer, and the settled list. Refuses, writing nothing, while a record in scope is malformed or when the scope has no reviewer record. |
-| `gate --task N\|final --test CMD [--lint CMD]` | Section 4.7 step 2. Refuses when the scope has no footprint or nothing staged in it. Exit 0 on pass, 1 on fail. |
+| `triage --task N\|final` | Computes Sections 4.1-4.2, files deferrals (Section 4.6), and appends one triage entry. When nothing it reads has changed since the last entry (the `inputs` digest covers the scope's records, rulings, and waivers), it reprints that entry instead, so asking again never starts a round. Prints the step, the `recheck` set, each finding's id, tier, rule, and raising reviewer, the reviewers to re-check, and what it filed. Refuses, writing nothing, while a record in scope is malformed or when the scope has no reviewer record. |
+| `gate --task N\|final --test CMD [--lint CMD]` | Section 4.7 step 2. Refuses when the scope has no footprint, nothing staged in it, or unstaged changes in it. Holds the store lock only to read and to write the record, not while the commands run. The record lists every footprint file, so `complete` compares each one's blob. Exit 0 on pass, 1 on fail. |
 | `ready --task N\|final [--light]` | Lists every blocker in Section 4.7 step 1. Exit 0 only with none. |
 | `baseline TREE --task N\|final` | Prints the round's kind, `recheck`, decision path (holistic), findings, and contests. Errors with no fix-kind triage entry before that snapshot. |
 | `complete [--light]` | As today, plus `ready` and the matching passing gate. |

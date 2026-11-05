@@ -3249,7 +3249,8 @@ class TestStoreChecksOutsideGit(LedgerTestCase):
 
 class TestFixBaselineIsItsOwn(LedgerTestCase):
     """A finished fix names the snapshot it started from, and no earlier
-    cycle of the same record used it, so `fix-count` sees every fix."""
+    cycle of the same record used it, so each fix has its own diff and its
+    own triage entry."""
 
     def setUp(self):
         super().setUp()
