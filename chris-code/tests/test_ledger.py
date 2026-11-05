@@ -3423,20 +3423,45 @@ class TestGate(TriageStoreTestCase):
         self.stage_fix()
         self.assertEqual([c["kind"] for c in self.gate(lint=None)[1]["commands"]], ["labels", "test"])
 
-    def test_a_scope_without_a_footprint_or_staged_files_is_refused(self):
+    def test_a_scope_without_a_footprint_or_a_change_is_refused(self):
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_gate(self.store, 9, "true", None)
         with self.assertRaises(ledger.RecordError) as ctx:
             ledger.cmd_gate(self.store, 3, "true", None)
-        self.assertIn("staged", str(ctx.exception))
+        self.assertIn("a.py", str(ctx.exception))
 
-    def test_unstaged_changes_in_the_task_files_are_refused(self):
-        ledger.cmd_stage(self.store, 3, 1, ["a.py", "b.py"])
-        self.stage_fix()
-        (self.repo / "b.py").write_text("z = 3\n", encoding="utf-8")  # untracked, not staged
-        with self.assertRaises(ledger.RecordError) as ctx:
-            self.gate()
-        self.assertIn("b.py", str(ctx.exception))
+    def test_edits_new_files_and_deletions_in_the_footprint_are_staged_and_gated(self):
+        (self.repo / "c.py").write_text("c = 1\n", encoding="utf-8")
+        self._git("add", "c.py")
+        self._git("commit", "-qm", "c")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "b.py", "c.py"])
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+        (self.repo / "c.py").unlink()
+        code, record = self.gate()
+        self.assertEqual(code, 0)
+        self.assertEqual(self._git("diff", "--cached", "--name-status").split(),
+                         ["M", "a.py", "A", "b.py", "D", "c.py"])
+        self.assertEqual(record["files"], ["a.py", "b.py", "c.py"])
+
+    def test_a_change_outside_the_footprint_stays_unstaged(self):
+        (self.repo / "z.py").write_text("z = 1\n", encoding="utf-8")
+        self._git("add", "z.py")
+        self._git("commit", "-qm", "z")
+        (self.repo / "z.py").write_text("z = 2\n", encoding="utf-8")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.gate()
+        self.assertEqual(self._git("diff", "--cached", "--name-only").split(), ["a.py"])
+        self.assertEqual(self._git("diff", "--name-only").split(), ["z.py"])
+
+    def test_the_final_footprint_adds_the_final_coders_changed_files(self):
+        (self.repo / "lib").mkdir()
+        (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
+        self.write("final-python-coder.json", _coder(task="final", changed_files=["lib/x.py"]))
+        code, record = self.gate(task="final")
+        self.assertEqual(code, 0)
+        self.assertIn("lib/x.py", record["files"])
+        self.assertIn("lib/x.py", self._git("diff", "--cached", "--name-only").split())
 
     def test_the_store_is_unlocked_while_the_commands_run(self):
         # Parallel tasks' agents write the store while a gate's tests run.

@@ -2862,7 +2862,7 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             # Nothing changed since the last step, or its fix hasn't
             # finished: asking again (after a compaction or a paused coder)
             # must not start another round.
-            print(_render_triage(latest, [], baseline, task_footprint(log, task)))
+            print(_render_triage(latest, [], baseline, scope_footprint(store_dir, log, task)))
             return
         result = triage_rules.derive(**inputs)
         texts = {c["id"]: c for c in inputs["file_candidates"]}
@@ -2885,7 +2885,7 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             snapshot = {"type": "snapshot", "task": task, "tree": entry["tree"],
                         "label": f"triage {entry['kind']} round {entry['round']}"}
             _append_progress(store_dir, snapshot)
-        footprint = task_footprint(load_progress_log(store_dir), task)
+        footprint = scope_footprint(store_dir, load_progress_log(store_dir), task)
     print(_render_triage(entry, filed_notes, snapshot, footprint))
 
 
@@ -2988,16 +2988,26 @@ def _staged_scope(top: Path, files: list[str]) -> list[str]:
     return sorted(line for line in out.splitlines() if line.strip())
 
 
-def _check_all_staged(top: Path, files: list[str]) -> None:
-    """The tests run on the working tree, so the gate checks a staged state
-    only when the task's files have no unstaged or untracked changes."""
-    unstaged = _git(top, "diff", "--name-only", "--no-relative", "--", *files).split()
-    untracked = _git(top, "ls-files", "--others", "--exclude-standard", "--", *files).split()
-    loose = sorted(set(unstaged) | set(untracked))
-    if loose:
-        raise RecordError(f"{', '.join(loose)} has changes that aren't staged; stage every change "
-                          "to the task's files (or drop it) before gating, so the gate checks "
-                          "exactly what will be committed")
+def scope_footprint(store_dir: Path, log: list[dict], task: int | str) -> set[str] | None:
+    """The files a scope stages, gates and commits: a task's recorded
+    footprint, or at `final` every task's plus the files the scope's coders
+    changed, since a whole-change fix has no stage entry of its own."""
+    footprint = task_footprint(log, task)
+    if task != "final":
+        return footprint
+    coders = _scope_records(store_dir, scope_prefix(log, task)).coders
+    changed = {_normalize_path(f) for r in coders for f in r.data.get("changed_files", [])}
+    return (footprint or set()) | changed or None
+
+
+def _stage_footprint(top: Path, files: list[str]) -> None:
+    """Stage every change under the footprint paths (edits, new files and
+    deletions) and nothing else. A path that is neither on disk nor tracked
+    has nothing to stage."""
+    tracked = set(_git(top, "ls-files", "--full-name", "--", *files).split())
+    present = [f for f in files if (top / f).exists() or f in tracked]
+    if present:
+        _git(top, "add", "-A", "--", *present)
 
 
 def _run_shell(top: Path, command: str) -> tuple[bool, str]:
@@ -3020,7 +3030,7 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
     tasks' agents write it meanwhile."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
-        footprint = task_footprint(log, task)
+        footprint = scope_footprint(store_dir, log, task)
         if not footprint:
             raise RecordError(f"task {task!r} has no recorded footprint; record it with "
                               "`ledger.py stage` before gating it")
@@ -3029,11 +3039,11 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
             raise RecordError(f"{store_dir} isn't inside a git work tree; the gate reads the "
                               "staged files")
         files = sorted(footprint)
-        _check_all_staged(top, files)
+        _stage_footprint(top, files)
         staged = _staged_scope(top, files)
         if not staged:
-            raise RecordError(f"nothing is staged in task {task!r}'s files ({', '.join(files)}); "
-                              "stage the task's files first")
+            raise RecordError(f"nothing to gate: task {task!r}'s files ({', '.join(files)}) "
+                              "have no changes")
         tree = _git(top, "write-tree").strip()
         coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
         hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
