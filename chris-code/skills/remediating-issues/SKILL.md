@@ -14,93 +14,65 @@ description: >
 
 ## Overview
 
-Many fixes make a bug go away. Only one fits the codebase. This skill exists to find that one and defend it.
+Many fixes make a bug go away. Only one fits the codebase. This skill finds that one and defends it.
 
-**Core principle:** the fix is *discovered from nearby code*, *chosen against alternatives*, and *proven*. A fix that works but bolts on logic the codebase already has a pattern for is debt, not a remediation.
+It wraps `chris-code:coherent-change`, which researches the codebase, defends the most coherent fix against the alternatives and builds it. **REQUIRED:** coherent-change's *Iron Law* (no fix proposed before the codebase is researched and alternatives weighed), *Change Fully, Defer Only the Separable*, and *The Defended Choice* apply here as written, with "fix" for "change". This skill adds what a bug needs on top: pinning the issue before fixing it, the regression gate, closing the issue at its origin, and the batch and per-task variants that SDD and the completion gate use.
 
-**The signature output, produced every time:** a defended choice. Every genuine candidate fix rooted in how this codebase already solves the problem, the one you selected, proof it's correct across *all* affected cases, and why it beats the others on reuse, idiom-fit, contract-preservation, least surprise, and end-user ergonomics. That artifact is what separates this from "fix the bug and add a test."
+**The signature output, every time:** a defended choice for the fix. That artifact is what separates this from "fix the bug and add a test".
 
 ## When to Use
 
 - A non-trivial issue from any source: a code-review or audit finding, a GitHub issue, or a problem named in session.
-- The fix space is genuinely wide: more than one plausible way to fix it, and the difference between a coherent fix and a hacky one is real.
+- The fix space is genuinely wide: more than one plausible fix, with a real difference between a coherent one and a hacky one.
 
 **When NOT to use:**
-- Trivial one-line fixes with a single obvious fix. Nothing to defend, no reason to invoke.
-- Finding or discovering issues. Use `chris-code:code-archaeology` or `chris-code:bug-hunt`; this skill consumes a known issue.
-- Pure refactors with no reported defect. Use `chris-code:python-review` / `chris-code:rust-review`.
-
-## The Iron Law
-
-```
-NO FIX IS PROPOSED BEFORE THE CODEBASE HAS BEEN RESEARCHED
-AND ALTERNATIVES HAVE BEEN WEIGHED.
-```
-
-The first fix that works is a candidate, never the conclusion. If you can name only one fix, you have not finished the research.
+- Trivial one-line fixes with a single obvious fix: nothing to defend.
+- Finding issues: use `chris-code:code-archaeology` or `chris-code:bug-hunt`; this skill consumes a known issue.
+- Pure refactors with no reported defect: use `chris-code:python-review` / `chris-code:rust-review`.
 
 ## Fix Fully, Defer Only the Separable
 
-The fix must close the issue across *every* case its root cause reaches — each sibling branch, producer, and input the correctness table lists. No stubs, no silent fallbacks, no "handle the rest in a later phase." Partial coverage dressed as a fix is exactly the symptom-patching this skill exists to prevent.
-
-This is not a ban on follow-ups. A genuinely *separate, larger* improvement — the north-star refactor from the defense — is logged and deferred, because the current fix already closes the issue without it. The line: **would a reader consider this issue fully closed by the change?** "Mostly, except the siblings / a stub / a fallback" is banned deferral. "Yes, and there's a bigger orthogonal refactor for someday" is a legitimate follow-up.
+The fix closes the issue across *every* case its root cause reaches: each sibling branch, producer and input the correctness table lists. No stubs, no silent fallbacks, no "handle the rest in a later phase". Only a genuinely separate, larger improvement (the north-star from the defense) is logged and deferred. The test: **would a reader consider this issue fully closed by the change?**
 
 ## The Arc
 
-One issue is the atom. Work it through these stages. (A set of issues is just fan-out; see Batch Path.)
+One issue is the atom; a set of issues is a batch (*Batch Path*).
 
-**1. Frame and pin the issue.** First, don't fix a phantom: confirm the problem is *real and still open*. For a tracked issue, read the code it cites and verify the described behavior still exists, and check whether a fix already landed (`git log -S <symbol>`, weighed against the issue's age). A stale or already-fixed issue is closed *with evidence*, not fixed again. Then decide whether the defect is **observable** (a user-visible symptom on a live path) or **inert** (a latent inconsistency nothing currently reaches) — both get fixed, but the proof differs (step 3 below). Characterize the symptom precisely and define the concrete before/after check that will prove it fixed. **REQUIRED SUB-SKILL:** `chris-code:systematic-debugging` — complete its Phase 1 (root cause) before going further. Where a cheap failing test captures the symptom, write it now; where reproduction is expensive (visual, interactive, integration, performance), pin the symptom exactly and carry the failing check into the close (step 3). The point is a defined before/after, not necessarily a unit test.
+**1. Frame and pin the issue.** Don't fix a phantom: confirm the problem is real and still open. For a tracked issue, read the code it cites, verify the described behavior still exists, and check whether a fix already landed (`git log -S <symbol>`, weighed against the issue's age). A stale or already-fixed issue is closed *with evidence*, not fixed again. Decide whether the defect is **observable** (a user-visible symptom on a live path) or **inert** (a latent inconsistency nothing currently reaches): both get fixed, but the proof differs (stage 3). Characterize the symptom precisely and define the concrete before/after check that will prove it fixed. **REQUIRED SUB-SKILL:** `chris-code:systematic-debugging`; complete its Phase 1 (root cause) before going further. Where a cheap failing test captures the symptom, write it now; where reproduction is expensive (visual, interactive, integration, performance), pin the symptom exactly and carry the failing check into the close. The point is a defined before/after, not necessarily a unit test.
 
-**2. Build the fix with `chris-code:coherent-change` (build mode).** Hand it the determined fix and the before/after check from stage 1. The engine researches the codebase, generates grounded candidates, defends the most coherent fix against the alternatives (the defended choice below), implements it via the coder agent, and runs its `*-review-lite` self-gate before handing back a working fix. One bug-specific note for the engine: **the obvious candidate is the fix the issue itself suggests** — often the over-reaching one; make it earn the win or show why it loses.
+**2. Build the fix with `chris-code:coherent-change` (build mode).** Hand it the determined fix and the stage-1 before/after check. It researches, defends the most coherent fix (presenting the defended choice at its stage-4 approval checkpoint), implements it through the coder agent, and runs its `*-review-lite` self-gate before handing back a working fix. One bug-specific rule for the engine: **the obvious candidate is the fix the issue itself suggests**, often the over-reaching one. Make it earn the win or show why it loses. In the correctness table, the already-correct cases stay byte-identical, and the implementation plan (part 6) names the `regression-test` coverage and how the origin gets closed.
 
-**3. Close it — the bug gates.** With the lite-reviewed fix in hand, run the close in order:
+**3. Close it with the bug gates,** in order:
 
-1. **`chris-code:regression-test` (REQUIRED — the mandatory bug gate).** Durable coverage of the *specific failure mode*, proven RED on the pre-fix code. Run the proof **before staging**, while the fix is still unstaged: `git stash push -- <changed source>` → it fails → `git stash pop` → then `git add` once. (`git stash pop` restores the working tree but **not** the index, so stashing *after* `git add` silently un-stages the fix and it drops from the commit; recover with `git stash pop --index`.) An *inert* defect (no observable symptom, per stage 1) is instead proven structurally — assert the inconsistency itself is gone. The fix is not complete until this passes.
-2. **Commit the fix**, then run **`chris-code:verification-before-completion`** (REQUIRED; its gates review committed HEAD): tests, lint, and the `python-design-reviewer` / `rust-design-reviewer` cohesion gate. A PASS can carry findings, and **PASS-with-findings is not clean**: verify each is real (`chris-code:receiving-code-review`), then apply *Fix Fully, Defer Only the Separable* — fix the **in-scope** findings *in this fix*, defer only a separable, larger improvement. Shipping a flagged in-scope finding as "fix later" defeats the gate. The fixing follows that skill's close round: every gate's findings are batched and triaged once, trivial ones are fixed inline, and the non-trivial set comes back here as a close-gate batch (see Batch Path), never as one-off patches. There is no separate intent ledger for a remediation: the **issue text is the ledger**, so the gate's spec-blind intent re-check (Step 5) confirms the originally-reported symptom is observably gone.
-3. **`chris-code:finishing-a-development-branch`** — integration (merge / PR / keep / discard).
+1. **`chris-code:regression-test` (REQUIRED, the bug gate):** durable coverage of the *specific failure mode*, proven RED on the pre-fix code before staging, by the stash recipe in coherent-change's close (stage 6, step 1). An *inert* defect is proven structurally instead: assert the inconsistency itself is gone. The fix isn't complete until this passes.
+2. **Commit the fix, then run `chris-code:verification-before-completion`** (REQUIRED), as coherent-change's close step 2 describes: a PASS with findings is not clean, in-scope findings are fixed in this fix, and the non-trivial set comes back here as a close-gate batch (*Batch Path*), never as one-off patches. A remediation has no separate intent ledger: **the issue text is the ledger**, so the gate's spec-blind intent re-check confirms the reported symptom is observably gone.
+3. **`chris-code:finishing-a-development-branch`**: integration (merge / PR / keep / discard).
 
-**4. Record the resolution against the origin.** GitHub → reference in the commit and close it *with confirmation*; review/audit finding → mark it addressed; interactive → confirm with the user.
-
-## The Defended Choice
-
-The signature artifact, presented at `coherent-change`'s stage-4 approval checkpoint (reached from stage 2 above) before any code changes. Mirror this structure — it is what the canonical remediation produces:
-
-**1. Reframe.** The two or three facts from research that change the problem: what's actually in scope, what's irrelevant to the goal, where the real boundary sits.
-
-**2. Proposed fix.** Concrete and minimal: what changes, what gets deleted, what is deliberately left untouched.
-
-**3. Correct across every affected case.** A table over *all* cases the change touches, not just the reported one, showing the fix is right for each — and that the already-correct cases stay byte-identical. This is how a coherent fix proves it isn't over-reaching.
-
-| Case | Today | Under the fix | Result |
-|------|-------|---------------|--------|
-| …    | …     | …             | fixed / unchanged |
-
-**Completeness — required line under the table:** *cases I might be missing, and how I'd find them.* Name where you searched for same-root-cause siblings, producers, and inputs (the `grep`, the call-site scan, the type's consumers) and what would surface one you overlooked. A table listing only the cases you already found proves coverage of those, not of the bug's full reach.
-
-**4. Why it's the most coherent and user-friendly choice.** Cover: reuse (which existing helper or abstraction it leans on), idiom-fit, whether it *mirrors an existing strategy* elsewhere in the codebase, contract-preservation, smallest correct blast radius, project-constraint fit (cite `CLAUDE.md` where relevant), and the end-user / API payoff.
-
-**5. Defense against the alternatives.** Every rejected candidate (A/B/C/D…) gets a real rebuttal, not a line: *why* it is non-exhaustive, over-reaching, disproportionate, or paradigm-violating. Distinguish the right-but-disproportionate north-star fix from the proportionate-now choice, and **log the north-star as a follow-up** rather than dismissing it. Inside an SDD run the orchestrator files it as a `follow-up` note (subagent-driven-development's *Run Notes*); the per-task variant names it in the decision's defense and leaves the filing to the orchestrator. Otherwise the defense itself is the record.
-
-**6. Implementation + verification plan.** Who implements (coder agent), the test(s) and the domain-appropriate proof, `regression-test`, and how the origin gets closed.
-
-Then ask to proceed.
+**4. Record the resolution against the origin.** A GitHub issue: reference it in the commit and close it *with confirmation*. A review or audit finding: mark it addressed. Interactive: confirm with the user.
 
 ## Batch Path
 
-A set of issues is a **batch**, not a per-issue fan-out. Triage and rank them, frame each as an observable end-state (the symptom gone — the *intent*, not a prescribed fix), then hand the whole set to `chris-code:coherent-change` **batch mode**: one consolidated research pass over the affected code, a defended fix per issue reconciled against that shared map, and the set routed into **one** `chris-code:lean-spec` → **one** `chris-code:lean-plan` → `chris-code:subagent-driven-development`. The bug framing rides inside that one plan — each fix carries its `chris-code:regression-test` coverage as part of its task, and origins are recorded at the end. Decomposition and footprint staging are the plan's and SDD's job, not something this skill re-implements. Close with one synthesized remediation report.
+A set of issues is a **batch**, not a per-issue fan-out. Triage and rank them, frame each as an observable end-state (the symptom gone: the intent, not a prescribed fix), then hand the whole set to `chris-code:coherent-change` **batch mode**: one consolidated research pass, a defended fix per issue reconciled against that shared map, and the set routed into **one** `chris-code:lean-spec` → **one** `chris-code:lean-plan` → `chris-code:subagent-driven-development`. Each fix's task carries its `chris-code:regression-test` coverage, and origins are recorded at the end. Decomposition and footprint staging are the plan's and SDD's job. Close with one synthesized remediation report.
 
-**Close-gate variant.** When the batch is a `verification-before-completion` close round's non-trivial findings, the gate reports already frame each end-state and the run is mid-close. Stage 1's framing is therefore done, and coherent-change's stage-4 approval checkpoint still applies. The route changes in these ways, and **only for this variant**:
-- Skip `lean-spec` (the gate reports are the *what*, the decision doc is the *how*) and go straight to one `lean-plan` whose spec references are the decision doc and the report paths.
+**Close-gate variant.** When the batch is a `verification-before-completion` close round's non-trivial findings, the gate reports already frame each end-state and the run is mid-close, so stage 1's framing is done; coherent-change's stage-4 approval checkpoint still applies. Only for this variant:
+- Skip `lean-spec` (the gate reports are the *what*, the decision doc the *how*) and go straight to one `lean-plan` whose spec references are the decision doc and the report paths.
 - Run SDD on the same store, with task numbers continuing after `ledger.py completed`.
-- A task carries `chris-code:regression-test` coverage only for a finding that is a behavioral defect. A design or cohesion finding gets the plan's ordinary tests.
-- There is no origin recording, no separate remediation report, and no `finishing-a-development-branch` at this level. The gate report is the origin, and round 2's re-review at the same report path closes it.
+- A task carries `regression-test` coverage only for a finding that is a behavioral defect; a design or cohesion finding gets the plan's ordinary tests.
+- No origin recording, no separate remediation report, and no `finishing-a-development-branch` at this level: the gate report is the origin, and round 2's re-review at the same report path closes it.
 - Close by returning to `verification-before-completion` for round 2, not a fresh round 1. The SDD run's own close is that return, so verification is invoked once.
 
 Every other batch keeps the full `lean-spec` route.
 
-**Per-task variant.** SDD dispatches this variant, on opus, only for a holistic round: a task with a serious finding of contract reach, or a coder's `root cause:` concern (see `chris-code:subagent-driven-development`, *Constructing Reviewer Dispatches*). The task's coder already owns the fix, so this variant is decision-only, and it is task-wide: it may reshape the task's implementation, not only patch the cited sites. Run only `chris-code:coherent-change` stages 2–4: batch research over the task's whole diff, every reviewer record from every round, and the coder records, then defended choices that together account for every open finding and concern. Start with `python3 <scripts-path>/ledger.py findings <output path>`: it lists every finding id on the reviewer records in the decision's scope (its task, or the whole-change gate), which the decision must account for, any malformed or misfiled record that blocks it, and every decision doc already in the store, which it must reconcile with. It also lists the coders' `concerns`: a `root cause:` concern is open work, so the decision claims its id: a fix choice fixes it in this task, and an `excluded` entry defers it, with the evidence for why it belongs elsewhere as the reason. A choice may change another task's file: it stays this task's fix, and SDD routes that file through its escalated-consumer path. Research means reading the code each candidate would change and the code it would mirror, not restating the reviewers' probes. Settle every open question by reading: "use X if it exists" or "`f()` or equivalent" handed to the coder is research left undone.
+**Per-task variant.** SDD dispatches this variant on opus, only for a holistic round: a task with a serious finding of contract reach, or a coder's `root cause:` concern (`chris-code:subagent-driven-development`, *Constructing Reviewer Dispatches*). The task's coder owns the fix, so the variant is decision-only. It is task-wide: it may reshape the task's implementation, not only patch the cited sites.
 
-Write the decision doc as one typed record to the output path the dispatch supplies (`task-N-decision-c<cycle>.json`, or `final-decision-c<cycle>.json` at the whole-change gate and `final-r2-decision-c<cycle>.json` in a close-gate remediation run; `check` holds the name to the record's `task` and `cycle`), run `python3 <scripts-path>/ledger.py check <path>` until it exits 0, and return that path. `check` verifies that every finding is accounted for, every decision written before this one is reconciled, and every precedent exists in the repo, outside the store. The holistic fix can't finish until the doc passes, and the coder maps each of its cases to a hunk.
+- **Run only coherent-change stages 2–4:** batch research over the task's whole diff, every reviewer record from every round, and the coder records, then defended choices that together account for every open finding and concern. It skips this skill's stage 1 (the reviewer records frame each finding, and the coder's TDD supplies the tests).
+- **Start with `python3 <scripts-path>/ledger.py findings <output path>`.** It lists every finding id on the reviewer records in the decision's scope (its task, or the whole-change gate), which the decision must account for; any malformed or misfiled record that blocks it; every decision doc already in the store, which it must reconcile with; and the coders' `concerns`. A `root cause:` concern is open work: the decision claims its id, either in a fix choice (fixed in this task) or in an `excluded` entry (deferred, with the evidence for why it belongs elsewhere as the reason).
+- **A choice may change another task's file:** it stays this task's fix, and SDD routes that file through its escalated-consumer path.
+- **Research means reading** the code each candidate would change and the code it would mirror, not restating the reviewers' probes. Settle every open question by reading: "use X if it exists" or "`f()` or equivalent" handed to the coder is research left undone.
+- **No approval checkpoint:** persist the doc immediately and don't ask to proceed. SDD's execution stays continuous, and a task still open after two fix rounds reaches the user in the stage batch. No `lean-spec`, `lean-plan` or origin recording either: every reviewer's re-check is the close.
+- **A recurring finding's** choice must read the prior decision doc and say why its mechanism failed, in its `reframe` and in the `reconciled` entry for that doc. **A finding in `introduced_by_fix`** was caused by the previous fix: its choice must say how that fix broke it, from the fix's diff (`ledger.py diff-since` the previous fix baseline) and the coder record's `hunk_map` and `consumers_checked`.
+
+Write the decision doc as one typed record to the output path the dispatch supplies (`task-N-decision-c<cycle>.json`; `final-decision-c<cycle>.json` at the whole-change gate, `final-r2-decision-c<cycle>.json` in a close-gate remediation run; `check` holds the name to the record's `task` and `cycle`). Run `python3 <scripts-path>/ledger.py check <path>` until it exits 0, and return the path. `check` verifies every finding is accounted for, every earlier decision is reconciled, and every precedent exists in the repo outside the store. The holistic fix can't finish until the doc passes, and the coder maps each of its cases to a hunk.
 
 ```json
 {
@@ -136,36 +108,32 @@ Write the decision doc as one typed record to the output path the dispatch suppl
 }
 ```
 
-- `choices`: one per finding or cluster of findings sharing a cause. A `fix` choice carries the defended choice's parts: `reframe`, `choice`, the `cases` table, `couplings`, `premise`, the `completeness` line, and at least two `candidates`, exactly one `chosen`.
-  - `cases`: every case the change touches, unchanged ones included. Each names its `site`, the `test` that pins it, and in `under_fix` that test's expected result. A case with no test is a guess the coder has to make, and decided items left unbuilt were the main way earlier fixes failed.
-  - `couplings`: every other site the choice affects (a caller that reads the changed value, a sibling that shares its rule), each with its `effect`. Each coupling's site must also be a case, so it gets a test: "named neither its coupling" is how a fix breaks its neighbor.
-  - `premise`: the `assumption` the choice rests on and the `probe` (what you ran or read) that confirmed it. A wrong premise costs the whole round. Each candidate cites the code it mirrors as `path:line` or `path:start-end` from the repo root: a line range, not coherent-change's `file:pattern`. The obvious candidate (often the reviewer's suggestion) is one of them, and the losers' `why` is a real rebuttal.
+- `choices`: one per finding, or per cluster of findings sharing a cause. A `fix` choice carries the defended choice's parts: `reframe`, `choice`, the `cases` table, `couplings`, `premise`, the `completeness` line, and at least two `candidates`, exactly one `chosen`.
+  - `candidates`: each cites the code it mirrors as `path:line` or `path:start-end` from the repo root (a line range, not coherent-change's `file:pattern`). The obvious candidate (often the reviewer's suggestion) is one of them, and each loser's `why` is a real rebuttal.
+  - `cases`: every case the change touches, unchanged ones included, each with its `site`, the `test` that pins it, and that test's expected result in `under_fix`. A case with no test is a guess left to the coder, and decided items left unbuilt were the main way earlier fixes failed.
+  - `couplings`: every other site the choice affects (a caller that reads the changed value, a sibling that shares its rule), each with its `effect`. Each coupling's site must also be a case, so it gets a test: an unnamed coupling is how a fix breaks its neighbor.
+  - `premise`: the `assumption` the choice rests on and the `probe` (what you ran or read) that confirmed it. A wrong premise costs the whole round.
 - An `escalate` choice is a finding the research shows can't or shouldn't be fixed as asked (no reachable fixture for a requested test, a requirement that conflicts with another), with the evidence. In a task's holistic round the coder contests that finding with this evidence, and the reviewer that raised it concedes or holds it, a hold going to the user; at the whole-change gate's close, SDD escalates it to the user. `status` is `escalated` when any choice is.
-- `excluded`: every finding with no choice, and why (a note the coder handles alongside, a finding already settled). A `root cause:` concern listed here is deferred: SDD's triage files it as a follow-up with your reason as its rule, so write a reason a later task can act on. A decision may consist only of exclusions, with no choices. `cannot_verify` items may be decided too, but needn't be listed.
-- `reconciled`: every decision doc written before this one, and how this one relates to it: whether they touch the same code, overlap, or contradict. A decision written later reconciles with this one, not the reverse. A markdown decision doc from before decisions were records is named by its file stem.
-
-The variant skips this skill's stage 1 (the reviewer records already frame each finding, and the coder's TDD supplies the tests). It has **no approval checkpoint**: persist the doc immediately and do not ask to proceed, because SDD's execution stays continuous and a task still open after two fix rounds goes to the user in the stage's batch. It also has no `lean-spec`, no `lean-plan`, and no origin recording, since every reviewer's re-check is the close. A recurring finding's defended choice must read the prior decision doc and say why its mechanism failed, in its `reframe` and in the `reconciled` entry for that doc. A finding the reviewers listed in `introduced_by_fix` was caused by the previous fix: its defended choice must say how that fix broke it, reading the fix's diff (`ledger.py diff-since` the previous fix baseline) and the coder record's `hunk_map` and `consumers_checked`.
+- `excluded`: every finding with no choice, and why (a note the coder handles alongside, a finding already settled). A `root cause:` concern listed here is deferred: SDD's triage files it as a follow-up with your reason as its rule, so write a reason a later task can act on. A decision may consist only of exclusions. `cannot_verify` items may be decided too, but needn't be listed.
+- `reconciled`: every decision doc written before this one, and how this one relates to it (touching the same code, overlapping, or contradicting). A later decision reconciles with this one, not the reverse. A markdown decision doc from before decisions were records is named by its file stem.
 
 ## Rationalizations — All Mean "Do the Research and Write the Defense"
 
+coherent-change's table applies. The bug-specific ones:
+
 | Excuse | Reality |
 |--------|---------|
-| "The first fix works, ship it" | Working ≠ coherent. A fix that ignores existing patterns is debt the next reader pays. |
-| "There's only one way to fix this" | Usually means `coherent-change`'s research stage was skipped. Read the siblings before deciding. |
-| "Defending alternatives is busywork" | The defense *is* the deliverable. It's what makes the fix trustworthy and reviewable. |
-| "It's a small bug, skip the process" | Small bugs with wide fix-spaces are the target. Truly single-fix bugs are out of scope — don't invoke here. |
+| "It's a small bug, skip the process" | Small bugs with wide fix spaces are the target. Truly single-fix bugs are out of scope; don't invoke here. |
+| "The issue already says how to fix it" | That's candidate A. Make it earn the win or show why it loses: the suggested fix is often the over-reaching one. |
 | "I'll add the test after the fix" | The before/after check comes first. A test written around a working fix proves nothing about the bug. |
-| "The issue already says how to fix it" | That's candidate A. Make it earn the win or show why it loses — the suggested fix is often the over-reaching one. |
-| "One-line rejections are enough" | The rejection reasoning *is* the deliverable. A real rebuttal per alternative is what makes the choice trustworthy. |
-| "A unit test covers it" (for a symptom a unit test can't observe) | If the bug only surfaces through an integration, end-to-end, or performance check, that's the proof you owe. |
-| "Fix the reported case now, handle the siblings later" | Same-root-cause siblings ship in this fix — the correctness table lists them for a reason. Only a separate, larger improvement may be deferred. |
+| "A unit test covers it" (for a symptom a unit test can't observe) | If the bug only surfaces through an integration, end-to-end or performance check, that's the proof you owe. |
+| "Fix the reported case now, handle the siblings later" | Same-root-cause siblings ship in this fix; the correctness table lists them. Only a separate, larger improvement may be deferred. |
 
 ## Red Flags — Stop, You're About to Violate the Discipline
 
-- You typed a fix before dispatching research or reading a sibling implementation.
-- You can name only one candidate, or you skipped the fix the issue suggested instead of refuting it.
-- Your fix introduces a helper the codebase already provides.
+coherent-change's red flags apply. The bug-specific ones:
+
+- You skipped the fix the issue suggested instead of refuting it.
 - You're shipping a stub, a fallback, or a "TODO: the rest" for a case the same root cause reaches.
-- You rejected an alternative without saying why it's less coherent.
-- Your proof is a unit test for a symptom only an integration, end-to-end, or performance check can observe.
+- Your proof is a unit test for a symptom only an integration, end-to-end or performance check can observe.
 - You're about to claim "done" without the before/after check flipping or `verification-before-completion` running.
