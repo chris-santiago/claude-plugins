@@ -300,7 +300,7 @@ def fig_dispatch():
     # return leg
     s.text(155, 320, "return leg:", 14, GRAY, weight="bold")
     s.text(155, 342, "reports are compressions.", 13, GRAY)
-    s.text(155, 360, "re-read the code slice,", 13, GRAY)
+    s.text(155, 360, "check them by dispatch;", 13, GRAY)
     s.text(155, 378, "don’t trust the summary.", 13, GRAY)
     s.save("dispatch.svg")
 
@@ -477,7 +477,7 @@ def fig_agent_ratio():
     roles = [
         ("Coders", 3, "build", "write the change"),
         ("Quality reviewers", 3, "assure", "principles + bugs"),
-        ("Commit-lite gates", 2, "assure", "idiom + lint"),
+        ("Review-lite gates", 2, "assure", "idiom + lint, whole change"),
         ("Design reviewers", 2, "assure", "cohesion / API"),
         ("Conformance pair", 2, "assure", "spec + intent"),
         ("Test-writer", 1, "assure", "bug-hunter"),
@@ -539,7 +539,7 @@ def fig_two_chains():
            15, ORANGE, weight="bold", anchor="start")
     decision = [
         ("typed record", ["task-N-<agent>.json,", "checked at write time"]),
-        ("ledger.py", ["open · completed · shapes"]),
+        ("ledger.py", ["check · triage · commit"]),
         ("orchestrator", ["steers on fields,", "never scans prose"]),
     ]
     for i, (name, sub) in enumerate(decision):

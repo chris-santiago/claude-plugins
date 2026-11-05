@@ -149,7 +149,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="chev">↓</div>
 <div class="node exec">using-git-worktrees → subagent-driven-development</div>
 <div class="chev">↓</div>
-<div class="node task">per task: coder → spec + quality → commit gate</div>
+<div class="node task">per task: coder → spec + quality → triage → commit gate</div>
 <div class="chev">↓</div>
 <div class="node done">verification-before-completion</div>
 <div class="chev">↓</div>
@@ -173,7 +173,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="lanes">
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
-<div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
+<div class="lane"><div class="lanehdr red">review-lite — whole-change gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, whole diff</div></div>
 <div class="lane"><div class="lanehdr indigo">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
@@ -185,14 +185,14 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="gates">
 <div class="gate"><span class="gnum">1</span>Spec + quality<br>together</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">2</span>Triage once<br>→ one fix</div>
+<div class="gate"><span class="gnum">2</span>Scripted<br>triage</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">3</span>Commit<br>lint gate</div>
+<div class="gate"><span class="gnum">3</span>Commit gate<br>lint + verify</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">4</span>Full-diff<br>pass</div>
+<div class="gate"><span class="gnum">4</span>Full-diff<br>review-lite</div>
 </div>
 
-<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Non-trivial findings get a decision doc before the batched fix, then everyone re-reviews; one still open after two fixes escalates to you. <b>Do Not Trust the Report</b> — reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
+<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Reviewers tag each finding by severity and reach, and <code>triage</code> routes it: a note, a patch round, or a holistic round with one decision doc. Only the reviewers it names re-check; work still open after two rounds waits for you. <b>Do Not Trust the Report</b>: reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
 
 ---
 

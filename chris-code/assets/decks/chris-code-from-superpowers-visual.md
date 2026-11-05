@@ -125,7 +125,7 @@ This deck is the other **20%**, and the *why*.
 <div class="cards">
 <div class="card"><div class="cardnum">1</div><div class="cardttl">Shorter specs &amp; plans</div><div class="cardtxt">No more 2,500-word specs or 10k-word plans full of code the implementer throws away.</div></div>
 <div class="card"><div class="cardnum">2</div><div class="cardttl">Dedicated agents</div><div class="cardtxt">Coding and review run through named agents auto-dispatched by file type. You rarely pick one.</div></div>
-<div class="card"><div class="cardnum">3</div><div class="cardttl">Same gates, every task</div><div class="cardtxt">Spec + quality reviews in parallel, triaged once → pre-commit lint. Nothing is "too small to review."</div></div>
+<div class="card"><div class="cardnum">3</div><div class="cardttl">Same gates, every task</div><div class="cardtxt">Spec + quality reviews in parallel, triaged by script → a commit gate (lint + verify). Nothing is "too small to review."</div></div>
 </div>
 
 ---
@@ -163,7 +163,7 @@ This deck is the other **20%**, and the *why*.
 <div class="lanes">
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
-<div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
+<div class="lane"><div class="lanehdr red">review-lite — whole-change gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, whole diff</div></div>
 <div class="lane"><div class="lanehdr indigo">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
@@ -174,10 +174,10 @@ This deck is the other **20%**, and the *why*.
 
 <div class="gatecompare">
 <div class="gaterow"><span class="glbl">superpowers</span><span class="gmini base">self-review</span><span class="gsep">→</span><span class="gmini base">spec review</span><span class="gsep">→</span><span class="gmini base">quality review</span><span class="gsep">→</span><span class="gmini base">final review</span></div>
-<div class="gaterow"><span class="glbl">chris-code</span><span class="gmini base">spec + quality</span><span class="gsep">→</span><span class="gmini add">+ triage, one fix</span><span class="gsep">→</span><span class="gmini add">+ commit lint gate</span><span class="gsep">→</span><span class="gmini add">+ full-diff pass</span></div>
+<div class="gaterow"><span class="glbl">chris-code</span><span class="gmini base">spec + quality</span><span class="gsep">→</span><span class="gmini add">+ scripted triage</span><span class="gsep">→</span><span class="gmini add">+ commit gate</span><span class="gsep">→</span><span class="gmini add">+ full-diff review-lite</span></div>
 </div>
 
-<p class="cap">Same two reviews, now <b>dispatched together</b> and triaged once (non-trivial findings get a decision doc before the fix). chris-code makes the reviewers <b>dedicated, scope-dispatched agents</b>, adds a <b>mandatory lint gate</b> and a <b>spec-blind intent re-check</b>, and re-reads the actual code at every gate. More gates raise <i>recall</i>, not proof — the decorrelated axes (deterministic lint, spec-blind intent, mutation probe) carry the weight, not repetition.</p>
+<p class="cap">Same two reviews, now <b>dispatched together</b>, with tagged findings routed by script into at most two fix rounds (an S3+ contract-reach finding gets a decision doc first). chris-code makes the reviewers <b>dedicated, scope-dispatched agents</b>, adds a <b>mandatory lint gate</b> and a <b>spec-blind intent re-check</b>, and re-reads the actual code at every gate. More gates raise <i>recall</i>, not proof — the decorrelated axes (deterministic lint, spec-blind intent, mutation probe) carry the weight, not repetition.</p>
 
 ---
 
@@ -236,7 +236,7 @@ Where muscle memory will mislead you. Framed before → after:
 | Skill | superpowers | chris-code |
 |---|---|---|
 | **writing-plans** | the plan skill: exhaustive, full code per step | slimmed to `lean-plan`; spec → `lean-spec` |
-| **subagent-driven-development** | 2-stage review; parallel discouraged | 3 gates/task, scope dispatch, staged parallelism |
+| **subagent-driven-development** | 2-stage review; parallel discouraged | 3 gates/task (review → scripted triage → commit gate), scope dispatch, staged parallelism |
 | **verification-before-completion** | "what command proves this? run it" | tests → lints, then design review, requirements, spec-blind intent and mutation together as one close round, triaged once (max 2 rounds) |
 | **requesting-code-review** | primary, mandatory path | demoted to ad-hoc; base `HEAD~1` → `merge-base HEAD main` |
 
@@ -250,10 +250,10 @@ Where muscle memory will mislead you. Framed before → after:
 <div class="newhdr">New agents (15) — the layer superpowers doesn't have</div>
 <div class="arow">3 coders (<code>python</code> / <code>pytorch</code> / <code>rust</code>) — exclusive, most-specific wins</div>
 <div class="arow">3 quality-reviewers — additive, dispatched alongside the spec review</div>
-<div class="arow">2 review-lite gates — pre-commit idiom + lint</div>
+<div class="arow">2 review-lite gates — idiom + lint over the whole change</div>
 <div class="arow">2 design-reviewers (<code>python</code> / <code>rust</code>) — senior cohesion at the verification gate</div>
 <div class="arow">2 conformance reviewers — <code>spec-reviewer</code> (promoted from a prompt template) + <code>intent-reviewer</code> (spec-blind, new)</div>
-<div class="arow"><code>bug-hunter</code> — adversarial edge-case tests · <code>claim-checker</code> — settles one claim by quoting code</div>
+<div class="arow"><code>bug-hunter</code> — adversarial edge-case tests · <code>claim-checker</code> — settles a cannot-verify item by quoting code</div>
 <div class="arow"><code>mutation-tester</code> — polyglot mutation gate in an isolated worktree (Step 6 / on-demand)</div>
 
 ---

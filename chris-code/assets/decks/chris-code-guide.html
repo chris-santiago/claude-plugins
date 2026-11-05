@@ -493,7 +493,7 @@
           <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">6</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change.</p></div></div>
         </div>
-        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Before a round, open questions go to you and owed doc disclosures land. Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you. The completion report is built from the run's store (<span class="mono">ledger.py report</span>), not memory.</p>
       </div>
       <div class="usecard">
         <h4>Why more passes ≠ more proof</h4>
@@ -576,7 +576,7 @@
     <div class="sec-head">
       <p class="eyebrow">The 15 agents · where the weight goes</p>
       <h2>For every agent that writes code, four exist only to check it.</h2>
-      <p>Fifteen dedicated agents auto-dispatch by file type. Three are coders; the other twelve test, review, or verify. The plugin spends its agent budget on assurance, not authorship.</p>
+      <p>Fifteen dedicated agents auto-dispatch by file type. Three are coders; the other twelve test, review, or verify. The plugin spends its agent budget on assurance, not authorship. Each role's model is pinned: coders and review-lite gates on sonnet; reviewers, <span class="mono">mutation-tester</span>, <span class="mono">bug-hunter</span> and the research agent on opus; <span class="mono">claim-checker</span> on haiku. A coder goes to opus only by your ruling.</p>
     </div>
     <div class="ratio reveal" style="margin-bottom:34px">
       <div class="ratio-viz">
@@ -592,18 +592,18 @@
         <h3>The ratio is the philosophy.</h3>
         <p>A free-form assistant is all author and no auditor. chris-code inverts that: writing the code is the small part; proving it correct is the large one.</p>
         <p>It shows up in skills too — of 25, <strong style="color:var(--ink)">13 are testing, review, or debugging</strong> and 9 are building.</p>
-        <p class="pull">3 coders · 3 quality reviewers · 2 commit-lite gates · 2 design reviewers · 2 conformance · 1 test-writer · 1 mutation gate · 1 claim-checker</p>
+        <p class="pull">3 coders · 3 quality reviewers · 2 review-lite gates · 2 design reviewers · 2 conformance · 1 test-writer · 1 mutation gate · 1 claim-checker</p>
       </div>
     </div>
     <div class="agent-cols reveal">
       <div class="arole build"><div class="r-top"><h3>Coders</h3><span class="tag build">build · 3</span></div><p>One writes the change per task; the rest verify it.</p><div class="chips"><span class="chip build">python-coder</span><span class="chip build">pytorch-coder</span><span class="chip build">rust-coder</span></div></div>
       <div class="arole"><div class="r-top"><h3>Quality reviewers</h3><span class="tag assure">assure · 3</span></div><p>Dispatched alongside the spec reviewer: principle adherence and bugs.</p><div class="chips"><span class="chip assure">python-quality-reviewer</span><span class="chip assure">pytorch-quality-reviewer</span><span class="chip assure">rust-quality-reviewer</span></div></div>
-      <div class="arole"><div class="r-top"><h3>Commit-lite gates</h3><span class="tag assure">assure · 2</span></div><p>Fast pre-commit idiom + lint: clean / block / escalate.</p><div class="chips"><span class="chip assure">python-review-lite</span><span class="chip assure">rust-review-lite</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Review-lite gates</h3><span class="tag assure">assure · 2</span></div><p>Whole-change idiom + lint pass after the last task: clean / block / escalate.</p><div class="chips"><span class="chip assure">python-review-lite</span><span class="chip assure">rust-review-lite</span></div></div>
       <div class="arole"><div class="r-top"><h3>Design reviewers</h3><span class="tag assure">assure · 2</span></div><p>Senior read-only cohesion / API review at the final gate.</p><div class="chips"><span class="chip assure">python-design-reviewer</span><span class="chip assure">rust-design-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
       <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
-      <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles one decidable claim by quoting the code; never judges, never writes.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles a spec reviewer's cannot-verify item by quoting the code; never judges, never writes.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
     </div>
   </div>
 </section>
@@ -625,7 +625,7 @@
       </div>
       <div class="usecard" style="border-top:4px solid var(--assure)">
         <h4>The decision chain — JSON records, agent to orchestrator</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">Every coder and reviewer also writes a small typed record: a status from a per-role enum, plus the fields control flow consumes — <span class="mono">duplication_pending</span>, <span class="mono">cannot_verify</span>, <span class="mono">new_shared_symbols</span>. The orchestrator steers by querying <span class="mono">ledger.py</span> views (<span class="mono">open</span>, <span class="mono">completed</span>, <span class="mono">shapes</span>), never by scanning prose for sentinels.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:0 0 10px">Every coder and reviewer also writes a small typed record: a status from a per-role enum, plus the fields control flow consumes — <span class="mono">duplication_pending</span>, <span class="mono">cannot_verify</span>, <span class="mono">new_shared_symbols</span>. The orchestrator steers by querying <span class="mono">ledger.py</span> views (<span class="mono">run-state</span>, <span class="mono">open</span>, <span class="mono">completed</span>, <span class="mono">shapes</span>, <span class="mono">notes</span>, <span class="mono">triage</span>, <span class="mono">ready</span>), never by scanning prose for sentinels.</p>
         <p class="pull">Prose is for minds; records are for steering.</p>
       </div>
     </div>
@@ -638,19 +638,19 @@
 
     <div class="two">
       <div class="usecard" style="border-top:4px solid var(--navy)">
-        <h4>Judgment calls are grounded by dispatch</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0">A judgment-shaped verdict (“this duplicates X,” a “cannot verify”) is never integrated on trust or re-read by the hub. The orchestrator states one decidable claim and dispatches <span class="mono">claim-checker</span>, which answers with a verdict word <em>plus verbatim quoted lines</em> — evidence mandatory, and quotation terminates the chain.</p>
+        <h4>Findings route by tags; doubts settle by dispatch</h4>
+        <p style="font-size:14.5px; color:#37424f; margin:0">The hub makes no call on a finding's merits: reviewers tag each finding with a severity and a reach that <span class="mono">ledger.py triage</span> routes, and a coder who thinks a finding is wrong contests it with the reviewer that raised it. The one judgment left, a spec reviewer's “cannot verify,” is never resolved on trust or re-read by the hub. It states one decidable claim and dispatches <span class="mono">claim-checker</span>, which answers with a verdict word <em>plus verbatim quoted lines</em>. Evidence is mandatory, and quotation terminates the chain.</p>
       </div>
       <div class="usecard" style="border-top:4px solid var(--assure)">
         <h4>State survives context loss</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0">Completions are typed entries (<span class="mono">ledger.py completed</span>), open items resolve by content-derived ids copied verbatim, and shared shapes auto-carry into every later brief with no manual step. After compaction, the orchestrator rebuilds from the store — data, not recollection.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:0">Completions are typed entries (<span class="mono">ledger.py completed</span>), open items resolve by content-derived ids copied verbatim, and shared shapes auto-carry into every later brief with no manual step. Cross-task knowledge is filed as typed notes (task-note, run-note, disclosure, question, follow-up, disposition, checkpoint) that briefs embed, and a task can't complete while it owes one. After compaction, <span class="mono">ledger.py run-state</span> shows the stage map, task states, owed notes and the agent to continue: data, not recollection.</p>
       </div>
     </div>
 
     <div class="ledger" style="margin-top:30px">
-      <p class="lbl">The fix loop — tuned on a measured 25-round wave</p>
+      <p class="lbl">The fix loop — reviewers tag, a script routes</p>
       <h4>Failed reviews recurse with discipline, not ping-pong.</h4>
-      <p>Spec and quality verdicts <b>accumulate</b> before any fix is dispatched, then the whole batch is <b>triaged once</b>: trivial findings go straight to the coder; non-trivial ones first get a per-task <b>decision doc</b> (<span class="mono">remediating-issues</span>, per-task variant) unless the task's <span class="mono">Cases:</span> line already settles them. One batched fix follows, sent to the original coder via <span class="mono">SendMessage</span> when it's reachable, against a <b>fix baseline</b> (<span class="mono">ledger.py snapshot</span> / <span class="mono">diff-since</span>) so re-reviewers see the fix's hunks alone. From cycle 2 it must carry a <b>diagnosis</b> (root cause, end-state, why the findings resolve as a cluster) plus a <span class="mono">hunk_map</span> and <span class="mono">consumers_checked</span>, all enforced by <span class="mono">ledger.py check</span>. Reviewers flag <b>recurrence</b> (same finding class, same site, across cycles; <em>not</em> merely new findings, which are often healthy discovery) and <span class="mono">introduced_by_fix</span>; recurrence forces a decision doc that picks a different mechanism. A non-trivial finding still open after two non-trivial fixes escalates to you, briefed with the decision docs; trivial-only leftovers never escalate.</p>
+      <p>Spec and quality verdicts <b>accumulate</b> before anything is routed. Reviewers tag every finding with a <b>severity</b> (1 to 5), a <b>reach</b> (<span class="mono">local</span>, <span class="mono">class</span> or <span class="mono">contract</span>), the <b>rule</b> it breaks and its <b>sites</b>, and <span class="mono">ledger.py triage</span> computes the step from the tags alone: S1-S2 findings are <b>notes</b>, fixed or skipped by the coder and never re-reviewed (at contract reach they are deferred to the close); S3+ local or class findings get a <b>patch round</b>; S3+ contract findings and any coder <span class="mono">root cause:</span> concern get a <b>holistic round</b>, where an opus <span class="mono">remediating-issues</span> research agent writes one task-wide decision doc (a typed record <span class="mono">ledger.py check</span> verifies, with a site, a named test and an expected result for every case) and the sonnet coder implements it case by case. The orchestrator makes no trivial or non-trivial call and keeps no counter. A task gets <b>at most two rounds</b>, then it parks for <b>one batched question per stage</b>, every item carrying a recommendation, so “accept all” settles it. Each fix <b>sweeps</b> its finding's rule (every site as a row mapped to a hunk, with the search recorded), writes a <b>failing test first</b> for S3+ findings, declares behavior the plan left open as an <span class="mono">open</span> choice that cites a precedent, justifies any edit to a pre-existing test, and <b>contests</b> a finding it believes is wrong: the raising reviewer answers <span class="mono">concede</span> or <span class="mono">hold</span>. Re-checks go only to the reviewers triage names, over the fix diff and its consumers (every reviewer after a holistic round, nobody after a polish). Fixes go to the original coder via <span class="mono">SendMessage</span> when it's reachable, from the fix baseline <span class="mono">triage</span> snapshots and prints. The commit path is one command: <span class="mono">ledger.py commit</span> stops at anything <span class="mono">ready</span> lists, stages exactly the task's files, gates them (labels, lint and the task's <span class="mono">Verify:</span> command, each must exit 0), commits them with the orchestrator's message, and appends the completion entry. Minor findings a coder skips are grouped by rule in the completion report, where you pick fix, file or ignore for each.</p>
     </div>
   </div>
 </section>
@@ -713,7 +713,7 @@
         <ul class="shifts">
           <li><span class="idx">01</span><span><b>Lean artifacts.</b> <span class="d">Contracts stay, choreography goes — no 10k-word plans full of code the agent rewrites.</span></span></li>
           <li><span class="idx">02</span><span><b>A real agent layer, dispatched by scope.</b> <span class="d">Named coders and reviewers auto-fire by file type — not generic subagents.</span></span></li>
-          <li><span class="idx">03</span><span><b>A uniform, multi-stage review gate.</b> <span class="d">Spec + quality → commit-lite per task, plus a spec-blind intent re-check.</span></span></li>
+          <li><span class="idx">03</span><span><b>A uniform, multi-stage review gate.</b> <span class="d">Spec + quality → scripted triage → commit gate per task, plus a spec-blind intent re-check.</span></span></li>
           <li><span class="idx">04</span><span><b>Parallelism is a feature.</b> <span class="d">Footprint-mapped staging, not the red flag superpowers calls it.</span></span></li>
           <li><span class="idx">05</span><span><b>Native tools, hard gate.</b> <span class="d">No silent fallback when worktree tooling is missing — stop and warn.</span></span></li>
           <li><span class="idx">06</span><span><b>Coherence enforcement.</b> <span class="d">One application engine (<span class="mono">coherent-change</span>) every determined change routes through. The largest divergence.</span></span></li>
@@ -727,7 +727,7 @@
         <thead><tr><th>Skill you know</th><th>in superpowers</th><th>in chris-code</th></tr></thead>
         <tbody>
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
-          <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → commit-lite), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
+          <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → scripted triage → commit gate), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
           <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Tests → Lints first, then Design review, Requirements, spec-blind intent re-check, and mutation re-check together as one close round, triaged once (two rounds max).</td></tr>
           <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
         </tbody>
@@ -777,9 +777,9 @@
         <ol class="steps-list">
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
-          <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality → commit-lite review.</li>
-          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once.</li>
-          <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard — with worktree cleanup handled.</li>
+          <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality review, a scripted triage and a commit gate.</li>
+          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once. Open questions and owed disclosures settle first, and the completion report comes from the run's store.</li>
+          <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard. The run's open follow-ups are reported before the store and worktree are cleaned up.</li>
         </ol>
       </div>
     </div>

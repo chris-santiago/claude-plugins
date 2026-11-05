@@ -141,7 +141,7 @@ Nothing passes through the orchestrator as prose. Artifacts move as **files** in
 
 ![w:860](assets/two_chains.svg)
 
-Records are checked at write time (`ledger.py check`). Failed reviews get **one triage**, a **diagnosis before each fix**, and a **new mechanism** when a finding recurs.
+Records are checked at write time (`ledger.py check`); `triage` routes **tagged findings** into **at most two fix rounds**.
 
 ---
 

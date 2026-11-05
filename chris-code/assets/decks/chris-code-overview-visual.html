@@ -505,7 +505,7 @@ section.lead h1 { font-size: 56px; }
 ;color:#1d1d1f;background-color:#fbfbfd;background-image:none;" data-marpit-pagination-total="13">
 <header>chris-code</header>
 <h2 id="why-it-exists-four-failures">Why it exists: four failures</h2>
-<div class="cards">
+<div class="cards" style="flex-wrap:wrap; gap:16px">
 <div class="card"><div class="cardnum">1</div><div class="cardttl">Spec &amp; plan bloat</div><div class="cardtxt">Specs grew past 2,500 words; plans piled on another 5,000–10,000 words of code.</div></div>
 <div class="card"><div class="cardnum">2</div><div class="cardttl">Shadow code</div><div class="cardtxt">Plans mandated complete code per step. Agents discarded it and rewrote against the real repo.</div></div>
 <div class="card"><div class="cardnum">3</div><div class="cardttl">Inconsistent review</div><div class="cardtxt">Review folded into a single self-check pass, applied unevenly across tasks.</div></div>
@@ -851,17 +851,17 @@ section.lead h1 { font-size: 56px; }
 <div class="chev">↓</div>
 <div class="node exec">using-git-worktrees → subagent-driven-development</div>
 <div class="chev">↓</div>
-<div class="node task">per task: coder → spec + quality → commit gate</div>
+<div class="node task">per task: coder → spec + quality → triage → commit gate</div>
 <div class="chev">↓</div>
 <div class="node done">verification-before-completion</div>
 <div class="chev">↓</div>
 <div class="node done">finishing-a-development-branch</div>
 </div>
 <div class="legend">
-<span><span class="dot"></span>Design</span>
-<span><span class="dot"></span>Execution</span>
-<span><span class="dot"></span>Per task</span>
-<span><span class="dot"></span>Completion</span>
+<span><span class="dot" style="background:#9fa8da"></span>Design</span>
+<span><span class="dot" style="background:#7fd6a6"></span>Execution</span>
+<span><span class="dot" style="background:#ffd966"></span>Per task</span>
+<span><span class="dot" style="background:#aab4c4"></span>Completion</span>
 </div>
 <footer>5-minute overview</footer>
 </section>
@@ -1030,7 +1030,7 @@ section.lead h1 { font-size: 56px; }
 <div class="lanes">
 <div class="lane"><div class="lanehdr green">coder — exclusive</div><div class="node green">pytorch-coder ✓</div><div class="node muted">python-coder</div><div class="lanenote">most-specific wins</div></div>
 <div class="lane"><div class="lanehdr yellow">quality-reviewer — additive</div><div class="node yellow">python-quality-reviewer</div><div class="node yellow">pytorch-quality-reviewer</div><div class="lanenote">all matching fire</div></div>
-<div class="lane"><div class="lanehdr red">review-lite — commit gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, per commit</div></div>
+<div class="lane"><div class="lanehdr red">review-lite — whole-change gate</div><div class="node red">python-review-lite</div><div class="lanenote">idiom + lint, whole diff</div></div>
 <div class="lane"><div class="lanehdr indigo">design-reviewer — verification gate</div><div class="node design">python-design-reviewer</div><div class="lanenote">senior cohesion, read-only</div></div>
 </div>
 </div>
@@ -1198,13 +1198,13 @@ section.lead h1 { font-size: 56px; }
 <div class="gates">
 <div class="gate"><span class="gnum">1</span>Spec + quality<br />together</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">2</span>Triage once<br />→ one fix</div>
+<div class="gate"><span class="gnum">2</span>Scripted<br />triage</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">3</span>Commit<br />lint gate</div>
+<div class="gate"><span class="gnum">3</span>Commit gate<br />lint + verify</div>
 <div class="garrow">→</div>
-<div class="gate"><span class="gnum">4</span>Full-diff<br />pass</div>
+<div class="gate"><span class="gnum">4</span>Full-diff<br />review-lite</div>
 </div>
-<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Non-trivial findings get a decision doc before the batched fix, then everyone re-reviews; one still open after two fixes escalates to you. <b>Do Not Trust the Report</b> — reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
+<p class="cap">The <b>same</b> gates on every task. No task is "small enough to skip." Reviewers tag each finding by severity and reach, and <code>triage</code> routes it: a note, a patch round, or a holistic round with one decision doc. Only the reviewers it names re-check; work still open after two rounds waits for you. <b>Do Not Trust the Report</b>: reviewers re-read the code. More stages raise <i>recall</i>, not proof.</p>
 <footer>5-minute overview</footer>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="8" data-class="lead" data-paginate="true" data-background-color="#fbfbfd" data-color="#1d1d1f" data-header="chris-code" data-footer="5-minute overview" data-theme="gaia" data-style="section { font-size: 26px; }
@@ -1878,7 +1878,7 @@ section.lead h1 { font-size: 56px; }
 ;color:#1d1d1f;background-color:#fbfbfd;background-image:none;" data-marpit-pagination-total="13">
 <header>chris-code</header>
 <h2 id="one-engine-for-every-determined-change">One engine for every determined change</h2>
-<p class="cap">A bug, a refactor, an API alignment, a finding from a review — the behavior is settled, only the <b>implementation</b> is open. chris-code routes them all through a single <b>application engine</b>.</p>
+<p class="cap" style="margin-top:4px">A bug, a refactor, an API alignment, a finding from a review — the behavior is settled, only the <b>implementation</b> is open. chris-code routes them all through a single <b>application engine</b>.</p>
 <div class="flow">
 <div class="node design">fix &amp; design front-ends &nbsp;·&nbsp; remediating-issues · systematic-debugging · lean-spec</div>
 <div class="chev">+</div>
@@ -2050,8 +2050,8 @@ section.lead h1 { font-size: 56px; }
 ;color:#1d1d1f;background-color:#fbfbfd;background-image:none;" data-marpit-pagination-total="13">
 <header>chris-code</header>
 <h2 id="size-the-change--or-batch-the-set">Size the change — or batch the set</h2>
-<p class="cap">After the defended choice, the engine <b>sizes the work</b> and routes it — so no determined change is built bigger than it should be, or smaller.</p>
-<div class="cards">
+<p class="cap" style="margin-top:4px">After the defended choice, the engine <b>sizes the work</b> and routes it — so no determined change is built bigger than it should be, or smaller.</p>
+<div class="cards" style="flex-wrap:wrap; gap:16px">
 <div class="card"><div class="cardttl">Single coherent edit</div><div class="cardtxt">Build <b>inline</b> — coder agent → <code>*-review-lite</code> self-gate → hand back. The caller runs the close.</div></div>
 <div class="card"><div class="cardttl">Major / multi-task</div><div class="cardtxt">Settled design, not a one-shot build — route it to planned execution: <code>lean-spec</code> → <code>lean-plan</code> → <code>subagent-driven-development</code>.</div></div>
 <div class="card"><div class="cardttl">A set of findings — <b>batch</b></div><div class="cardtxt">One consolidated research pass, a defended choice per change, the whole set into <b>one</b> spec → plan → SDD.</div></div>

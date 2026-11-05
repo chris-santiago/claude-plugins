@@ -27,8 +27,8 @@
 <text x="450.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">principles + bugs</text>
 <rect x="724.0" y="232.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
 <text x="746.0" y="272.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">2</text>
-<text x="794.0" y="266.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Commit-lite gates</text>
-<text x="794.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">idiom + lint</text>
+<text x="794.0" y="266.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Review-lite gates</text>
+<text x="794.0" y="290.0" font-size="13.5" fill="#6b7280" text-anchor="start" font-weight="normal">idiom + lint, whole change</text>
 <rect x="36.0" y="348.0" width="320.0" height="96.0" rx="8" fill="#fde8cc" stroke="#d97706" stroke-width="1.8"/>
 <text x="58.0" y="388.0" font-size="30" fill="#d97706" text-anchor="start" font-weight="bold">2</text>
 <text x="106.0" y="382.0" font-size="17" fill="#1a1a2e" text-anchor="start" font-weight="bold">Design reviewers</text>
