@@ -137,7 +137,7 @@ class TestStoreLock(StoreTestCase):
         self.assertEqual(sorted(p.name for p in plain.iterdir()), ["keep.txt"])
 
     def test_concurrent_checks_leave_whole_history_lines(self):
-        record = {"schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
+        record = {"schema": 2, "agent": "python-coder", "role": "coder", "task": 1,
                   "status": "done", "cycle": 1, "model": "sonnet", "new_shared_symbols": [],
                   "duplication_pending": [], "concerns": ["x" * 3000]}
         path = self.store / "task-1-python-coder.json"
@@ -546,7 +546,7 @@ class TestHandles(StoreTestCase):
 # --- run-state, report and the guarded clear (2026-10-30) ---
 
 def _write_coder(store: Path, task: int, concerns: list[str]) -> None:
-    record = {"schema": 1, "agent": "python-coder", "role": "coder", "task": task,
+    record = {"schema": 2, "agent": "python-coder", "role": "coder", "task": task,
               "status": "done_with_concerns", "cycle": 1, "model": "sonnet",
               "new_shared_symbols": [], "duplication_pending": [], "concerns": concerns}
     (store / f"task-{task}-python-coder.json").write_text(json.dumps(record), encoding="utf-8")

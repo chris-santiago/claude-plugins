@@ -2,7 +2,7 @@
 """
 Enum-drift guard: parses the JSON record example embedded in every
 dispatch contract that carries one (agents/*.md plus implementer-prompt.md,
-discovered by glob and filtered to files containing a '"schema": 1'
+discovered by glob and filtered to files containing a '"schema": N'
 record block — not a hardcoded list, so a future record-writing agent is
 picked up automatically) and asserts their `role`/`status` alternatives
 against ledger.py's own VALID_ROLES/STATUS_ENUMS — so a contract file's
@@ -31,7 +31,7 @@ IMPLEMENTER_PROMPT = (CHRIS_CODE_DIR / "skills" / "subagent-driven-development"
 # The per-task decision record is written by a skill, not an agent.
 REMEDIATING_ISSUES = CHRIS_CODE_DIR / "skills" / "remediating-issues" / "SKILL.md"
 
-_SCHEMA_START_RE = re.compile(r'\{\s*"schema":\s*1,')
+_SCHEMA_START_RE = re.compile(r'\{\s*"schema":\s*(?P<version>\d+),')
 _TASK_PLACEHOLDER_RE = re.compile(r'"task":\s*N,')
 
 # The 9 registered agents that emit typed records (spec Sec 5) plus the
@@ -66,7 +66,7 @@ CONTRACT_FILES = _discover_contract_files()
 
 
 def _extract_record_block(text: str) -> str:
-    """The first JSON-object-shaped block whose first key is "schema": 1
+    """The first JSON-object-shaped block whose first key is "schema": 2
     — brace-matched from that point, quote-aware so a literal "{"/"}"
     inside a string value never miscounts. Every contract file embeds its
     typed-record example this way, whether inside a ```json fence (the 9
@@ -75,7 +75,7 @@ def _extract_record_block(text: str) -> str:
     a special case per file."""
     match = _SCHEMA_START_RE.search(text)
     if match is None:
-        raise AssertionError('no \'{"schema": 1,\' record block found')
+        raise AssertionError('no \'{"schema": 2,\' record block found')
     start = match.start()
     depth = 0
     in_string = False
@@ -132,6 +132,13 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                     alternatives, allowed,
                     f"{path.name}: status alternatives {sorted(alternatives)} != "
                     f"ledger.STATUS_ENUMS[{role!r}] = {sorted(allowed)}")
+
+    def test_every_contract_example_carries_the_current_schema_version(self):
+        # An agent copies its contract's example; an old version there
+        # writes a record `check` refuses.
+        for path in CONTRACT_FILES:
+            with self.subTest(contract=path.name):
+                self.assertEqual(_load_record_example(path)["schema"], ledger.SCHEMA_VERSION)
 
     def test_every_required_decision_field_appears_in_its_contract_blocks(self):
         # A field ledger.py requires-present for a role must appear in every

@@ -584,7 +584,7 @@ class TestBuildBrief(unittest.TestCase):
 def _write_shape_record(store: Path) -> None:
     store.mkdir(parents=True, exist_ok=True)
     (store / "task-1-python-coder.json").write_text(json.dumps({
-        "schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
+        "schema": 2, "agent": "python-coder", "role": "coder", "task": 1,
         "status": "done", "changed_files": [], "tests": {},
         "new_shared_symbols": [{"symbol": "foo", "path": "a.py", "why": "shared"}],
         "duplication_pending": [], "concerns": [], "report": "", "cycle": 1,

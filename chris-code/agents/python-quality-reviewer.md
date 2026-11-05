@@ -103,7 +103,7 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "agent": "python-quality-reviewer",
   "role": "quality-reviewer",
   "task": 5,

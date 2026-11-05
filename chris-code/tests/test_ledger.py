@@ -31,7 +31,7 @@ LEDGER_PY = SCRIPTS_DIR / "ledger.py"
 
 def _coder(**overrides) -> dict:
     data = {
-        "schema": 1, "agent": "python-coder", "role": "coder", "task": 1,
+        "schema": 2, "agent": "python-coder", "role": "coder", "task": 1,
         "status": "done", "changed_files": [], "tests": {},
         "new_shared_symbols": [], "duplication_pending": [],
         "concerns": [], "report": "", "cycle": 1, "model": "sonnet",
@@ -40,9 +40,27 @@ def _coder(**overrides) -> dict:
     return data
 
 
+def _finding(**overrides) -> dict:
+    """A tagged reviewer finding: S3 local at a.py:1 unless overridden."""
+    data = {"severity": 3, "reach": "local", "rule": "size must be positive",
+            "sites": ["a.py:1"], "claim": "size=0 is accepted"}
+    data.update(overrides)
+    return data
+
+
+def _quality_reviewer(**overrides) -> dict:
+    data = {
+        "schema": 2, "agent": "python-quality-reviewer", "role": "quality-reviewer",
+        "task": 1, "status": "approved", "findings": [], "lossiness": [],
+        "recurring": [], "introduced_by_fix": [],
+    }
+    data.update(overrides)
+    return data
+
+
 def _spec_reviewer(**overrides) -> dict:
     data = {
-        "schema": 1, "agent": "spec-reviewer", "role": "spec-reviewer",
+        "schema": 2, "agent": "spec-reviewer", "role": "spec-reviewer",
         "task": 1, "status": "compliant", "issues": [], "cannot_verify": [],
         "recurring": [], "introduced_by_fix": [],
     }
@@ -52,7 +70,7 @@ def _spec_reviewer(**overrides) -> dict:
 
 def _review_lite(**overrides) -> dict:
     data = {
-        "schema": 1, "agent": "python-review-lite", "role": "review-lite",
+        "schema": 2, "agent": "python-review-lite", "role": "review-lite",
         "task": 1, "status": "clean", "cycle": 1, "findings": [],
         "linter": {"ran": True, "name": "ruff", "passed": True},
         "verdict_path": "",
@@ -266,7 +284,7 @@ class TestFixLoopFields(LedgerTestCase):
         ledger.validate_record(record)  # no raise
 
     def test_quality_reviewer_introduced_by_fix_is_validated_when_present(self):
-        quality = {"schema": 1, "agent": "python-quality-reviewer",
+        quality = {"schema": 2, "agent": "python-quality-reviewer",
                    "role": "quality-reviewer", "task": 1, "status": "approved",
                    "findings": [], "lossiness": [], "recurring": [],
                    "introduced_by_fix": ["a.py:1"]}
@@ -296,7 +314,7 @@ class TestFixLoopFields(LedgerTestCase):
         # Like recurring, it's a failed-fix signal riding on findings,
         # not separate work.
         record = _spec_reviewer(
-            status="issues",
+            status="issues", issues=[_finding(sites=["a.py:12"])],
             introduced_by_fix=[{"site": "a.py:12", "why": "fix dropped the None guard"}])
         _write(self.store, "task-1-spec-reviewer.json", record)
         items = ledger.compute_open_items(ledger.load_records(self.store), set())
@@ -326,7 +344,7 @@ class TestFixLoopFields(LedgerTestCase):
         ledger.validate_record(_spec_reviewer(cycle=2))  # no raise
 
     def test_recurring_required_on_spec_and_quality_reviewers(self):
-        quality = {"schema": 1, "agent": "python-quality-reviewer",
+        quality = {"schema": 2, "agent": "python-quality-reviewer",
                    "role": "quality-reviewer", "task": 1, "status": "approved",
                    "findings": [], "lossiness": [], "recurring": [], "introduced_by_fix": []}
         for record in (_spec_reviewer(), quality):
@@ -344,11 +362,84 @@ class TestFixLoopFields(LedgerTestCase):
         # recurring is a signal riding on findings, not separate work:
         # it must stay out of `open` (same rule as new_shared_symbols).
         record = _spec_reviewer(
-            status="issues",
+            status="issues", issues=[_finding(sites=["a.py:10"])],
             recurring=[{"site": "a.py:10", "why": "same class as cycle 1"}])
         _write(self.store, "task-1-spec-reviewer.json", record)
         items = ledger.compute_open_items(ledger.load_records(self.store), set())
         self.assertEqual([i.kind for i in items], ["status"])
+
+
+class TestFindingTags(LedgerTestCase):
+    """Schema 2: every reviewer finding is tagged, and the record's status
+    and flags agree with its findings."""
+
+    def assertRejects(self, data: dict, *fragments: str) -> None:
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(data)
+        for fragment in fragments:
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_a_schema_1_record_is_refused_with_the_migration_message(self):
+        self.assertRejects(_coder(schema=1), "earlier chris-code release", "ledger.py clear")
+
+    def test_tagged_findings_pass_for_every_reviewer_role(self):
+        ledger.validate_record(_spec_reviewer(status="issues", issues=[_finding()]))
+        ledger.validate_record(_quality_reviewer(status="issues", findings=[_finding()]))
+        ledger.validate_record(_review_lite(status="block", findings=[_finding(reach="class")]))
+
+    def test_a_finding_written_without_reach_is_refused_naming_it(self):
+        finding = _finding()
+        del finding["reach"]
+        self.assertRejects(_quality_reviewer(status="issues", findings=[finding]),
+                           "findings[0].reach")
+
+    def test_a_severity_outside_one_to_five_is_refused(self):
+        for severity in (0, 6):
+            with self.subTest(severity=severity):
+                self.assertRejects(_quality_reviewer(findings=[_finding(severity=severity)]),
+                                   "findings[0].severity")
+
+    def test_a_malformed_site_is_refused_naming_it(self):
+        for site in ("a.py:9-5", "a.py:"):
+            with self.subTest(site=site):
+                self.assertRejects(_review_lite(findings=[_finding(sites=[site])]), site)
+        self.assertRejects(_review_lite(findings=[_finding(sites=[])]), "findings[0].sites")
+
+    def test_a_line_range_and_a_bare_path_are_sites(self):
+        ledger.validate_record(_review_lite(findings=[_finding(sites=["a.py:88-91", "b.py"])]))
+
+    def test_a_named_case_below_severity_3_is_refused(self):
+        self.assertRejects(_spec_reviewer(issues=[_finding(severity=2, case="size=0 -> ValueError")]),
+                           "size=0 -> ValueError")
+        ledger.validate_record(_spec_reviewer(
+            status="issues", issues=[_finding(case="size=0 -> ValueError")]))
+
+    def test_status_must_agree_with_whether_any_finding_is_serious(self):
+        ledger.validate_record(_spec_reviewer(status="compliant",
+                                              issues=[_finding(severity=2)]))
+        self.assertRejects(_spec_reviewer(status="issues", issues=[_finding(severity=2)]),
+                           "status")
+        self.assertRejects(_quality_reviewer(status="approved", findings=[_finding()]), "status")
+
+    def test_a_flag_must_point_at_a_site_some_finding_names(self):
+        ledger.validate_record(_spec_reviewer(
+            status="issues", issues=[_finding(sites=["a.py:40"])],
+            recurring=[{"site": "a.py:40", "why": "same rule as c1"}]))
+        self.assertRejects(_spec_reviewer(
+            status="issues", issues=[_finding(sites=["a.py:40"])],
+            introduced_by_fix=[{"site": "b.py:3", "why": "w"}]), "b.py:3")
+
+    def test_contest_answers_need_a_verdict_and_a_reason(self):
+        ledger.validate_record(_quality_reviewer(contests=[
+            {"finding": "x#findings[1]", "verdict": "concede", "reason": "the guard exists at :10"}]))
+        self.assertRejects(_quality_reviewer(contests=[
+            {"finding": "x#findings[1]", "verdict": "maybe", "reason": "r"}]), "contests[0].verdict")
+        self.assertRejects(_quality_reviewer(contests=[
+            {"finding": "x#findings[1]", "verdict": "hold", "reason": ""}]), "contests[0].reason")
+
+    def test_a_reopening_finding_names_what_it_reopens(self):
+        ledger.validate_record(_quality_reviewer(
+            status="issues", findings=[_finding(reopens="x#findings[1]")]))
 
 
 class TestLoadRecords(LedgerTestCase):
@@ -363,7 +454,7 @@ class TestLoadRecords(LedgerTestCase):
 
     def test_missing_field_or_unparseable_appears_malformed_query_never_crashes(self):
         # Acceptance criterion 5.
-        _write(self.store, "task-1-bad.json", {"schema": 1})
+        _write(self.store, "task-1-bad.json", {"schema": 2})
         (self.store / "task-2-bad.json").write_text("{not json", encoding="utf-8")
         records = ledger.load_records(self.store)  # must not raise
         self.assertEqual(len(records), 2)
@@ -413,7 +504,7 @@ class TestComputeOpenItems(LedgerTestCase):
         entry_1 = {"requirement": "r1", "why": "w1", "should_check": "sc1"}
         entry_2 = {"requirement": "r2", "why": "w2", "should_check": "sc2"}
         _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues", cannot_verify=[entry_1, entry_2]))
+            status="issues", issues=[_finding()], cannot_verify=[entry_1, entry_2]))
         id_1 = _cv_id("task-1-spec-reviewer", entry_1)
         id_2 = _cv_id("task-1-spec-reviewer", entry_2)
         records = ledger.load_records(self.store)
@@ -430,7 +521,7 @@ class TestComputeOpenItems(LedgerTestCase):
         # requirement/why — an orchestrator reading `open` needs to see
         # what to check, not just what's unverified and why.
         _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues",
+            status="issues", issues=[_finding()],
             cannot_verify=[{"requirement": "r1", "why": "w1", "should_check": "run the tests"}]))
         [item] = [i for i in ledger.compute_open_items(ledger.load_records(self.store),
                                                          resolved_ids=set())
@@ -444,7 +535,7 @@ class TestComputeOpenItems(LedgerTestCase):
         # cannot_verify is, for that role), so a stray duplication_pending
         # key must not drive an open item either — reading an unvalidated
         # field would let unchecked data reach a decision surface.
-        data = _spec_reviewer(status="issues", cannot_verify=[])
+        data = _spec_reviewer(status="issues", issues=[_finding()], cannot_verify=[])
         data["duplication_pending"] = [
             {"sites": ["a.py:1"], "wants_owner": "b.py", "why": "x"}]
         _write(self.store, "task-1-spec-reviewer.json", data)
@@ -517,13 +608,10 @@ class TestComputeOpenItems(LedgerTestCase):
         # Acceptance criterion 7: two same-role agents on one task produce
         # two distinct record files with no collision.
         _write(self.store, "task-1-python-quality-reviewer.json",
-               {"schema": 1, "agent": "python-quality-reviewer", "role": "quality-reviewer",
-                "task": 1, "status": "issues", "findings": [], "lossiness": [],
-                "recurring": [], "introduced_by_fix": []})
+               _quality_reviewer(status="issues", findings=[_finding()]))
         _write(self.store, "task-1-pytorch-quality-reviewer.json",
-               {"schema": 1, "agent": "pytorch-quality-reviewer", "role": "quality-reviewer",
-                "task": 1, "status": "issues", "findings": [], "lossiness": [],
-                "recurring": [], "introduced_by_fix": []})
+               _quality_reviewer(agent="pytorch-quality-reviewer", status="issues",
+                                 findings=[_finding()]))
         records = ledger.load_records(self.store)
         self.assertEqual(len(records), 2)
         self.assertTrue(all(r.ok for r in records))
@@ -1509,9 +1597,9 @@ class TestFixBaseline(GitRepoTestCase):
 
 # --- decision records (2026-10-09) ---
 
-_SPEC_ISSUE = {"kind": "missing", "file": "a.py", "line": 1, "claim": "bad value carried"}
-_QUALITY_FINDING = {"severity": 2, "file": "a.py", "line": 1, "claim": "too broad"}
-_NOTE = {"severity": 1, "file": "a.py", "line": 1, "claim": "a note"}
+_SPEC_ISSUE = _finding(kind="missing", claim="bad value carried", rule="value is validated")
+_QUALITY_FINDING = _finding(severity=2, claim="too broad", rule="catch narrowly")
+_NOTE = _finding(severity=1, claim="a note", rule="name says what it holds")
 
 
 def _candidate(name: str, chosen: bool = False, precedent: str = "a.py:1") -> dict:
@@ -1528,7 +1616,7 @@ def _fix_choice(findings: list[str], **overrides) -> dict:
 
 
 def _decision(findings: list[str], **overrides) -> dict:
-    data = {"schema": 1, "agent": "remediating-issues", "role": "decision", "task": 1,
+    data = {"schema": 2, "agent": "remediating-issues", "role": "decision", "task": 1,
             "status": "decided", "cycle": 2, "reviewer_records": ["task-1-spec-reviewer"],
             "choices": [_fix_choice(findings)], "excluded": [], "reconciled": []}
     data.update(overrides)
@@ -2434,7 +2522,7 @@ class TestHistory(LedgerTestCase):
     def test_check_appends_a_summary_per_passing_record(self):
         path = _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
             task=2, status="issues", cycle=2,
-            issues=[{"kind": "missing", "file": "a.py", "line": 1, "claim": "x"}],
+            issues=[_finding(kind="missing")],
             introduced_by_fix=[{"site": "a.py:1", "why": "x"}]))
         ledger.cmd_check(str(path))
         self.assertEqual(self._history(), [{
@@ -2455,7 +2543,7 @@ class TestHistory(LedgerTestCase):
 
     def test_stats_keeps_the_last_check_per_record_and_cycle(self):
         name = "task-5-spec-reviewer.json"
-        issue = {"kind": "missing", "file": "a.py", "line": 1, "claim": "x"}
+        issue = _finding(kind="missing")
         for cycle, status, issues in ((1, "issues", [issue, issue]), (2, "issues", [issue]),
                                       (2, "compliant", [])):
             ledger.cmd_check(str(_write(self.store, name, _spec_reviewer(
@@ -2474,7 +2562,7 @@ class TestHistory(LedgerTestCase):
     def test_stats_lists_fix_regressions_and_recurrence(self):
         ledger.cmd_check(str(_write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
             task=2, cycle=2, status="issues",
-            issues=[{"kind": "regression", "file": "a.py", "line": 1, "claim": "x"}],
+            issues=[_finding(kind="regression")],
             recurring=[{"site": "a.py:1", "why": "x"}],
             introduced_by_fix=[{"site": "a.py:1", "why": "x"}]))))
         out = io.StringIO()
@@ -2603,7 +2691,7 @@ class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
         for field_name in ("recurring", "introduced_by_fix"):
             with self.subTest(field=field_name):
                 _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-                    status="issues", **{field_name: [{"site": "a.py:1", "why": "w"}]}))
+                    status="issues", issues=[_finding()], **{field_name: [{"site": "a.py:1", "why": "w"}]}))
                 with self.assertRaises(ledger.RecordError) as ctx:
                     self._snapshot()
                 self.assertIn("task-1-spec-reviewer", str(ctx.exception))
@@ -2611,21 +2699,21 @@ class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
 
     def test_a_routed_non_trivial_snapshot_proceeds_and_counts(self):
         _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+            status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
         ledger.cmd_append(self.store, "progress", 1, "user ruling: delete, don't reword")
         self._snapshot(non_trivial=True, settled_by="ruling")
         self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 1), 1)
 
     def test_every_reviewer_role_and_the_final_scope_are_checked(self):
         flagged = [{"site": "a.py:1", "why": "w"}]
-        quality = {"schema": 1, "agent": "python-quality-reviewer", "role": "quality-reviewer",
-                   "task": 1, "status": "issues", "findings": [], "recurring": [],
+        quality = {"schema": 2, "agent": "python-quality-reviewer", "role": "quality-reviewer",
+                   "task": 1, "status": "issues", "findings": [_finding()], "recurring": [],
                    "introduced_by_fix": flagged}
         _write(self.store, "task-1-python-quality-reviewer.json", quality)
         with self.assertRaises(ledger.RecordError):
             self._snapshot()
         _write(self.store, "final-spec-reviewer.json", _spec_reviewer(
-            task="final", status="issues", recurring=flagged))
+            task="final", status="issues", issues=[_finding()], recurring=flagged))
         with self.assertRaises(ledger.RecordError) as ctx:
             with contextlib.redirect_stdout(io.StringIO()):
                 ledger.cmd_snapshot(self.store, "final", "pre-fix c2", "tree-f")
@@ -2633,16 +2721,16 @@ class TestFlaggedReviewIsNonTrivial(LedgerTestCase):
 
     def test_the_cases_line_cannot_settle_a_flagged_fix(self):
         _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(
-            status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+            status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
         with self.assertRaises(ledger.RecordError) as ctx:
             self._snapshot(non_trivial=True, settled_by="cases")
         self.assertIn("--settled-by ruling", str(ctx.exception))
         self.assertEqual(ledger.load_progress_log(self.store), [])
 
     def test_clean_or_other_task_reviews_allow_a_trivial_snapshot(self):
-        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(status="issues"))
+        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(status="issues", issues=[_finding()]))
         _write(self.store, "task-2-spec-reviewer.json", _spec_reviewer(
-            task=2, status="issues", recurring=[{"site": "a.py:1", "why": "w"}]))
+            task=2, status="issues", issues=[_finding()], recurring=[{"site": "a.py:1", "why": "w"}]))
         self._snapshot()
         self.assertEqual(len(ledger.load_progress_log(self.store)), 1)
 

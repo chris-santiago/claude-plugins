@@ -96,7 +96,12 @@ __all__ = [
     "render_run_state", "render_report",
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# Stores are per-run and not converted: a run started on schema 1 finishes
+# on the release that wrote it.
+SCHEMA_1_MESSAGE = ("schema: got 1, expected 2. This record was written by an earlier "
+                    "chris-code release: finish that run on the release that started it, "
+                    "or clear the store (`ledger.py clear`) and start over")
 ENVELOPE_FIELDS = ("schema", "agent", "role", "task")
 
 STATUS_ENUMS = {
@@ -123,18 +128,33 @@ CYCLE_ROLES = ("coder", "decision")
 # cycle, ...) is informational and unvalidated (spec Sec 7 amendment).
 DECISION_LIST_FIELDS = {
     "coder": ("duplication_pending", "new_shared_symbols"),
-    "spec-reviewer": ("cannot_verify", "recurring"),
-    "quality-reviewer": ("recurring",),
+    "spec-reviewer": ("cannot_verify", "recurring", "issues"),
+    "quality-reviewer": ("recurring", "findings"),
+    "review-lite": ("findings",),
 }
 
 # Decision-driving list fields validated only when present (2026-10-06).
-# Contracts still tell agents to always write them; absence is tolerated
-# so a mid-run plugin upgrade doesn't turn every earlier record malformed.
 OPTIONAL_LIST_FIELDS = {
-    "spec-reviewer": ("introduced_by_fix", "issues"),
-    "quality-reviewer": ("introduced_by_fix", "findings"),
-    "review-lite": ("findings",),
+    "spec-reviewer": ("introduced_by_fix",),
+    "quality-reviewer": ("introduced_by_fix",),
 }
+
+# Finding tags (schema 2). Every reviewer finding carries a severity, a
+# reach, the rule it breaks, and the sites it was seen at; triage routes on
+# severity and reach alone. Spec findings live in `issues`, the rest in
+# `findings`.
+FINDING_LIST_FIELD = {"spec-reviewer": "issues", "quality-reviewer": "findings",
+                      "review-lite": "findings"}
+MAX_SEVERITY = 5
+SERIOUS_SEVERITY = 3
+REACHES = ("local", "class", "contract")
+# path, path:line, or path:start-end, relative to the repo toplevel.
+SITE_RE = re.compile(r"^(?P<path>[^:\s][^:]*?)(?::(?P<start>\d+)(?:-(?P<end>\d+))?)?$")
+# A reviewer's status says whether it found anything serious.
+SERIOUS_STATUS = {"spec-reviewer": "issues", "quality-reviewer": "issues"}
+FLAG_FIELDS = ("recurring", "introduced_by_fix")
+# A re-checking reviewer answers each contest it was sent.
+CONTEST_VERDICTS = ("concede", "hold")
 
 # Fix-loop fields (2026-08-28): a coder re-dispatched to fix findings
 # self-derives `cycle` (prior record's cycle + 1, else 1); from cycle 2 a
@@ -328,7 +348,9 @@ def validate_record(data: object) -> None:
     missing = [f for f in ENVELOPE_FIELDS if f not in data]
     if missing:
         raise RecordError(f"missing required field(s): {', '.join(missing)}")
-    if data["schema"] != SCHEMA_VERSION:
+    if data["schema"] == 1 and _positive_int_value(data["schema"]):
+        raise RecordError(SCHEMA_1_MESSAGE)
+    if data["schema"] != SCHEMA_VERSION or isinstance(data["schema"], bool):
         raise RecordError(f"schema: got {data['schema']!r}, expected {SCHEMA_VERSION}")
     # Records are matched to tasks by value: a "1" would hide from task 1.
     if data["task"] != "final" and not _positive_int_value(data["task"]):
@@ -390,6 +412,67 @@ def validate_record(data: object) -> None:
             _validate_fix(data)
     elif role == "decision":
         _validate_decision(data)
+    if role in FINDING_LIST_FIELD:
+        _validate_finding_tags(data, role)
+
+
+def _validate_site(site: object, where: str) -> None:
+    match = SITE_RE.match(site) if isinstance(site, str) else None
+    if match is None or (match["start"] is not None and (
+            int(match["start"]) < 1
+            or (match["end"] is not None and int(match["end"]) < int(match["start"])))):
+        raise RecordError(f"{where}: got {site!r}, expected path, path:line, or "
+                          "path:start-end (lines from 1, start <= end)")
+
+
+def _validate_finding_tags(data: dict, role: str) -> None:
+    """Each finding's severity, reach, rule and sites; the status agrees with
+    whether any finding is serious; every recurring/introduced_by_fix flag
+    points at a site some finding names; contest answers are well-formed."""
+    field_name = FINDING_LIST_FIELD[role]
+    sites_seen: set[str] = set()
+    serious = False
+    for idx, entry in enumerate(data[field_name]):
+        where = f"{field_name}[{idx}]"
+        severity = entry.get("severity")
+        if not _positive_int_value(severity) or severity > MAX_SEVERITY:
+            raise RecordError(f"{where}.severity: got {severity!r}, expected an integer 1-5")
+        if entry.get("reach") not in REACHES:
+            raise RecordError(f"{where}.reach: got {entry.get('reach')!r}, "
+                              f"allowed set: {list(REACHES)}")
+        _require_strs(entry, ("rule",), where)
+        sites = entry.get("sites")
+        if not isinstance(sites, list) or not sites:
+            raise RecordError(f"{where}.sites: got {sites!r}, expected a non-empty list of sites")
+        for site_idx, site in enumerate(sites):
+            _validate_site(site, f"{where}.sites[{site_idx}]")
+        sites_seen.update(sites)
+        if role == "spec-reviewer" and "case" in entry:
+            _require_strs(entry, ("case",), where)
+            if severity < SERIOUS_SEVERITY:
+                raise RecordError(f"{where}: names the listed case {entry['case']!r} at "
+                                  f"severity {severity}; a missed listed case is "
+                                  f"severity {SERIOUS_SEVERITY} or higher")
+        if "reopens" in entry:
+            _require_strs(entry, ("reopens",), where)
+        serious = serious or severity >= SERIOUS_SEVERITY
+    if role in SERIOUS_STATUS and (data["status"] == SERIOUS_STATUS[role]) != serious:
+        expected = SERIOUS_STATUS[role] if serious else "the passing status"
+        raise RecordError(f"status: got {data['status']!r} with "
+                          f"{'a' if serious else 'no'} finding of severity "
+                          f"{SERIOUS_SEVERITY}+; expected {expected}")
+    for flag in FLAG_FIELDS:
+        for idx, entry in enumerate(data.get(flag, [])):
+            if entry.get("site") not in sites_seen:
+                raise RecordError(f"{flag}[{idx}].site: got {entry.get('site')!r}, which no "
+                                  f"{field_name} entry lists in its sites")
+    # Present only on a re-check that was sent contests.
+    for idx, entry in enumerate(_require_objects(data, "contests") if "contests" in data else []):
+        where = f"contests[{idx}]"
+        _require_strs(entry, ("finding", "reason"), where)
+        if entry.get("verdict") not in CONTEST_VERDICTS:
+            raise RecordError(f"{where}.verdict: got {entry.get('verdict')!r}, "
+                              f"allowed set: {list(CONTEST_VERDICTS)}")
 
 
 def _non_empty_str(value: object) -> bool:

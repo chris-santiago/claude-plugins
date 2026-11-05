@@ -104,7 +104,7 @@ Write the decision doc as one typed record to the output path the dispatch suppl
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "agent": "remediating-issues",
   "role": "decision",
   "task": 3,

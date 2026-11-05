@@ -128,7 +128,7 @@ Agent tool:
     skip the record: stop and return NEEDS_CONTEXT naming the missing input.
 
     {
-      "schema": 1,
+      "schema": 2,
       "agent": "general-purpose",
       "role": "coder",
       "task": N,
