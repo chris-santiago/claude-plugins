@@ -112,6 +112,15 @@ def _load_record_example(path: Path) -> dict:
     return json.loads(block)
 
 
+def _one_of(advertised: str, allowed: tuple[str, ...], path: Path) -> str:
+    """An example's "a | b" enum, checked against ledger's own set; returns
+    the first alternative so the example can be validated."""
+    alternatives = [s.strip() for s in advertised.split("|")]
+    if set(alternatives) != set(allowed):
+        raise AssertionError(f"{path.name}: advertises {alternatives}, ledger allows {list(allowed)}")
+    return alternatives[0]
+
+
 class TestContractEnumsMatchLedger(unittest.TestCase):
     """Every dispatch contract's role is one ledger.py validates, and
     every '|'-separated status alternative it advertises is exactly that
@@ -167,6 +176,30 @@ class TestContractEnumsMatchLedger(unittest.TestCase):
                     self.assertIn(field_name, data,
                                   f"{path.name}: fix-mode field {field_name!r} missing "
                                   "from the contract's record example")
+
+    def test_every_reviewer_contract_example_is_a_valid_tagged_record(self):
+        # A reviewer copying its example writes findings triage can route:
+        # with the status its findings imply, the example passes `check`'s
+        # shape rules, and its first finding shows every tag.
+        serious_status = {"spec-reviewer": "issues", "quality-reviewer": "issues",
+                          "review-lite": "block"}
+        reviewers = [p for p in CONTRACT_FILES
+                     if _load_record_example(p)["role"] in serious_status]
+        self.assertEqual(len(reviewers), 6)
+        for path in reviewers:
+            with self.subTest(contract=path.name):
+                data = _load_record_example(path)
+                field_name = ledger.FINDING_LIST_FIELD[data["role"]]
+                first = data[field_name][0]
+                for tag in ("severity", "reach", "rule", "sites"):
+                    self.assertIn(tag, first)
+                if data["role"] == "spec-reviewer":
+                    self.assertIn("case", first)
+                # Enum-valued fields list their alternatives, like `status`.
+                first["reach"] = _one_of(first["reach"], ledger.REACHES, path)
+                for answer in data.get("contests", []):
+                    answer["verdict"] = _one_of(answer["verdict"], ledger.CONTEST_VERDICTS, path)
+                ledger.validate_record({**data, "status": serious_status[data["role"]]})
 
     def test_the_decision_contract_example_is_a_valid_record(self):
         # Its status lists both alternatives; with one picked, the example

@@ -19,7 +19,7 @@ The dispatch gives you inputs — the staged diff, the dispatch-supplied record 
 
 ## Inputs
 
-**Diff scope — two modes.** Default is the **per-commit gate**: the staged diff (`git diff --cached`). At the **final cross-task gate** the per-task commits are already in, so `--cached` is empty; there the dispatch hands you a **review-package file path** (produced by `review-package` for `BASE..HEAD`) — a file containing the commit list, `--stat`, and the full multi-commit diff. When a package path is given, `Read` it and treat its diff as your scope; do not run `git diff --cached` (it would be empty). Everything below is otherwise identical.
+**Diff scope — two modes.** Default is the **per-commit gate**: the staged diff (`git diff --cached`), when you run as a standalone pre-commit gate. Inside subagent-driven-development and executing-plans, a scripted gate checks each task's commit and you run only at the final cross-task gate. At the **final cross-task gate** the per-task commits are already in, so `--cached` is empty; there the dispatch hands you a **review-package file path** (produced by `review-package` for `BASE..HEAD`) — a file containing the commit list, `--stat`, and the full multi-commit diff. When a package path is given, `Read` it and treat its diff as your scope; do not run `git diff --cached` (it would be empty). Everything below is otherwise identical.
 
 1. `git diff --cached --name-only` (per-commit gate) or the package's `## Files changed` stat (final gate) — list of changed files. Filter to `*.py`.
 2. `git diff --cached -- '*.py'` (per-commit gate) or the package file's diff (final gate) — the Python change itself.
@@ -112,19 +112,19 @@ Before returning, write a JSON record to the dispatch-supplied record path — a
   "task": 5,
   "status": "clean | block | escalate",
   "cycle": 1,
-  "findings": [{"severity": 1, "file": "...", "line": 0, "claim": "..."}],
+  "findings": [{"severity": 3, "reach": "local | class | contract", "rule": "a missing key raises KeyError, not a typed error", "sites": ["src/config.py:40"], "claim": "..."}],
   "linter": {"ran": true, "name": "ruff", "passed": true},
   "verdict_path": "<path to the markdown verdict file you wrote>"
 }
 ```
 
-- `schema` — contract version; always `1`.
+- `schema` — contract version; always `2`.
 - `agent` — this agent's registered name, `python-review-lite`.
 - `role` — always `review-lite`.
 - `task` — the task number the dispatch names, which your record path also carries (`task-N-<agent-name>.json`); at the final cross-task gate (no task number — see Inputs), use `"final"`. A record whose `task` disagrees with its file name hides its findings from the task's decision.
 - `status` — `clean | block | escalate`, lowercase, matching the JSON block above and matching the status word in your one-line return summary exactly.
 - `cycle` — the value you derived in Workflow step 2; never dispatch-supplied.
-- `findings` — one entry per finding from the diff-level checklist, `severity` as the integer and `claim` a one-line condensation of the verdict's "what / why it matters"; empty list when clean.
+- `findings` — one entry per finding from the diff-level checklist, `claim` a one-line condensation of the verdict's "what / why it matters"; empty list when clean. Each carries `severity` (the integer), `rule` (the rule the code breaks, as behavior), `sites` (every `path:line` in the diff where it's broken), and `reach`: `contract` when the finding is on a symbol the diff shows as public (exported, no leading underscore, `pub`), `class` when the same rule is broken at several sites, `local` otherwise. You don't read neighbor files, so the coder raises the reach of a finding whose fix turns out to reach further.
 - `linter` — whether you ran the linter, its name, and whether it passed; if none is configured, write `{"ran": false, "name": "", "passed": false}` — `ran: false` with an empty `name` together say "not available," not "ran and failed."
 - `verdict_path` — the path to the markdown verdict file you wrote in Workflow step 7; that file's shape is unchanged by this section.
 
