@@ -8,6 +8,20 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+### Changed
+- **Shorter contracts, same rules.** SDD, verification, remediating-issues, coherent-change and the three coders are about 12% shorter with every rule kept. remediating-issues now points at coherent-change for the discipline they share instead of restating it.
+- **Reviewers return one line.** The spec and quality reviewers write their verdict to a report path the dispatch supplies (`$STORE/task-N-<agent-name>-review.md`) and return only the verdict word and that path, as the design reviewers already did. Triage reads their typed records, so the verdict's prose no longer fills the orchestrator's context. Standalone, they still return the review inline.
+- **Review-lite writes only its record inside a run.** Its markdown verdict file under `.claude/output/review-lite/` is now for the standalone pre-commit gate only, and a finding's `claim` carries the suggested fix.
+- **The implementer prompt is a short dispatch.** It points a general-purpose agent at the file's *Protocol* section, the coders' own Workflow and Typed record made language-neutral, instead of pasting a separate, drifted copy into every dispatch.
+- **SDD's ⚠️ handling is one section, and its Red Flags keep only the rules a long run's pressure pushes on.** claim-checker's contract now agrees with SDD that it gets no verdict text.
+
+### Removed
+- **`lossiness`.** Reviewers no longer write a lossiness line or field. Since 0.11.0 nothing consumed it.
+- **Review-lite's `verdict_path`** record field.
+
+### Added
+- **A shared-protocol drift test.** The coders and the implementer Protocol, the quality reviewers, and the parts the spec reviewer and review-lite share are generated from one template; `test_shared_protocol.py` fails when an edit reaches some copies and not others.
+
 ## [0.12.0] - 2026-11-05 — Test rigor scales with the project
 
 Every project got the same testing depth: plans listed esoteric boundaries, reviewers rated any missing boundary case S3, and the mutation tester gated on every covered survivor. On a large Python and Rust codebase that depth earns its cost. On a small app it meant fix rounds over inputs no caller produces, and mutation runs out of proportion to the code. Real runs also showed that the costly misses were tests that couldn't fail, not missing edge cases. This release resolves a rigor level per project and scales plans, tests, reviews and mutation to it, while holding the line on tests that can't fail at every level.

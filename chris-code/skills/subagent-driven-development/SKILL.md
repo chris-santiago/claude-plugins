@@ -146,7 +146,7 @@ STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)
 - **The coder dispatch carries:** (1) one line on where the task fits and the observable outcome it must produce (*Intent*, below); (2) the brief path, introduced as "read this first — your task and the sections to read"; (3) the spec path, for the referenced §§ (for a contract an earlier task built, name the file or spec §, never restate its signature); (4) the Global Constraints, verbatim; (5) the report path, named after the brief (`task-N-report.md`); (6) the record path, `$STORE/task-N-<agent-name>.json`, or `$STORE/final-<agent-name>.json` at the whole-change gate; (7) the scripts path, `$SDD_SCRIPTS` expanded to its absolute value, since a subagent doesn't inherit your shell variables and every record-writing agent runs `ledger.py check` on its own record. The coder writes its full report to the report path and returns only its status, the changed files, a one-line test summary and its concerns. Without (6) and (7) there is no typed record: an agent can't supply a path it was never given.
 - **Intent (the *why*) is required.** A coder recovers *what* and *where* from the brief, the spec and the repo, but never *why*. State in one or two lines the outcome the task must produce, quoting the intent-ledger statement where one exists. A coder given only what and where optimizes the diff and can ship the wrong thing correctly. If you can't state the why, the task isn't ready: externalize it, or keep the task in-session.
 - **Cross-task notes.** The other thing a coder can't recover is cross-task context. File it as a task-note for the task that needs it (*Run Notes*), and the brief carries it. Write pointers and decisions, never dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict ruling (`finding §5 governs the extent→band call`), a code entry point (the landing symbol, plus any new wire-key value), or a shared-shape pointer. Point at the entry and let the coder trace the chain. Keep it to a few lines; more means the requirement belongs in the spec, or the conflict belonged in pre-flight.
-- **Reviewer inputs.** Spec and quality reviewers get the brief path, the report path, the changed-file list, the verbatim Constraints, their record path, the coder's record path and the scripts path, and read the changed files themselves. A re-check adds the round's kind, the `Fix baseline: <tree>` with the task's file list (for `ledger.py diff-since`), and the settled finding ids from the last triage entry's `settled`. The coder's contests, decision doc and sweeps are in its record. Never paste diffs.
+- **Reviewer inputs.** Spec and quality reviewers get the brief path, the coder's report path, the changed-file list, the verbatim Constraints, their record path, their own report path (`$STORE/task-N-<agent-name>-review.md`), the coder's record path and the scripts path, and read the changed files themselves. Each writes its verdict to its report path and returns one line: triage reads the record, so the verdict's prose never enters your context. A re-check adds the round's kind, the `Fix baseline: <tree>` with the task's file list (for `ledger.py diff-since`), and the settled finding ids from the last triage entry's `settled`. The coder's contests, decision doc and sweeps are in its record. Never paste diffs.
 - **Review-lite inputs.** `*-review-lite` agents run only at the whole-change gate. They get the review-package path, the verbatim Constraints, the task (`"final"`), the record path and the scripts path, with no brief, report or file list. A re-check adds the coder's record path and the scope's settled ids.
 - **Staging and committing are yours; coders never do either.** When triage prints `done`, run `python3 "$SDD_SCRIPTS/ledger.py" ready --task N --store "$STORE"`. It lists what still stops the commit: a held finding, an open behavior choice, an undelivered note, an open `cannot_verify`, a malformed record, and at `final` an open escalation. When it passes, stage exactly the task's files (`git add <task files>`, never `git add -A`, since parallel tasks share the working tree) and run `python3 "$SDD_SCRIPTS/ledger.py" gate --task N --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`, which refuses while a task file has unstaged changes. At `final`, `--test` is the project's full test suite. A labels or lint failure goes back to the coder as the same attempt; a failing test is a gate finding, so run `triage` again. When the gate passes, commit, then `append --type complete --task N --note "commits <base7>..<head7>"`, which re-runs `ready` and checks the commit matches what the gate passed.
 - **Never** paste task text, prior-task summaries or diffs into a dispatch or your own context. A fresh subagent needs its brief, the interfaces it touches and the constraints, nothing else.
@@ -216,25 +216,16 @@ Copy the plan's Constraints section verbatim (exact values, formats, and stated 
 - **Don't** ask a reviewer to re-run tests the implementer already ran, or add open-ended directives ("check all uses") without a concrete, task-specific reason.
 - **Plan-mandated defects are the user's call.** A coder that finds a finding conflicts with the plan contests it (`plan-conflict`); a reviewer that holds it sends it to the stage batch with the plan text beside it. Don't dismiss it because the plan mandated it, and don't dispatch a fix that contradicts the plan without asking.
 
-## Judging from Compressed Reports
-
-Everything a subagent hands back is a compression: a report, a verdict, a one-line status. The doers carry "do not trust the report" discipline; apply it to your own inputs too. Most of what you act on needs no judgment of yours: findings route by their tags, a coder's disagreement goes back to the reviewer as a contest, and `check` holds each record to its round's evidence. What's left:
-
-- **Fact-shaped** (did the task complete, did the gate pass): trust the ledger. Re-running them is the gate's job.
-- **Judgment-shaped, outside one diff** (a spec reviewer's `cannot_verify` item, answered in unchanged code or across tasks): never resolve it on the label alone.
-
-Ground it by dispatch, not by reading the code yourself, which would spend the context the file handoffs protect. Turn the item into a decidable claim:
-
-> "`process_data` now takes 8 parameters, 4 of them mode flags" — decidable by reading.
-> "This will be hard to maintain" — not decidable; a judgment to adjudicate, not a claim to check.
-
-Dispatch `claim-checker` with one claim and the file and line range, nothing else: no verdict text or reviewer reasoning for it to anchor on. It returns `holds`, `does-not-hold` or `not-decidable-by-reading` with 3 to 10 verbatim lines. The evidence is mandatory (a bare verdict word would be one more laundering channel), and since it is quotation, not conclusion, it needs no grounding of its own. One claim per dispatch. When a claim comes back `not-decidable-by-reading`, or the evidence spans tasks and no single range settles it, escalate with the actual lines and the conflicting claims attached, never your paraphrase.
-
-Don't hand a subagent context that lives only in your head. If a task's why isn't in the brief, the spec or the store, the fresh agent will reconstruct it wrong: get it into the brief (`--intent`, or a task-note) or keep the task in-session.
-
 ## Handling ⚠️ Items
 
-Each spec-reviewer "⚠️ Cannot verify from diff" item lands in its record's `cannot_verify` field and in `python3 "$SDD_SCRIPTS/ledger.py" open --store "$STORE"`, keyed `<record-stem>#cannot_verify[<digest>]` (copy the id from `open`; it is content-derived). They don't block the rest of the review, but `ready` blocks the commit while one is open, so ground each before the task's last triage. The reviewer's scope was one diff, so resolve the item at the scope it lacked: state the requirement as a decidable claim and dispatch `claim-checker` across the whole repo (*Judging from Compressed Reports*). Don't act on the ⚠️ label or the `open` summary alone, and don't read the code yourself. Then run `python3 "$SDD_SCRIPTS/ledger.py" resolve <id> --note "..." --store "$STORE"`. A confirmed gap goes back to the spec reviewer with the claim-checker's evidence; the reviewer raises it as a tagged finding, and you run `triage`. Never write a finding yourself.
+Most of what reaches you needs no judgment of yours: facts (did a task complete, did the gate pass) come from the ledger, findings route by their tags, and a coder's disagreement goes back to the reviewer as a contest. The one judgment that reaches you unrouted is a spec reviewer's "⚠️ Cannot verify from diff" item: a requirement answered in unchanged code or across tasks.
+
+Each lands in its record's `cannot_verify` field and in `python3 "$SDD_SCRIPTS/ledger.py" open --store "$STORE"`, keyed `<record-stem>#cannot_verify[<digest>]` (copy the id from `open`; it is content-derived). It doesn't block the rest of the review, but `ready` blocks the commit while one is open, so settle each before the task's last triage. Never resolve one on the ⚠️ label or the `open` summary alone, and don't read the code yourself, which would spend the context the file handoffs protect. The reviewer's scope was one diff, so settle the item at the scope it lacked, by dispatch. Turn it into a decidable claim:
+
+> "`process_data` now takes 8 parameters, 4 of them mode flags": decidable by reading.
+> "This will be hard to maintain": not decidable; a judgment to adjudicate, not a claim to check.
+
+Dispatch `claim-checker` with one claim and the file and line range, nothing else: no verdict text or reviewer reasoning for it to anchor on. It returns `holds`, `does-not-hold` or `not-decidable-by-reading` with 3 to 10 verbatim lines. The evidence is mandatory (a bare verdict word would be one more laundering channel), and since it is quotation, not conclusion, it needs no grounding of its own. One claim per dispatch. Then run `python3 "$SDD_SCRIPTS/ledger.py" resolve <id> --note "..." --store "$STORE"`. A confirmed gap goes back to the spec reviewer with the claim-checker's evidence; the reviewer raises it as a tagged finding, and you run `triage`. Never write a finding yourself. A claim that comes back `not-decidable-by-reading`, or evidence that spans tasks with no single range to settle it, goes to the user with the actual lines and the conflicting claims attached, never your paraphrase.
 
 ## Durable Progress
 
@@ -289,9 +280,9 @@ Then it's the same loop with `--task final`: `triage --task final` routes lite's
 
 ## Prompt Templates
 
-- `./implementer-prompt.md`: the implementer dispatch when no `*-coder` agent matches.
+- `./implementer-prompt.md`: the implementer dispatch when no `*-coder` agent matches. The dispatch carries paths only; the agent reads the coders' protocol from that file's *Protocol* section.
 
-The spec reviewer (language-agnostic, read-only apart from its own typed record) and the `*-quality-reviewer` agents are registered agents that carry their own mandates, so they need no template: dispatch the spec reviewer per task and the quality reviewers by scope. Every dispatch uses file handoffs: brief, report, record and scripts paths plus verbatim Constraints, never pasted task text or diffs.
+The spec reviewer (language-agnostic, read-only apart from its own record and report) and the `*-quality-reviewer` agents are registered agents that carry their own mandates, so they need no template: dispatch the spec reviewer per task and the quality reviewers by scope. Every dispatch uses file handoffs: brief, report, record and scripts paths plus verbatim Constraints, never pasted task text or diffs.
 
 ## Example Workflow
 
@@ -350,24 +341,13 @@ Stage 3 — dispatching 2 tasks in parallel:
 
 ## Red Flags
 
+Breaking any rule above is a red flag. These are the ones a long run's pressure pushes on:
+
 - Starting implementation on main/master without the user's explicit consent.
 - Skipping a review (spec or quality), or committing with open work, without a logged `user ruling:` waiving it.
-- Dispatching in parallel tasks whose file footprints overlap.
-- Pasting task text or diffs into a dispatch or your context, hand-assembling a brief instead of running `task_brief.py` (which skips the `Consumes:`, `Cases:` and `Verify:` checks and the shared-shapes section), or handing a subagent the whole plan file.
+- Hand-assembling a brief instead of running `task_brief.py` (which skips the `Consumes:`, `Cases:` and `Verify:` checks and the shared-shapes section), handing a subagent the whole plan file, or pasting task text or diffs into a dispatch or your context.
 - Coaching a reviewer to suppress, soften or pre-rate a finding (quoting a logged user ruling verbatim is not coaching).
-- Dispatching a fix before every spec and quality verdict for the task is in.
-- Deciding a step yourself instead of running `triage`; re-rating a tag, sorting findings into trivial and non-trivial, or closing one on your own call.
-- Re-checking with more or fewer reviewers than `recheck` names (the one addition: an escalated consumer's quality reviewer).
-- Writing a decision doc yourself, or sending a coder back to fix a `root cause:` outside its brief on your own call.
-- Asking the user about a parked task mid-stage instead of in the stage batch.
-- Dispatching a fresh fixer when the original coder is reachable by `SendMessage`; sending a fix without a `snapshot` taken after its triage entry, or with an earlier cycle's baseline.
-- Committing without `ready` passing and a passing `gate` on exactly the staged task files.
-- Passing `--light` on an SDD task: it is executing-plans' path, and `ready` refuses it where triage runs.
-- Entering the whole-change gate with an open `duplication_pending` entry: resolve it, or reassign it to a task still ahead.
-- Re-dispatching a task `ledger.py completed` lists.
-- Keeping cross-task state in a file of your own instead of a note, or pausing, handing off or compacting without a `checkpoint` note.
-- Constructing a resolution id by hand (copy it from `open`, `triage` or `run-state`), passing a `cycle` in a dispatch (agents derive it), or letting a subagent compute its own record or scripts path.
-- Forcing a blocked subagent to retry without changing anything: add context, offer the user an opus coder, or split the task.
+- Deciding a step yourself instead of running `triage`: re-rating a tag, sorting findings into trivial and non-trivial, or closing one on your own call.
 
 ## Integration
 

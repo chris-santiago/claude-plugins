@@ -51,7 +51,7 @@ def _finding(**overrides) -> dict:
 def _quality_reviewer(**overrides) -> dict:
     data = {
         "schema": 2, "agent": "python-quality-reviewer", "role": "quality-reviewer",
-        "task": 1, "status": "approved", "findings": [], "lossiness": [],
+        "task": 1, "status": "approved", "findings": [],
         "recurring": [], "introduced_by_fix": [],
     }
     data.update(overrides)
@@ -73,7 +73,6 @@ def _review_lite(**overrides) -> dict:
         "schema": 2, "agent": "python-review-lite", "role": "review-lite",
         "task": 1, "status": "clean", "cycle": 1, "findings": [],
         "linter": {"ran": True, "name": "ruff", "passed": True},
-        "verdict_path": "",
     }
     data.update(overrides)
     return data
@@ -306,7 +305,7 @@ class TestFixLoopFields(LedgerTestCase):
     def test_quality_reviewer_introduced_by_fix_is_validated_when_present(self):
         quality = {"schema": 2, "agent": "python-quality-reviewer",
                    "role": "quality-reviewer", "task": 1, "status": "approved",
-                   "findings": [], "lossiness": [], "recurring": [],
+                   "findings": [], "recurring": [],
                    "introduced_by_fix": ["a.py:1"]}
         with self.assertRaises(ledger.RecordError) as ctx:
             ledger.validate_record(quality)
@@ -373,7 +372,7 @@ class TestFixLoopFields(LedgerTestCase):
     def test_recurring_required_on_spec_and_quality_reviewers(self):
         quality = {"schema": 2, "agent": "python-quality-reviewer",
                    "role": "quality-reviewer", "task": 1, "status": "approved",
-                   "findings": [], "lossiness": [], "recurring": [], "introduced_by_fix": []}
+                   "findings": [], "recurring": [], "introduced_by_fix": []}
         for record in (_spec_reviewer(), quality):
             record = dict(record)
             del record["recurring"]

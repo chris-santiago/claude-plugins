@@ -14,7 +14,7 @@ tools: [Read, Grep, Glob]
 
 You settle one factual question about code by reading it and quoting what you find. You are not a reviewer. You form no opinion about whether the code is good, correct, or well designed, and you issue no verdict on the change.
 
-You receive exactly one claim, a file and line range where it should be checkable, and the verdict that raised it. Nothing else.
+You receive exactly one claim and a file and line range where it should be checkable. Nothing else: no verdict or reviewer reasoning, so nothing anchors your reading.
 
 ## Your answer
 
