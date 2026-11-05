@@ -2152,7 +2152,105 @@ def check_record(path: Path) -> dict:
     elif data["role"] == "coder":
         _check_coder_model(path, data)
         _check_fix_baseline(path, data)
+        if _is_store(path.parent):
+            _check_deferrals_outside_footprint(path, data)
+            repo = _store_repo(path.parent)
+            if repo is not None:
+                _check_open_precedents(repo, data)
+                _check_fix_labels(repo, data)
     return data
+
+
+# The inline executor writes its own coder record and runs on whatever
+# model the session runs on.
+INLINE_EXECUTOR_AGENT = "executing-plans"
+FALSE_POSITIVE_PREFIX = "label false positive:"
+
+
+def task_footprint(log: list[dict], task: int | str) -> set[str] | None:
+    """The files a task said it would touch (its latest `stage` entry), or
+    the union of every task's at the whole-change gate. None when an
+    integer task has no stage entry."""
+    stages = stage_map(log)
+    if task == "final":
+        return {f for entry in stages.values() for f in entry.get("files", [])}
+    entry = stages.get(task)
+    return None if entry is None else set(entry.get("files", []))
+
+
+def _deferred_paths(data: dict) -> list[str]:
+    """Paths a coder says lie outside its scope: sweep sites it routed
+    elsewhere, and the code a `root cause:` concern traces to."""
+    paths = [SITE_RE.match(site)["path"] for sweep in data.get("sweeps", [])
+             for site in sweep.get("sites_outside", [])]
+    paths += [p for c in data.get(CONCERN_FIELD, []) if isinstance(c, str)
+              and c.lower().startswith(ROOT_CAUSE_PREFIX) and (p := root_cause_path(c))]
+    return paths
+
+
+def _check_deferrals_outside_footprint(path: Path, data: dict) -> None:
+    """A deferral can't point into the scope: work inside the footprint
+    filed as "outside" would never be done or decided."""
+    deferred = _deferred_paths(data)
+    if not deferred:
+        return
+    footprint = task_footprint(load_progress_log(path.parent), data["task"])
+    if footprint is None:
+        raise RecordError(f"{path}: defers work outside task {data['task']}, but the task has "
+                          "no recorded footprint; record it with `ledger.py stage` first")
+    inside = sorted({p for p in deferred if _normalize_path(p) in footprint})
+    if inside:
+        raise RecordError(f"{path}: {', '.join(inside)} is inside task {data['task']}'s own "
+                          "footprint, so it can't be deferred: fix it in this task")
+
+
+def _store_repo(store_dir: Path) -> Path | None:
+    """The toplevel of the repository the store lives in, or None when the
+    store isn't inside a git work tree."""
+    try:
+        return _toplevel(store_dir)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def _check_open_precedents(repo: Path, data: dict) -> None:
+    for idx, entry in enumerate(data.get("open", [])):
+        cited = entry.get("precedent")
+        if cited and not (repo / SITE_RE.match(cited)["path"]).is_file():
+            raise RecordError(f"open[{idx}].precedent: {cited!r} names a file that doesn't "
+                              "exist; cite the code the choice follows")
+
+
+def _excused_label_hits(hits: list[LabelHit], concerns: list) -> list[LabelHit]:
+    """The hits no `label false positive: <file>: <line text>` concern excuses."""
+    excused = set()
+    for concern in concerns:
+        if isinstance(concern, str) and concern.lower().startswith(FALSE_POSITIVE_PREFIX):
+            file, _, text = concern[len(FALSE_POSITIVE_PREFIX):].partition(":")
+            excused.add((file.strip(), text.strip()))
+    return [hit for hit in hits if (hit.path, hit.text) not in excused]
+
+
+def _check_fix_labels(repo: Path, data: dict) -> None:
+    """A finished fix's added lines carry no process labels beyond the ones
+    the coder listed as false positives."""
+    if data["cycle"] < 2 or data["status"] not in DIAGNOSIS_STATUSES:
+        return
+    files = [f for f in data.get("changed_files", []) if isinstance(f, str) and f.strip()]
+    if not files:
+        return
+    now = snapshot_tree(repo)
+    unmatched = missing_paths(repo, files, data["baseline"], now)
+    if unmatched:
+        raise RecordError(f"changed_files: {', '.join(unmatched)} match nothing before or "
+                          "after the fix; list the files the fix changed")
+    hits = _excused_label_hits(find_process_labels(diff_trees(repo, data["baseline"], now, files)),
+                               data.get(CONCERN_FIELD, []))
+    if hits:
+        listed = "; ".join(f"{h.path}:{h.line}: {h.label}" for h in hits)
+        raise RecordError(f"process labels in the fix's added lines: {listed}. Rewrite each to "
+                          f"state the behavior, or list a real false positive as "
+                          f"'{FALSE_POSITIVE_PREFIX} <file>: <line text>'")
 
 
 def _check_fix_baseline(path: Path, data: dict) -> None:
@@ -2187,7 +2285,8 @@ def _check_coder_model(path: Path, data: dict) -> None:
         raise RecordError(f"{path}: missing required field(s): model (the model family "
                           "your system prompt names, lowercase)")
     family = _model_family(data["model"])
-    if data["status"] not in DIAGNOSIS_STATUSES or family == CODER_MODEL:
+    if (data["status"] not in DIAGNOSIS_STATUSES or family == CODER_MODEL
+            or data.get("agent") == INLINE_EXECUTOR_AGENT):
         return
     if family == OPUS_CODER_MODEL and _opus_ruling_logged(load_progress_log(path.parent), data["task"]):
         return

@@ -2726,6 +2726,99 @@ class TestHistory(LedgerTestCase):
 
 # --- fix-loop integrity (2026-10-30) ---
 
+class TestCoderStoreChecks(GitRepoTestCase):
+    """Checks a coder record gets only inside a store: deferrals stay out of
+    the task's footprint, a fix's added lines carry no process labels, and
+    an open choice's precedent exists."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = ledger.ensure_store(self.repo / ".sdd")
+        ledger.cmd_stage(self.store, 1, 1, ["a.py", "tests/test_a.py"])
+
+    def _check(self, name: str = "task-1-python-coder.json", **fields) -> None:
+        ledger.cmd_check(str(_write(self.store, name, _coder(**fields))))
+
+    def _sweep(self, *outside: str) -> list[dict]:
+        return [{"findings": ["f"], "rule": "r", "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                 "searched": {"command": "rg r", "result": "1 match"},
+                 "sites_outside": list(outside)}]
+
+    def test_an_outside_site_beyond_the_footprint_is_accepted(self):
+        self._check(sweeps=self._sweep("lib/other.py:9"))
+
+    def test_an_outside_site_inside_the_footprint_is_refused_naming_it(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(sweeps=self._sweep("./a.py:3"))
+        self.assertIn("a.py", str(ctx.exception))
+
+    def test_a_root_cause_inside_the_footprint_is_refused(self):
+        with self.assertRaises(ledger.RecordError):
+            self._check(concerns=["root cause: tests/test_a.py:4 the fixture hides it"])
+        self._check(concerns=["root cause: lib/cache.py:4 evicts before write"])
+
+    def test_the_final_footprint_is_every_task_footprint(self):
+        ledger.cmd_stage(self.store, 2, 2, ["b.py"])
+        with self.assertRaises(ledger.RecordError):
+            self._check("final-python-coder.json", task="final", sweeps=self._sweep("b.py:2"))
+
+    def test_a_deferral_on_an_unstaged_task_asks_for_the_footprint(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check("task-7-python-coder.json", task=7, sweeps=self._sweep("lib/x.py:1"))
+        self.assertIn("ledger.py stage", str(ctx.exception))
+        self._check("task-7-python-coder.json", task=7)  # nothing deferred, no stage owed
+
+    def test_a_record_outside_a_store_skips_the_store_checks(self):
+        loose = self.repo / "loose"
+        loose.mkdir()
+        ledger.cmd_check(str(_write(loose, "task-1-python-coder.json",
+                                    _coder(sweeps=self._sweep("a.py:3")))))
+
+    def _fix_with(self, added: str, **fields) -> None:
+        tree = ledger.snapshot_tree(self.repo)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", tree)
+        (self.repo / "a.py").write_text(f"x = 1\n{added}\n", encoding="utf-8")
+        self._check(cycle=2, baseline=tree, changed_files=["a.py"],
+                    diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+                    hunk_map=[{"site": "a.py:2", "implements": "the guard"}],
+                    consumers_checked=[], **fields)
+
+    def test_a_fix_whose_added_lines_are_clean_passes(self):
+        self._fix_with("y = 2  # size is positive here")
+
+    def test_a_fix_that_adds_a_process_label_is_refused_listing_it(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._fix_with("y = 2  # guard added per the decision doc")
+        self.assertIn("a.py:2", str(ctx.exception))
+
+    def test_a_label_hit_listed_as_a_false_positive_passes(self):
+        line = "y = 2  # guard added per the decision doc"
+        self._fix_with(line, concerns=[f"label false positive: a.py: {line}"])
+
+    def test_the_inline_executor_may_run_on_any_model(self):
+        self._check(agent="executing-plans", model="opus")
+
+    def test_an_open_choice_citing_a_missing_file_is_refused(self):
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self._check(open=[{"question": "size=None?", "choice": "ValueError",
+                               "precedent": "src/nowhere.py:3"}])
+        self.assertIn("src/nowhere.py", str(ctx.exception))
+        self._check(open=[{"question": "size=None?", "choice": "ValueError",
+                           "precedent": "a.py:1"}])
+
+
+class TestStoreChecksOutsideGit(LedgerTestCase):
+    def test_a_store_outside_a_work_tree_skips_the_label_scan(self):
+        ledger.ensure_store(self.store)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_snapshot(self.store, 1, "pre-fix c2", "tree-a")
+        ledger.cmd_check(str(_write(self.store, "task-1-python-coder.json", _coder(
+            cycle=2, baseline="tree-a", changed_files=["a.py"],
+            diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+            hunk_map=[{"site": "a.py:2", "implements": "g"}], consumers_checked=[]))))
+
+
 class TestFixBaselineIsItsOwn(LedgerTestCase):
     """A finished fix names the snapshot it started from, and no earlier
     cycle of the same record used it, so `fix-count` sees every fix."""
