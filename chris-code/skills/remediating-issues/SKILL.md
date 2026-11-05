@@ -121,7 +121,12 @@ Write the decision doc as one typed record to the output path the dispatch suppl
         {"name": "validate under the old type", "precedent": "src/scale.py:120-134", "why": "why it wins", "chosen": true},
         {"name": "validate after translating", "precedent": "src/merge.py:88", "why": "why it loses"}
       ],
-      "cases": [{"case": "ordinal padding 1.5 to band", "today": "refused at render", "under_fix": "refused at to_spec()", "result": "fixed"}],
+      "cases": [
+        {"case": "ordinal padding 1.5 to band", "site": "src/scale.py:120", "test": "tests/test_scale.py::test_band_padding_refused", "today": "refused at render", "under_fix": "refused at to_spec()", "result": "fixed"},
+        {"case": "merged band keeps its padding", "site": "src/merge.py:88", "test": "tests/test_merge.py::test_merged_band_padding", "today": "padding kept", "under_fix": "padding kept", "result": "unchanged"}
+      ],
+      "couplings": [{"site": "src/merge.py:88", "effect": "reads the padded value the fix validates"}],
+      "premise": {"assumption": "padding is validated before translation", "probe": "what was run or read to confirm it"},
       "completeness": "cases I might be missing, and where I searched for them"
     },
     {"kind": "escalate", "findings": ["task-3-python-quality-reviewer#findings[5e6f7a8b]"], "why": "no reachable fixture for the requested test", "evidence": "what the research showed"}

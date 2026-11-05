@@ -173,6 +173,20 @@ FIX_MODE_FIELDS = {
     "consumers_checked": ("symbol", "verified"),
 }
 
+# Coder evidence (schema 2), each field optional and empty when unused.
+# A sweep proves "no other site" with a search (a textual rule) or an
+# itemized inspection (a rule no search expresses).
+SEARCH_KEYS = ("command", "result")
+INSPECTED_KEYS = ("target", "found_by")
+# Why a serious finding gets no new failing test.
+TESTS_FIRST_NA = ("structural", "docs", "unreachable", "existing")
+TESTS_FIRST_RUN_KEYS = ("test", "command", "failed_output")
+CONTEST_REASONS = ("wrong", "plan-conflict")
+TEST_CHANGE_KINDS = ("changed", "deleted", "skipped")
+# A root cause outside the brief names the code it traces to, first.
+ROOT_CAUSE_PREFIX = "root cause:"
+ROOT_CAUSE_RE = re.compile(r"^root cause:\s*(?P<site>\S+)\s+\S", re.I)
+
 # Decision records (2026-10-09). A reviewer finding is an `issues` or
 # `findings` entry, and a decision must account for every one: a choice
 # or an exclusion with its reason. `cannot_verify` entries may be decided
@@ -186,7 +200,11 @@ OPTIONAL_FINDING_FIELDS = ("cannot_verify",)
 CONCERN_FIELD = "concerns"
 CHOICE_KEYS = {"fix": ("reframe", "choice", "completeness"), "escalate": ("why", "evidence")}
 CANDIDATE_KEYS = ("name", "precedent", "why")
-CASE_KEYS = ("case", "today", "under_fix", "result")
+# Every case names the site it lives at and the test that pins it; its
+# `under_fix` is that test's expected result.
+CASE_KEYS = ("case", "site", "test", "today", "under_fix", "result")
+COUPLING_KEYS = ("site", "effect")
+PREMISE_KEYS = ("assumption", "probe")
 MIN_CANDIDATES = 2
 # A record's scope is the prefix of its dispatch-supplied file name: one
 # task, the whole-change gate, or that gate in a close-gate remediation run
@@ -410,10 +428,116 @@ def validate_record(data: object) -> None:
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
             _validate_fix(data)
+        _validate_coder_evidence(data)
     elif role == "decision":
         _validate_decision(data)
     if role in FINDING_LIST_FIELD:
         _validate_finding_tags(data, role)
+
+
+def _optional_objects(data: dict, field_name: str) -> list[dict]:
+    return _require_objects(data, field_name) if field_name in data else []
+
+
+def _validate_search_evidence(entry: dict, where: str) -> None:
+    """A `searched` command with its result, or a non-empty `inspected` list."""
+    if "searched" in entry:
+        searched = entry["searched"]
+        if not isinstance(searched, dict):
+            raise RecordError(f"{where}.searched: got {searched!r}, expected an object with "
+                              f"{', '.join(SEARCH_KEYS)}")
+        _require_strs(searched, SEARCH_KEYS, f"{where}.searched")
+    elif entry.get("inspected"):
+        for idx, item in enumerate(_require_objects(entry, "inspected")):
+            _require_strs(item, INSPECTED_KEYS, f"{where}.inspected[{idx}]")
+    else:
+        raise RecordError(f"{where}: needs `searched` (the command and its result) or "
+                          "`inspected` (what was examined and how it was found)")
+
+
+def _validate_coder_evidence(data: dict) -> None:
+    """The evidence fields a coder writes when it fixes, declares, contests,
+    or changes a test. Shape only; what they must cover is checked by
+    `check_record` against the store and the diff."""
+    for idx, sweep in enumerate(_optional_objects(data, "sweeps")):
+        where = f"sweeps[{idx}]"
+        findings = sweep.get("findings")
+        if not isinstance(findings, list) or not findings or not all(map(_non_empty_str, findings)):
+            raise RecordError(f"{where}.findings: got {findings!r}, expected a non-empty list of "
+                              "finding ids")
+        _require_strs(sweep, ("rule",), where)
+        for r_idx, row in enumerate(_require_objects(sweep, "rows", min_len=1)):
+            row_where = f"{where}.rows[{r_idx}]"
+            _validate_site(row.get("site"), f"{row_where}.site")
+            if "hunk" in row:
+                _validate_site(row["hunk"], f"{row_where}.hunk")
+            elif not _non_empty_str(row.get("already_correct")):
+                raise RecordError(f"{row_where}: needs the `hunk` that fixes it, or "
+                                  "`already_correct` with evidence")
+        _validate_search_evidence(sweep, where)
+        sites_outside = sweep.get("sites_outside", [])
+        if not isinstance(sites_outside, list):
+            raise RecordError(f"{where}.sites_outside: got {sites_outside!r}, expected a list")
+        for s_idx, site in enumerate(sites_outside):
+            _validate_site(site, f"{where}.sites_outside[{s_idx}]")
+    for idx, entry in enumerate(_optional_objects(data, "tests_first")):
+        where = f"tests_first[{idx}]"
+        _require_strs(entry, ("finding",), where)
+        if "n/a" not in entry:
+            _require_strs(entry, TESTS_FIRST_RUN_KEYS, where)
+            continue
+        if entry["n/a"] not in TESTS_FIRST_NA:
+            raise RecordError(f"{where}.n/a: got {entry['n/a']!r}, allowed set: "
+                              f"{list(TESTS_FIRST_NA)}")
+        _require_strs(entry, ("reason", "test") if entry["n/a"] == "existing" else ("reason",),
+                      where)
+    for idx, entry in enumerate(_optional_objects(data, "open")):
+        where = f"open[{idx}]"
+        _require_strs(entry, ("question", "choice"), where)
+        if "precedent" in entry:
+            _validate_site(entry["precedent"], f"{where}.precedent")
+        elif not _non_empty_str(entry.get("no_precedent")):
+            raise RecordError(f"{where}: needs the `precedent` site it follows, or "
+                              "`no_precedent` with the reasoning")
+    for idx, entry in enumerate(_optional_objects(data, "contested")):
+        _require_strs(entry, ("finding", "evidence"), f"contested[{idx}]")
+        if entry.get("reason") not in CONTEST_REASONS:
+            raise RecordError(f"contested[{idx}].reason: got {entry.get('reason')!r}, "
+                              f"allowed set: {list(CONTEST_REASONS)}")
+    for idx, entry in enumerate(_optional_objects(data, "reach_raised")):
+        _require_strs(entry, ("finding", "evidence"), f"reach_raised[{idx}]")
+    for idx, entry in enumerate(_optional_objects(data, "notes_skipped")):
+        _require_strs(entry, ("finding", "reason"), f"notes_skipped[{idx}]")
+    for idx, entry in enumerate(_optional_objects(data, "test_changes")):
+        _require_strs(entry, ("test", "reason"), f"test_changes[{idx}]")
+        if entry.get("kind") not in TEST_CHANGE_KINDS:
+            raise RecordError(f"test_changes[{idx}].kind: got {entry.get('kind')!r}, "
+                              f"allowed set: {list(TEST_CHANGE_KINDS)}")
+    for idx, entry in enumerate(_optional_objects(data, "decision_rows")):
+        where = f"decision_rows[{idx}]"
+        for key in ("choice", "case"):
+            value = entry.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise RecordError(f"{where}.{key}: got {value!r}, expected an index from 0")
+        _validate_site(entry.get("hunk"), f"{where}.hunk")
+    if "decision" in data and not _non_empty_str(data["decision"]):
+        raise RecordError(f"decision: got {data['decision']!r}, expected this round's "
+                          "decision doc path")
+    for concern in data.get(CONCERN_FIELD, []):
+        if (isinstance(concern, str) and concern.lower().startswith(ROOT_CAUSE_PREFIX)
+                and root_cause_path(concern) is None):
+            raise RecordError(f"concerns: {concern!r}: a root cause starts with the path it "
+                              "names: 'root cause: <path>[:<line>] <evidence>'")
+
+
+def root_cause_path(concern: str) -> str | None:
+    """The path a `root cause:` concern names first, or None when its first
+    token isn't a file path (one with a directory or an extension)."""
+    match = ROOT_CAUSE_RE.match(concern)
+    site = SITE_RE.match(match["site"]) if match else None
+    if site is None or not ("/" in site["path"] or "." in site["path"]):
+        return None
+    return site["path"]
 
 
 def _validate_site(site: object, where: str) -> None:
@@ -528,8 +652,7 @@ def _validate_decision(data: dict) -> None:
             escalated = True
         else:
             _validate_candidates(choice, where)
-            for c_idx, case in enumerate(_require_objects(choice, "cases", min_len=1)):
-                _require_strs(case, CASE_KEYS, f"{where}.cases[{c_idx}]")
+            _validate_cases_and_couplings(choice, where)
     for idx, entry in enumerate(_require_objects(data, "excluded")):
         _require_strs(entry, ("finding", "reason"), f"excluded[{idx}]")
         _claim_findings([entry["finding"]], seen, f"excluded[{idx}]")
@@ -546,6 +669,27 @@ def _claim_findings(findings: list[str], seen: set[str], where: str) -> None:
         if finding in seen:
             raise RecordError(f"{where}: {finding!r} is accounted for twice")
         seen.add(finding)
+
+
+def _validate_cases_and_couplings(choice: dict, where: str) -> None:
+    """Each case has a site and a test; each coupling the choice touches is
+    also a case, so a named coupling is always tested; the premise records
+    what the choice assumes and how that was confirmed."""
+    case_sites = set()
+    for idx, case in enumerate(_require_objects(choice, "cases", min_len=1)):
+        _require_strs(case, CASE_KEYS, f"{where}.cases[{idx}]")
+        _validate_site(case["site"], f"{where}.cases[{idx}].site")
+        case_sites.add(case["site"])
+    for idx, coupling in enumerate(_require_objects(choice, "couplings")):
+        _require_strs(coupling, COUPLING_KEYS, f"{where}.couplings[{idx}]")
+        if coupling["site"] not in case_sites:
+            raise RecordError(f"{where}.couplings[{idx}].site: {coupling['site']!r} is a coupling "
+                              "no case covers; add a case with its test")
+    premise = choice.get("premise")
+    if not isinstance(premise, dict):
+        raise RecordError(f"{where}.premise: got {premise!r}, expected an object with "
+                          f"{', '.join(PREMISE_KEYS)}")
+    _require_strs(premise, PREMISE_KEYS, f"{where}.premise")
 
 
 def _validate_candidates(choice: dict, where: str) -> None:
@@ -601,6 +745,9 @@ def _validate_fix(data: dict) -> None:
                 raise RecordError(
                     f"consumers_checked[{idx}].consumers: got {entry.get('consumers')!r}, "
                     "expected a list (empty when the symbol has no consumers)")
+            # "No consumers" is a negative claim: it carries the search behind it.
+            if field_name == "consumers_checked" and not entry["consumers"]:
+                _validate_search_evidence(entry, f"consumers_checked[{idx}]")
 
 
 def load_records(store_dir: Path) -> list[Record]:

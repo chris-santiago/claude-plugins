@@ -369,6 +369,126 @@ class TestFixLoopFields(LedgerTestCase):
         self.assertEqual([i.kind for i in items], ["status"])
 
 
+class TestCoderEvidence(LedgerTestCase):
+    """A coder's sweeps, tests-first entries, open choices, contests and
+    test changes each carry the evidence a reviewer or `check` relies on."""
+
+    def assertRejects(self, data: dict, *fragments: str) -> None:
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(data)
+        for fragment in fragments:
+            self.assertIn(fragment, str(ctx.exception))
+
+    @staticmethod
+    def _sweep(**overrides) -> dict:
+        sweep = {"findings": ["task-1-spec-reviewer#issues[1a2b3c4d]"],
+                 "rule": "size must be positive",
+                 "rows": [{"site": "a.py:40", "hunk": "a.py:38-44"},
+                          {"site": "c.py:12", "already_correct": "guards size at c.py:10"}],
+                 "searched": {"command": "rg -n 'size' src/", "result": "2 matches: a.py:40, c.py:12"},
+                 "sites_outside": []}
+        sweep.update(overrides)
+        return sweep
+
+    def test_a_sweep_with_a_search_or_an_inspected_list_passes(self):
+        ledger.validate_record(_coder(sweeps=[self._sweep()]))
+        inspected = self._sweep(inspected=[{"target": "callers of make_grid",
+                                            "found_by": "consumers search"}])
+        del inspected["searched"]
+        ledger.validate_record(_coder(sweeps=[inspected]))
+
+    def test_a_sweep_without_search_evidence_is_refused(self):
+        bare = self._sweep()
+        del bare["searched"]
+        self.assertRejects(_coder(sweeps=[bare]), "sweeps[0]")
+        self.assertRejects(_coder(sweeps=[self._sweep(searched={"command": "rg x", "result": " "})]),
+                           "sweeps[0].searched.result")
+
+    def test_a_row_with_neither_hunk_nor_already_correct_is_refused(self):
+        self.assertRejects(_coder(sweeps=[self._sweep(rows=[{"site": "a.py:40"}])]),
+                           "sweeps[0].rows[0]")
+
+    def test_tests_first_takes_a_failing_run_or_a_listed_n_a(self):
+        ledger.validate_record(_coder(tests_first=[
+            {"finding": "f1", "test": "tests/test_a.py::test_zero",
+             "command": "pytest tests/test_a.py::test_zero", "failed_output": "AssertionError"},
+            {"finding": "f2", "n/a": "structural", "reason": "dedupes two helpers"},
+            {"finding": "f3", "n/a": "existing", "reason": "the gate's failing test",
+             "test": "tests/test_a.py::test_round_trip"}]))
+
+    def test_tests_first_n_a_outside_the_list_or_existing_without_a_test_is_refused(self):
+        self.assertRejects(_coder(tests_first=[{"finding": "f", "n/a": "trivial", "reason": "r"}]),
+                           "tests_first[0]")
+        self.assertRejects(_coder(tests_first=[{"finding": "f", "n/a": "existing", "reason": "r"}]),
+                           "tests_first[0].test")
+
+    def test_an_open_choice_cites_a_precedent_or_says_why_there_is_none(self):
+        ledger.validate_record(_coder(open=[
+            {"question": "size=None?", "choice": "ValueError", "precedent": "src/grid.py:31"},
+            {"question": "empty data?", "choice": "[]", "no_precedent": "no other loader reads lists"}]))
+        self.assertRejects(_coder(open=[{"question": "size=None?", "choice": "ValueError"}]),
+                           "open[0]")
+
+    def test_a_contest_needs_a_listed_reason_and_evidence(self):
+        ledger.validate_record(_coder(contested=[
+            {"finding": "f", "reason": "plan-conflict", "evidence": "Cases: row 2 says return []"}]))
+        self.assertRejects(_coder(contested=[{"finding": "f", "reason": "disagree", "evidence": "e"}]),
+                           "contested[0].reason")
+
+    def test_a_test_change_needs_a_listed_kind_and_a_reason(self):
+        ledger.validate_record(_coder(test_changes=[
+            {"kind": "changed", "test": "tests/test_a.py::test_scale", "old": "assert scale == 2",
+             "new": "assert scale == 3", "reason": "the brief's row 3 sets 3"}]))
+        self.assertRejects(_coder(test_changes=[
+            {"kind": "edited", "test": "t", "old": "o", "new": "n", "reason": "r"}]), "test_changes[0].kind")
+        self.assertRejects(_coder(test_changes=[
+            {"kind": "deleted", "test": "t", "old": "o", "new": "", "reason": ""}]), "test_changes[0].reason")
+
+    def test_a_root_cause_concern_starts_with_the_path_it_names(self):
+        ledger.validate_record(_coder(concerns=["root cause: src/cache.py:12 evicts before write"]))
+        self.assertRejects(_coder(concerns=["root cause: the cache evicts early"]), "root cause")
+
+    def test_an_empty_consumers_list_carries_the_search_that_found_none(self):
+        fix = {"diagnosis": {"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+               "hunk_map": [{"site": "a.py:10-14", "implements": "the guard"}],
+               "consumers_checked": [
+                   {"symbol": "a.build", "consumers": [], "verified": "no callers",
+                    "searched": {"command": "rg -n 'build(' src/", "result": "0 matches"}}]}
+        ledger.validate_record(_coder(cycle=2, **fix))
+        fix["consumers_checked"][0].pop("searched")
+        self.assertRejects(_coder(cycle=2, **fix), "consumers_checked[0]")
+
+
+class TestDecisionCases(unittest.TestCase):
+    """A holistic decision gives every case a site and a test, names its
+    couplings as cases, and records the premise it rests on."""
+
+    def assertRejects(self, data: dict, *fragments: str) -> None:
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.validate_record(data)
+        for fragment in fragments:
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_a_complete_fix_choice_passes(self):
+        ledger.validate_record(_decision(["x"], choices=[_fix_choice(
+            ["x"], couplings=[{"site": "a.py:1", "effect": "reads the padded value"}])]))
+
+    def test_a_case_without_a_test_is_refused(self):
+        case = {"case": "k", "site": "a.py:1", "today": "t", "under_fix": "u", "result": "fixed"}
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(["x"], cases=[case])]),
+                           "choices[0].cases[0].test")
+
+    def test_a_coupling_no_case_covers_is_refused(self):
+        self.assertRejects(_decision(["x"], choices=[_fix_choice(
+            ["x"], couplings=[{"site": "b.py:12", "effect": "reads the padded value"}])]),
+            "b.py:12")
+
+    def test_a_fix_choice_without_a_premise_is_refused(self):
+        choice = _fix_choice(["x"])
+        del choice["premise"]
+        self.assertRejects(_decision(["x"], choices=[choice]), "choices[0].premise")
+
+
 class TestFindingTags(LedgerTestCase):
     """Schema 2: every reviewer finding is tagged, and the record's status
     and flags agree with its findings."""
@@ -1610,7 +1730,10 @@ def _fix_choice(findings: list[str], **overrides) -> dict:
     choice = {"kind": "fix", "findings": findings, "reframe": "r", "choice": "c",
               "completeness": "searched callers of x",
               "candidates": [_candidate("A", chosen=True), _candidate("B")],
-              "cases": [{"case": "k", "today": "t", "under_fix": "u", "result": "fixed"}]}
+              "cases": [{"case": "k", "site": "a.py:1", "test": "tests/test_a.py::test_k",
+                         "today": "t", "under_fix": "u", "result": "fixed"}],
+              "couplings": [],
+              "premise": {"assumption": "a.py:1 is the only writer", "probe": "rg -n 'write(' a.py"}}
     choice.update(overrides)
     return choice
 
@@ -1743,7 +1866,7 @@ class TestDecisionContext(DecisionStoreTestCase):
         self._check(self._complete(choices=[_fix_choice([self.spec_id, self.quality_id, cv])]))
 
     def test_a_coder_concern_may_be_decided_but_is_not_required(self):
-        concern = "root cause: the band estimate copies the label cascade"
+        concern = "root cause: src/band.py:40 the band estimate copies the label cascade"
         _write(self.store, "task-1-python-coder.json", _coder(concerns=[concern, 7]))
         concern_id = _entry_id("task-1-python-coder", "concerns", concern)
         self._check(self._complete())
@@ -1751,14 +1874,14 @@ class TestDecisionContext(DecisionStoreTestCase):
                                             _fix_choice([concern_id])]))
 
     def test_another_tasks_coder_concern_is_unknown(self):
-        concern = "root cause: x"
+        concern = "root cause: src/x.py:1 x"
         _write(self.store, "task-2-python-coder.json", _coder(task=2, concerns=[concern]))
         concern_id = _entry_id("task-2-python-coder", "concerns", concern)
         self.assertCheckFails(self._complete(choices=[
             _fix_choice([self.spec_id, self.quality_id, concern_id])]), "no such finding")
 
     def test_a_root_cause_decision_before_review_routes_a_fix(self):
-        concern = "root cause: x"
+        concern = "root cause: src/x.py:1 x"
         _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
         concern_id = _entry_id("task-3-python-coder", "concerns", concern)
         self._check(_decision([concern_id], task=3, reviewer_records=[]),
@@ -1769,7 +1892,7 @@ class TestDecisionContext(DecisionStoreTestCase):
         self.assertEqual(ledger.non_trivial_fix_count(ledger.load_progress_log(self.store), 3), 1)
 
     def test_a_refused_root_cause_decision_reroutes_while_the_concern_is_relisted(self):
-        concern = "root cause: x"
+        concern = "root cause: src/x.py:1 x"
         _write(self.store, "task-3-python-coder.json", _coder(task=3, concerns=[concern]))
         concern_id = _entry_id("task-3-python-coder", "concerns", concern)
         data = _decision([concern_id], task=3, reviewer_records=[])
@@ -1953,12 +2076,12 @@ class TestDecisionContext(DecisionStoreTestCase):
         self.assertIn("decisions to reconcile: (none)", out.getvalue())
 
     def test_findings_lists_coder_concerns_as_optional(self):
-        _write(self.store, "task-1-python-coder.json", _coder(concerns=["root cause: x"]))
+        _write(self.store, "task-1-python-coder.json", _coder(concerns=["root cause: src/x.py:1 x"]))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_findings(self.store / "task-1-decision-c2.json")
         concerns = out.getvalue().split("coder concerns")[1]
-        self.assertIn(f"[{_entry_id('task-1-python-coder', 'concerns', 'root cause: x')}]", concerns)
+        self.assertIn(f"[{_entry_id('task-1-python-coder', 'concerns', 'root cause: src/x.py:1 x')}]", concerns)
 
     def test_findings_leaves_out_the_decision_being_written(self):
         _write(self.store, "task-1-decision-c2.json", self._complete())
