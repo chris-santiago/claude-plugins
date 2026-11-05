@@ -166,6 +166,11 @@ class TestContests(unittest.TestCase):
                                answers={"a": "hold"})
         self.assertEqual(done_but_held["kind"], "escalate")
 
+    def test_a_held_finding_the_reviewer_stopped_raising_is_no_longer_held(self):
+        prior = [step("patch", [(self.a, "patch")], held=["a"])]
+        entry = derive([], prior=prior)
+        self.assertEqual((entry["kind"], entry["held"]), ("done", []))
+
     def test_settled_findings_carry_forward_into_later_entries(self):
         prior = [step("patch", [(self.a, "patch")], settled=["a"])]
         self.assertIn("a", derive(prior=prior)["settled"])

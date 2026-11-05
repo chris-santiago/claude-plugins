@@ -2501,6 +2501,13 @@ class TestTriageCommand(TriageStoreTestCase):
         self.assertIn("task-3-python-quality-reviewer", str(ctx.exception))
         self.assertEqual(self.entries(), [])
 
+    def test_triage_again_with_nothing_changed_reprints_without_a_new_round(self):
+        self.spec(_finding(), _finding(severity=1, rule="a note"))
+        first = self.triage()
+        again = self.triage()
+        self.assertEqual(len(self.entries()), 1)
+        self.assertEqual(first, again)
+
     def test_a_task_nobody_reviewed_is_refused(self):
         self.coder()
         with self.assertRaises(ledger.RecordError):
@@ -2539,6 +2546,7 @@ class TestTriageCommand(TriageStoreTestCase):
                                            "reason": "the guard skips None"}])
         self.triage()  # second patch for `other`; issue held
         self.assertEqual(self.entries()[-1]["held"], [self.spec_id(issue)])
+        self.coder(report="the second fix")  # it lands, and `other` is still raised
         self.triage()  # rounds spent: escalate
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
         ledger.cmd_resolve(self.store, _entry_id("task-3-spec-reviewer", "issues", other),
@@ -2756,6 +2764,36 @@ class TestFixChecks(TriageStoreTestCase):
                     {"kind": kind, "test": "tests/test_a.py::test_x", "old": "test_x", "new": "",
                      "reason": "the behavior it pinned was removed by the ruling"}])
 
+    def test_deleting_a_whole_test_file_needs_a_deleted_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        (self.repo / "tests" / "test_a.py").unlink()
+        with self.assertRaises(ledger.RecordError):
+            self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+
+    def test_a_unittest_skip_needs_a_skipped_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit(test_a="def helper():\n    return 1\n\n\ndef test_x():\n"
+                         "    self.skipTest('flaky')\n    assert x == 2\n")
+        with self.assertRaises(ledger.RecordError):
+            self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+
+    def test_a_signature_change_or_a_reindented_assertion_needs_no_entry(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit(test_a="def helper():\n    return 1\n\n\ndef test_x(tmp_path):\n"
+                         "    for _ in range(1):\n        assert x == 2\n")
+        self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"])
+
+    def test_a_finding_raised_to_contract_needs_no_failing_test(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        self.fix(tree, sent, sweeps=[], tests_first=[],
+                 reach_raised=[{"finding": sent[0], "evidence": "the fix renames a public API"}])
+
     def test_a_helper_edit_or_a_new_test_file_needs_no_entry(self):
         sent = self.review()
         tree = self.snapshot()
@@ -2904,6 +2942,27 @@ class TestGate(TriageStoreTestCase):
             ledger.cmd_gate(self.store, 3, "true", None)
         self.assertIn("staged", str(ctx.exception))
 
+    def test_unstaged_changes_in_the_task_files_are_refused(self):
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "b.py"])
+        self.stage_fix()
+        (self.repo / "b.py").write_text("z = 3\n", encoding="utf-8")  # untracked, not staged
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.gate()
+        self.assertIn("b.py", str(ctx.exception))
+
+    def test_the_store_is_unlocked_while_the_commands_run(self):
+        # Parallel tasks' agents write the store while a gate's tests run.
+        self.stage_fix()
+        probe = Path(self._tmp.name) / "probe_lock.py"
+        probe.write_text(
+            "import fcntl, sys\n"
+            f"with open({str(self.store / ledger.LOCK_FILENAME)!r}, 'a') as h:\n"
+            "    try:\n"
+            "        fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "    except BlockingIOError:\n"
+            "        sys.exit(1)\n", encoding="utf-8")
+        self.assertEqual(self.gate(test=f"python3 {probe}")[0], 0)
+
     def test_the_staged_tree_is_recorded_and_the_index_left_alone(self):
         self.stage_fix()
         before = self._git("diff", "--cached", "--name-only")
@@ -3006,6 +3065,13 @@ class TestReady(TriageStoreTestCase):
         self.write("final-python-review-lite.json", _review_lite(task="final"))
         self.triage("final")
         self.assertIn("duplication_pending", self.ready("final")[1])
+
+    def test_light_is_refused_on_a_task_the_triage_loop_runs(self):
+        self.spec(_finding())
+        self.triage()
+        code, out = self.ready(light=True)
+        self.assertEqual(code, 1)
+        self.assertIn("--light", out)
 
     def test_light_skips_the_triage_checks_only(self):
         code, _ = self.ready(light=True)

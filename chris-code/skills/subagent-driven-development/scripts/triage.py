@@ -42,14 +42,14 @@ def _settled(prior: list[dict], waived: set[str], answers: dict[str, str]) -> se
 
 
 def _held(prior: list[dict], answers: dict[str, str], settled: set[str],
-          ruled: bool) -> set[str]:
-    """Contests the raising reviewer held, until the user waives them or a
-    ruling takes them into a ruling round."""
+          ruled: bool, raised: set[str]) -> set[str]:
+    """Contests the raising reviewer held, while it still raises them,
+    until the user waives them or a ruling takes them into a ruling round."""
     if ruled:
         return set()
     earlier = set(prior[-1].get("held", [])) if prior else set()
     held_now = {i for i, verdict in answers.items() if verdict == "hold"}
-    return (earlier | held_now) - settled
+    return ((earlier | held_now) - settled) & raised
 
 
 def _sent_notes(prior: list[dict]) -> set[str]:
@@ -81,7 +81,7 @@ def derive(*, findings: list[dict], root_causes: list[str], reach_raised: set[st
     settled = _settled(prior, waived, answers)
     last_kind = prior[-1]["kind"] if prior else None
     ruling_now = ruled and last_kind == "escalate"
-    held = _held(prior, answers, settled, ruling_now)
+    held = _held(prior, answers, settled, ruling_now, {f["id"] for f in findings})
     live = [f for f in findings if f["id"] not in settled]
     tiers = {f["id"]: ("held" if f["id"] in held else tier(f, reach_raised)) for f in live}
     serious = [f for f in live if tiers[f["id"]] in ("patch", "holistic")]

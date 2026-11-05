@@ -1595,6 +1595,10 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
     resolved = set(resolutions_from_log(log))
     found = _scope_records(store_dir, scope_prefix(log, task))
     blockers = []
+    if light and (latest_triage(log, task) is not None
+                  or any(r.data.get("agent") != INLINE_EXECUTOR_AGENT for r in found.coders)):
+        blockers.append("--light is executing-plans' path, but this task runs the triage loop "
+                        "(it has a triage entry or a dispatched coder's record); drop --light")
     if not light:
         entry = latest_triage(log, task)
         if entry is None:
@@ -2166,8 +2170,10 @@ def check_record(path: Path) -> dict:
 
 TEST_FILE_RE = re.compile(r"(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.(py|rs)$|(^|/)tests\.rs$")
 ASSERTION_RE = re.compile(r"\bassert\w*!?\s*[\s(]|\bassert_(?:eq|ne)!|pytest\.raises|\bexpect\(")
-SKIP_MARKER_RE = re.compile(r"pytest\.mark\.(?:skip|xfail)|pytest\.skip\(|unittest\.skip|#\[ignore\]")
-TEST_FUNCTION_RE = re.compile(r"^\s*(?:async\s+)?def\s+test_\w*|^\s*#\[test\]")
+SKIP_MARKER_RE = re.compile(
+    r"pytest\.mark\.(?:skip|xfail)|pytest\.(?:skip|importorskip)\(|unittest\.skip|\bskipTest\("
+    r"|\bSkipTest\b|@skip(?:If|Unless)?\b|\bexpectedFailure\b|#\[ignore\]")
+TEST_FUNCTION_RE = re.compile(r"^\s*(?:async\s+)?def\s+(?P<name>test_\w*)|^\s*#\[test\]")
 
 
 def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
@@ -2234,8 +2240,11 @@ def _check_coverage(data: dict, sent: list[dict]) -> None:
 
 def _check_tests_first(data: dict, serious: list[dict]) -> None:
     covered = {t["finding"] for t in data.get("tests_first", [])}
-    contested = {c["finding"] for c in data.get("contested", [])}
-    missing = sorted(f["id"] for f in serious if f["id"] not in covered | contested)
+    # A contested finding isn't fixed, and one raised to contract reach
+    # stops before its fix; neither has a test to write yet.
+    unfixed = {c["finding"] for field in ("contested", "reach_raised")
+               for c in data.get(field, [])}
+    missing = sorted(f["id"] for f in serious if f["id"] not in covered | unfixed)
     if missing:
         raise RecordError(f"tests_first: no entry for {', '.join(missing)}; write a failing "
                           f"test first, or give an n/a category ({', '.join(TESTS_FIRST_NA)})")
@@ -2279,25 +2288,69 @@ def _test_file_edits(diff: str) -> dict[str, set[str]]:
     (changed, deleted, skipped) its removed assertions, removed test
     functions, and added skip markers call for."""
     edits: dict[str, set[str]] = {}
-    path, existed = None, False
-    for raw in diff.split("\n"):
-        if raw.startswith("--- "):
-            existed = raw[4:].strip() != "/dev/null"
+    for path, removed, added in _file_line_changes(diff):
+        if not TEST_FILE_RE.search(path):
             continue
-        if raw.startswith("+++ "):
-            target = raw[4:].rstrip("\t")
-            path = target[2:] if target.startswith("b/") and TEST_FILE_RE.search(target[2:]) else None
-            continue
-        if path is None or not existed or raw.startswith(("@@", "\\")) or not raw:
-            continue
-        tag, text = raw[0], raw[1:]
-        if tag == "-" and TEST_FUNCTION_RE.search(text):
-            edits.setdefault(path, set()).add("deleted")
-        elif tag == "-" and ASSERTION_RE.search(text):
-            edits.setdefault(path, set()).add("changed")
-        elif tag == "+" and SKIP_MARKER_RE.search(text):
+        kept = {line.strip() for line in added}
+        added_tests = {m["name"] for line in added if (m := TEST_FUNCTION_RE.search(line)) and m["name"]}
+        for line in removed:
+            match = TEST_FUNCTION_RE.search(line)
+            if match and (match["name"] is None or match["name"] not in added_tests):
+                edits.setdefault(path, set()).add("deleted")
+            elif not match and ASSERTION_RE.search(line) and line.strip() not in kept:
+                edits.setdefault(path, set()).add("changed")
+        if any(SKIP_MARKER_RE.search(line) for line in added):
             edits.setdefault(path, set()).add("skipped")
     return edits
+
+
+def _file_line_changes(diff: str) -> list[tuple[str, list[str], list[str]]]:
+    """Per file that existed before the change: its path and its removed and
+    added lines. Hunk line counts are tracked, so a line whose text starts
+    with `--` or `++` is never read as a file header. A deleted file is
+    named by its `--- a/` side."""
+    out: list[tuple[str, list[str], list[str]]] = []
+    old_path = None
+    current: tuple[str, list[str], list[str]] | None = None
+    old_left = new_left = 0
+    for raw in diff.split("\n"):
+        if old_left > 0 or new_left > 0:
+            tag, text = raw[:1], raw[1:]
+            if tag == "-":
+                old_left -= 1
+                if current:
+                    current[1].append(text)
+            elif tag == "+":
+                new_left -= 1
+                if current:
+                    current[2].append(text)
+            elif tag != "\\":
+                old_left, new_left = old_left - 1, new_left - 1
+            continue
+        if raw.startswith("--- "):
+            old_path = _diff_side(raw[4:], "a/")
+            continue
+        if raw.startswith("+++ "):
+            new_path = _diff_side(raw[4:], "b/")
+            current = (new_path or old_path, [], []) if old_path else None
+            if current:
+                out.append(current)
+            continue
+        header = HUNK_HEADER_RE.match(raw)
+        if header:
+            old_left = int(header.group(1) or 1)
+            new_left = int(header.group(3) or 1)
+    return out
+
+
+def _diff_side(target: str, prefix: str) -> str | None:
+    """A `---`/`+++` path without its a/ or b/ prefix, C-quoting decoded;
+    None for /dev/null."""
+    target = target.rstrip("\t")
+    if target.startswith('"') and target.endswith('"'):
+        target = (target[1:-1].encode("latin-1").decode("unicode_escape")
+                  .encode("latin-1").decode("utf-8", errors="replace"))
+    return target[len(prefix):] if target.startswith(prefix) else None
 
 
 def _check_test_changes(path: Path, data: dict, diff: str) -> None:
@@ -2674,19 +2727,37 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
     entry, file its new deferrals, and print the step and its dispatch."""
     with store_lock(store_dir):
         inputs, reviewers, coder = triage_inputs(store_dir, task)
+        digest = _inputs_digest(inputs, reviewers, coder)
+        latest = latest_triage(load_progress_log(store_dir), task)
+        if latest is not None and latest.get("inputs") == digest:
+            # Nothing changed since the last step: asking again (after a
+            # compaction, say) must not start another round.
+            print(_render_triage(latest, []))
+            return
         result = triage_rules.derive(**inputs)
         texts = {c["id"]: c for c in inputs["file_candidates"]}
         log = load_progress_log(store_dir)
         filed_notes = _file_deferrals(store_dir, log, task, result.pop("to_file"), texts)
         recheck_records = _recheck_records(result, reviewers)
         entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
-                 **result, "recheck_records": recheck_records, "at": _now()}
+                 **result, "recheck_records": recheck_records, "inputs": digest, "at": _now()}
         if result["kind"] == "holistic":
             # The decision doc for the coder's upcoming fix cycle.
             cycle = (coder.data["cycle"] if coder else 0) + 1
             entry["decision"] = f"{scope_prefix(log, task)}-decision-c{cycle}"
         _append_progress(store_dir, entry)
     print(_render_triage(entry, filed_notes))
+
+
+def _inputs_digest(inputs: dict, reviewers: list[Record], coder: Record | None) -> str:
+    """A digest of what triage read: the whole records (any rewrite, a
+    re-check or a fix, is new work) and the user's rulings and waivers.
+    The scope's earlier entries are left out, so an unchanged state yields
+    the step already logged."""
+    current = {key: sorted(value) if isinstance(value, set) else value
+               for key, value in inputs.items() if key != "prior"}
+    current["records"] = {r.stem: r.data for r in [*reviewers, *([coder] if coder else [])]}
+    return _entry_digest(current)
 
 
 def _recheck_records(result: dict, reviewers: list[Record]) -> list[str]:
@@ -2730,6 +2801,18 @@ def _staged_scope(top: Path, files: list[str]) -> list[str]:
     return sorted(line for line in out.splitlines() if line.strip())
 
 
+def _check_all_staged(top: Path, files: list[str]) -> None:
+    """The tests run on the working tree, so the gate checks a staged state
+    only when the task's files have no unstaged or untracked changes."""
+    unstaged = _git(top, "diff", "--name-only", "--no-relative", "--", *files).split()
+    untracked = _git(top, "ls-files", "--others", "--exclude-standard", "--", *files).split()
+    loose = sorted(set(unstaged) | set(untracked))
+    if loose:
+        raise RecordError(f"{', '.join(loose)} has changes that aren't staged; stage every change "
+                          "to the task's files (or drop it) before gating, so the gate checks "
+                          "exactly what will be committed")
+
+
 def _run_shell(top: Path, command: str) -> tuple[bool, str]:
     """Run a gate command through the shell (Verify lines use `!` and
     `&&`); it passes only on exit 0. The command is the plan's own Verify
@@ -2745,7 +2828,9 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
     """Run labels on the staged added lines of the scope's files, then lint,
     then the task's Verify command; write the gate record and return the
     exit code (0 on pass, 1 on fail). A failing test is a serious local
-    finding for triage; labels and lint failures go back to the coder."""
+    finding for triage; labels and lint failures go back to the coder.
+    The store stays unlocked while lint and the tests run, since parallel
+    tasks' agents write it meanwhile."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
         footprint = task_footprint(log, task)
@@ -2757,6 +2842,7 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
             raise RecordError(f"{store_dir} isn't inside a git work tree; the gate reads the "
                               "staged files")
         files = sorted(footprint)
+        _check_all_staged(top, files)
         staged = _staged_scope(top, files)
         if not staged:
             raise RecordError(f"nothing is staged in task {task!r}'s files ({', '.join(files)}); "
@@ -2765,17 +2851,18 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
         coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
         hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
                                    coder.data.get(CONCERN_FIELD, []) if coder else [])
-        commands = [{"kind": "labels", "command": "ledger.py labels (staged)",
-                     "passed": not hits,
-                     "excerpt": "\n".join(f"{h.path}:{h.line}: {h.label}: {h.text}"
-                                          for h in hits)}]
-        for kind, command in (("lint", lint), ("test", test)):
-            if command:
-                passed, excerpt = _run_shell(top, command)
-                commands.append({"kind": kind, "command": command, "passed": passed,
-                                 "excerpt": excerpt})
-        record = _gate_record(task, tree, staged, commands, files, coder)
-        validate_record(record)
+    commands = [{"kind": "labels", "command": "ledger.py labels (staged)",
+                 "passed": not hits,
+                 "excerpt": "\n".join(f"{h.path}:{h.line}: {h.label}: {h.text}"
+                                      for h in hits)}]
+    for kind, command in (("lint", lint), ("test", test)):
+        if command:
+            passed, excerpt = _run_shell(top, command)
+            commands.append({"kind": kind, "command": command, "passed": passed,
+                             "excerpt": excerpt})
+    record = _gate_record(task, tree, files, commands, files, coder)
+    validate_record(record)
+    with store_lock(store_dir):
         _write_json(_gate_path(store_dir, log, task), record)
     for command in commands:
         print(f"{command['kind']}: {'pass' if command['passed'] else 'FAIL'}  {command['command']}")
