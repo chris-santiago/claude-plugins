@@ -95,7 +95,7 @@ def _excluded(top: Path, rel: str) -> bool:
     """Tests, vendored and generated code, and tracked symlinks (git
     tracks the link, not what it points at)."""
     *dirs, name = rel.split("/")
-    return (bool(EXCLUDED_DIRS.intersection(dirs)) or bool(EXCLUDED_NAME_RE.search(name))
+    return (bool(EXCLUDED_DIRS.intersection(d.lower() for d in dirs)) or bool(EXCLUDED_NAME_RE.search(name))
             or (top / rel).is_symlink())
 
 
@@ -213,9 +213,16 @@ def _line_deps(text: str, *, item_prefix: str = "") -> set[str]:
     return names
 
 
-def _is_manifest(name: str) -> bool:
+def _is_requirements(rel: str) -> bool:
+    """`requirements*.txt`, or any `.txt` in a `requirements/` directory."""
+    *dirs, name = rel.split("/")
+    return name.endswith(".txt") and (name.startswith("requirements") or "requirements" in dirs)
+
+
+def _is_manifest(rel: str) -> bool:
+    name = rel.rsplit("/", 1)[-1]
     return name in ("Cargo.toml", "pyproject.toml", "setup.cfg", "environment.yml") or (
-        name.startswith("requirements") and name.endswith(".txt"))
+        _is_requirements(rel))
 
 
 def _manifest_markers(name: str, text: str) -> tuple[set[str], set[str]]:
@@ -246,7 +253,7 @@ def _markers(top: Path, files: list[str]) -> tuple[set[str], set[str]]:
     bindings, numeric = set(), set()
     for rel in files:
         name = rel.rsplit("/", 1)[-1]
-        if not _is_manifest(name) or _excluded(top, rel) or (text := _read(top / rel)) is None:
+        if not _is_manifest(rel) or _excluded(top, rel) or (text := _read(top / rel)) is None:
             continue
         try:
             found_bindings, found_numeric = _manifest_markers(name, text)

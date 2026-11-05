@@ -82,7 +82,8 @@ class TestSizeBase(RepoTestCase):
                     "web/app.test.ts", "web/app.spec.js", "vendor/lib.py",
                     "third_party/x.c", "web/node_modules/dep/index.js", "build/out.py",
                     "dist/bundle.js", "crate/target/debug/gen.rs", "generated/api.py",
-                    "proto/api_pb2.py", "README.md", "data/rows.json", "notes.txt"]
+                    "proto/api_pb2.py", "README.md", "data/rows.json", "notes.txt",
+                    "app/Tests/UnitTests.cs", "lib/Vendor/dep.rb"]
         for rel in excluded:
             self.write(rel, _lines(10000))
         self.assertEqual(self.level().reasons, ("1,000 source lines (python)",))
@@ -135,6 +136,11 @@ class TestMarkers(RepoTestCase):
         result = self.level()
         self.assertEqual(result.level, "heavy")
         self.assertEqual(result.reasons, ("40,000 source lines (python)",))
+
+    def test_a_requirements_directory_is_scanned(self):
+        self.write("src/app.py", _lines(1000))
+        self.write("requirements/base.txt", "pandas>=2\n")
+        self.assertEqual(self.level().level, "standard")
 
     def test_any_separator_spelling_of_a_marker_matches(self):
         for name in ("scikit.learn", "Scikit_Learn", "scikit--learn"):
