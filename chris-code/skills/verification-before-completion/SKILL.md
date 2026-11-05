@@ -122,13 +122,13 @@ Steps 1–5 trust the tests: if the suite is green, they treat the tested behavi
 
 Run when the change includes testable source; skip a docs-only diff. It is the most expensive gate and only meaningful on the green suite Steps 1–2 established.
 
-First resolve the rigor level, which sets how many breaks the tester makes and which survivors gate (`$SDD_SCRIPTS/../rigor.md`). With a plan, run `python3 "$SDD_SCRIPTS/rigor.py" --plan <plan> --store "$STORE" --files`. Its first line is the project level, and each later line is a file a plan task raised above it. Without a plan, run `python3 "$SDD_SCRIPTS/rigor.py"`. Exit 2 means a bad `Test rigor:` line in `CLAUDE.md` or a lowering `Rigor:` line in the plan: fix it and re-run.
+First resolve the rigor level, which sets how many breaks the tester makes and which survivors gate (`$SDD_SCRIPTS/../rigor.md`). With a plan (in close round 2, the remediation plan, matching `Range`), run `python3 "$SDD_SCRIPTS/rigor.py" --plan <plan> --store "$STORE" --files`. Its first line is the project level, and each later line is a file a plan task raised above it. Without a plan, run `python3 "$SDD_SCRIPTS/rigor.py"`. Exit 2 means a bad `Test rigor:` line in `CLAUDE.md` or a lowering `Rigor:` line in the plan: fix it and re-run.
 
-Dispatch the **`mutation-tester`** agent **with worktree isolation**, since it deliberately breaks code and must never touch the working tree. At `light`, pass `model: sonnet`. This is the one documented exception to each role running on its frontmatter model: a light change gets few breaks, and its survivors gate only on behavior its rows name.
+Dispatch the **`mutation-tester`** agent **with worktree isolation**, since it deliberately breaks code and must never touch the working tree. When the project level is `light` and no file is raised above it, pass `model: sonnet`. This is the one documented exception to each role running on its frontmatter model: a light change gets few breaks, and its survivors gate only on behavior its rows name (or, without a plan, on functions its tests call directly).
 
 ```
 Agent(subagent_type: "chris-code:mutation-tester", isolation: "worktree", prompt: ...)
-  # at light: Agent(..., model: "sonnet", ...)
+  # light, no raised files: Agent(..., model: "sonnet", ...)
 
 Inputs:
   - Mode: closing-review

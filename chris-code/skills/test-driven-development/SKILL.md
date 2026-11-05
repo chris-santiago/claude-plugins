@@ -112,7 +112,7 @@ Vague name, tests mock not code
 - Clear name
 - Real code (no mocks unless unavoidable)
 
-**Realistic first.** Test the cases a realistic caller hits before anything esoteric: the main paths, the errors a caller in the repo, user input, or a file or network input can trigger, and the boundaries the code explicitly handles. How far past that to go is set by the rigor level: the brief's `Rigor:` line, or without a brief, the project level from SDD's `scripts/rigor.py`. The levels are defined in SDD's `rigor.md`. Every test must be able to fail on the broken code at every level.
+**Realistic first.** Test the cases a realistic caller hits before anything esoteric: the main paths, and the errors a caller in the repo, user input, or a file or network input can trigger. How far past that to go is set by the rigor level: the brief's `Rigor:` line, or without a brief, the level `python3 <this skill's base directory>/../subagent-driven-development/scripts/rigor.py` prints. From `standard` up, add the boundaries the code explicitly handles. The levels are defined in SDD's `rigor.md`. Every test must be able to fail on the broken code at every level.
 
 **Edge cases at `heavy`** (from bug-hunter's adversarial testing categories):
 - Null/NaN/None in key fields; all-null input

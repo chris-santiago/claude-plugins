@@ -20,7 +20,7 @@ Every project got the same testing depth: plans listed esoteric boundaries, revi
 ### Changed
 - **Briefs state the level.** Every brief opens with `Rigor: <level> (<reasons>)`, and the coder and every reviewer of the task apply it.
 - **Reviewers rate missing cases by level.** Below `heavy`, a missing case no `Cases:` row names and no realistic caller hits is S1-S2, so it doesn't start a fix round. A test that can't fail is S3 at every level, and a missed `Cases:` row stays S3 or higher.
-- **Mutation scales per file.** Verification resolves the project level and the files raised tasks touched (`rigor.py --files`), and passes them with the plan path. At `light` the tester makes at most two breaks per changed function and gates only on behavior a `Cases:` row names (or, without a plan, on functions the change's tests call directly), and runs on sonnet. `heavy` keeps the previous behavior. The report states the level applied to each file.
+- **Mutation scales per file.** Verification resolves the project level and the files raised tasks touched (`rigor.py --files`), and passes them with the plan path. At `light` the tester makes at most two breaks per changed function and gates only on behavior a `Cases:` row names (or, without a plan, on functions the change's tests call directly), and it runs on sonnet when no file is raised above `light`. `heavy` keeps the previous behavior. The report states the level applied to each file.
 - **Planning and TDD start realistic.** lean-plan resolves the level before writing rows and checks them against it in self-review. TDD's edge-case list is now the `heavy` list, preceded by "realistic first".
 
 ## [0.11.0] - 2026-11-05 — The per-task loop routes by severity and reach

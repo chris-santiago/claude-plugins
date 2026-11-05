@@ -97,7 +97,7 @@ rigor.py [--repo DIR] --plan PLAN --store STORE --files
 - A bad `CLAUDE.md` value, or a task `Rigor:` line below the project level or unknown, exits 2 with the reason on stderr.
 - `--repo` defaults to the current directory's work tree.
 
-Module API: `project_level(repo) -> Resolution` and `task_level(project, plan_text, task) -> Resolution`, where `Resolution` carries `level` and `reasons`. The brief builder uses the module API.
+Module API: `project_level(repo) -> Resolution` and `task_level(project, declared, task) -> Resolution`, where `declared` is the task's `Rigor:` value (or none), where `Resolution` carries `level` and `reasons`. The brief builder uses the module API.
 
 ### 6.3 Heuristic inputs
 
@@ -123,7 +123,7 @@ Module API: `project_level(repo) -> Resolution` and `task_level(project, plan_te
 - The level never lowers below the project level for any task or file.
 - A `Cases:` row is required at every level, and a test that can't fail is S3 at every level.
 - The resolver is deterministic and stateless: no store writes, no network, no test runs.
-- Existing behavior is the `heavy` column. A project resolved or declared `heavy` sees no change from today except the explicit can't-fail S3 rule.
+- Existing behavior is the `heavy` column. A project resolved or declared `heavy` sees no change from today except the explicit can't-fail S3 rule, and coders naming the TDD edge-case list they already followed.
 - A plan or brief without `Rigor:` lines keeps working: every task takes the project level.
 
 ## 8. Key decisions and tradeoffs

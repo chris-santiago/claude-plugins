@@ -13,7 +13,7 @@ How deep a change is tested, reviewed for missing cases, and mutated. There are 
    - Numeric or ML dependencies (numpy, scipy, pandas, polars, torch, jax, tensorflow, scikit-learn, ndarray, nalgebra or arrow) raise it one step, capped at `heavy`.
 3. **No git work tree, or no tracked source:** `standard`.
 
-A plan task can carry `- Rigor: standard|heavy` to raise that task above the project level. It can never lower it: `task_brief.py` refuses a lower or unknown value. Every brief opens with `Rigor: <level> (<reasons>)`. That line is the level for the task's coder and every reviewer of the task. A dispatch never restates or lowers it. A role run without a brief, such as a standalone review or TDD on its own, uses the project level from `python3 <scripts-path>/rigor.py`, or `standard` when it has no scripts path.
+A plan task can carry `- Rigor: standard|heavy` to raise that task above the project level. It can never lower it: `task_brief.py` refuses a lower or unknown value. Every brief opens with `Rigor: <level> (<reasons>)`. That line is the level for the task's coder and every reviewer of the task. A dispatch never restates or lowers it. A role run without a brief, such as a standalone review or TDD on its own, uses the project level from `python3 <scripts-path>/rigor.py`, or `standard` when it has no scripts path. The mutation tester is the exception: a closing-review dispatch without a `Rigor:` line is missing an input, so it applies `heavy` and says so.
 
 ## The table
 
@@ -24,7 +24,7 @@ A plan task can carry `- Rigor: standard|heavy` to raise that task above the pro
 | **Reviewer: a missing case** | S3 when a `Cases:` row names it; otherwise S1-S2, unless a realistic caller hits it | S3 when a row names it or the code explicitly handles it; an exotic case is S1-S2 | S3 for any missing boundary case |
 | **Mutation breaks** | At most 2 per changed function, only in functions a row names or the change's tests call directly; the targeted test subset | Up to 3 per changed region; the targeted subset | A few per region, every region; the full suite where the covering subset is unclear |
 | **Mutation gating** (covered survivors) | Gates when it changes behavior a `Cases:` row names; without a plan, when it sits in a function the change's own tests call directly. Others are advisory | Gates when it changes behavior a row names, or sits in a function the change's tests call directly. Others are advisory | Every covered survivor gates |
-| **Mutation model** | sonnet | opus | opus |
+| **Mutation model** | sonnet, when no file is raised above `light` | opus | opus |
 
 A **realistic caller** is one that exists or plausibly will: a caller in the repo, user input, or a file, network or upstream-system input the code reads. An input that only a hostile or type-violating caller would produce is esoteric.
 

@@ -65,7 +65,7 @@ Look for obvious bugs the coder may have introduced:
 
 - Do tests verify behavior or just exercise code paths?
 - Are assertions specific (checking exact values/shapes) or vague (`assert result is not None`)?
-- Are cases covered to the brief's rigor level? Read its `Rigor:` line and apply the *Reviewer: a missing case* row of `<scripts-path>/../rigor.md`. Realistic cases come first (empty input, single element, the boundaries the code handles). A missing case the level doesn't call for is S1-S2, so it never starts a fix round.
+- Are cases covered to the brief's rigor level? Read its `Rigor:` line and apply the *Reviewer: a missing case* row of `<scripts-path>/../rigor.md`. Realistic cases come first. A missing case the level doesn't call for is S1-S2, so it never starts a fix round. Without a brief `Rigor:` line, use the level `python3 <scripts-path>/rigor.py` prints, or `standard` without a scripts path; the table is the plugin's `skills/subagent-driven-development/rigor.md`.
 - Do tests use real objects where possible, not excessive mocking?
 - Would a bug in the implementation actually cause a test to fail? A test that can't fail is S3 at every rigor level.
 - Are pins and RED proofs produced by the real path under test (or a documented mirror of it)? A fixture hand-built into a shape the production path never emits pins the wrong behavior — flag it.

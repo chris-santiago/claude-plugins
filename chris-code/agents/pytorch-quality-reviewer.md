@@ -66,7 +66,7 @@ These are the bugs that don't crash — they silently produce wrong training dyn
 - **Data pipeline test**: Is the DataModule tested independently (shapes, dtypes, value ranges, split sizes)?
 - **Checkpoint round-trip**: Is there a test that saves a checkpoint, loads it, and verifies predictions match?
 - **Test isolation**: Do ML tests use fixed seeds and deterministic operations? Or are they flaky?
-- **Rigor level**: Are cases covered to the brief's rigor level? Read its `Rigor:` line and apply the *Reviewer: a missing case* row of `<scripts-path>/../rigor.md`: realistic cases first, and a missing case the level doesn't call for is S1-S2. A test that can't fail is S3 at every level.
+- **Rigor level**: Are cases covered to the brief's rigor level? Read its `Rigor:` line and apply the *Reviewer: a missing case* row of `<scripts-path>/../rigor.md`: realistic cases first, and a missing case the level doesn't call for is S1-S2. A test that can't fail is S3 at every level. Without a brief `Rigor:` line, use the level `python3 <scripts-path>/rigor.py` prints, or `standard` without a scripts path; the table is the plugin's `skills/subagent-driven-development/rigor.md`.
 - **Fixture reality**: Are pins and RED proofs produced by the real path under test (or a documented mirror of it)? A fixture hand-built into a shape the pipeline never emits pins the wrong behavior — flag it.
 
 ### 5. General Bug Detection
