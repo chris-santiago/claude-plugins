@@ -62,8 +62,9 @@ class StoreTestCase(unittest.TestCase):
         prefix = ledger.scope_prefix(ledger.load_progress_log(self.store), task)
         (self.store / f"{prefix}-gate.json").write_text(json.dumps({
             "schema": 2, "agent": "ledger", "role": "gate", "task": task, "status": "pass",
-            "tree": "t", "files": [], "commands": [], "findings": [], "recurring": [],
-            "introduced_by_fix": []}), encoding="utf-8")
+            "tree": "t", "files": sorted(ledger.scope_footprint(self.store, ledger.load_progress_log(self.store), task) or []),
+            "commands": [], "findings": [], "recurring": [], "introduced_by_fix": []}),
+            encoding="utf-8")
 
     def assertRefused(self, fragment: str, func, *args, **kwargs) -> None:
         def snapshot() -> dict:

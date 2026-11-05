@@ -38,7 +38,7 @@ After all tasks complete, review the whole change to catch cross-task drift the 
 
 1. `BASE=$(git merge-base HEAD main)` (or the actual base), `HEAD=$(git rev-parse HEAD)`.
 2. Run `"$SDD_SCRIPTS/review-package" "$BASE" "$HEAD" "$STORE/review-whole-change.diff"` to write the multi-commit diff to that file and print its path. Pass the explicit outfile: the script's own default resolves the default store, which is wrong when the session overrode `--store`.
-3. Dispatch each matching `*-review-lite` agent with that package-file path, its record path from `path --task final --agent <agent-name>`, and the scripts path (`$SDD_SCRIPTS`, expanded). A block is a fix round: fix, commit it with `commit --task final --light --test "<the project's full test suite>"`, and re-dispatch at the same record path. Two rounds, then the user.
+3. Dispatch each matching `*-review-lite` agent with that package-file path, its record path from `path --task final --agent <agent-name>`, and the scripts path (`$SDD_SCRIPTS`, expanded). A block is a fix round: fix, commit it with `commit --task final --light --message "<message>" --test "<the project's full test suite>"` (a file no task listed joins the footprint first with `stage --task final --files <path>`), and re-dispatch at the same record path. Two rounds, then the user.
 
 ### Step 5: Complete Development
 

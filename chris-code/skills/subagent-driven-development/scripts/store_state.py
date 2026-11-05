@@ -58,6 +58,11 @@ def classify(*, has_entries: bool, plans: list[str], plan: str | None,
             return "fresh", _start(plan_tasks)
         return "ambiguous", ("the store holds work but records no plan (it predates plan "
                              "recording): read it with `read` and ask the user before clearing")
+    if remediation is not None and remediation["plan"] == plan and len(close_round_indices) == 1:
+        # The remediation plan is recorded only by its first brief, so it is
+        # recognized by the note before the `foreign` check.
+        return "remediation", _next_task(plan_tasks, completed, done="every remediation task is "
+                                         "done") + "; " + _after_remediation(remediation)
     if plan not in plans or plan_first_index is None:
         return "foreign", _clear("another plan's store")
     if not close_round_indices:
@@ -66,15 +71,11 @@ def classify(*, has_entries: bool, plans: list[str], plan: str | None,
             "verification-before-completion"))
     if len(close_round_indices) >= CLOSE_ROUND_CAP:
         return "finished", _clear("this run has closed")
-    is_remediation_plan = remediation is not None and remediation["plan"] == plan
-    if plan_first_index > close_round_indices[0] and not is_remediation_plan:
+    if plan_first_index > close_round_indices[0]:
         return "finished", _clear("the close round belongs to an earlier, closed run")
     if remediation is not None:
-        if not is_remediation_plan:
-            return "remediation", (f"this run's close handed off to {remediation['plan']}: "
-                                   "run that plan instead, on this store")
-        return "remediation", _next_task(plan_tasks, completed, done="every remediation task is "
-                                         "complete") + "; " + _after_remediation(remediation)
+        return "remediation", (f"this run's close handed off to {remediation['plan']}: "
+                               "run that plan instead, on this store")
     return "ambiguous", ("close round 1 has no remediation note (a close interrupted before "
                          "its note, or one that needed no remediation): ask the user before "
                          "clearing")
@@ -85,6 +86,10 @@ def _start(plan_tasks: list[int]) -> str:
 
 
 def _next_task(plan_tasks: list[int], completed: set[str], *, done: str) -> str:
+    if not plan_tasks:
+        # An unknown task list must never read as a finished one.
+        return ("couldn't read the plan's tasks (is the plan file there, with `Task N` "
+                "headings?): fix that, then run `run-state --plan` again before resuming")
     remaining = [t for t in plan_tasks if str(t) not in completed]
     return f"resume at task {remaining[0]}" if remaining else done
 

@@ -103,8 +103,8 @@ def _completable(store: Path, task: int | str) -> None:
     prefix = ledger.scope_prefix(ledger.load_progress_log(store), task)
     _write(store, f"{prefix}-gate.json", {
         "schema": 2, "agent": "ledger", "role": "gate", "task": task, "status": "pass",
-        "tree": "t", "files": [], "commands": [], "findings": [], "recurring": [],
-        "introduced_by_fix": []})
+        "tree": "t", "files": sorted(ledger.scope_footprint(store, ledger.load_progress_log(store), task) or []),
+        "commands": [], "findings": [], "recurring": [], "introduced_by_fix": []})
 
 
 def _write(store: Path, name: str, data: dict) -> Path:
@@ -2676,6 +2676,26 @@ class TestTriageBaseline(TriageStoreTestCase):
         self.triage("final")
         self.assertEqual(len([e for e in self.entries() if e["task"] == "final"]), 2)
 
+    def test_a_second_round_on_an_unchanged_tree_stays_open_until_a_newer_fix(self):
+        issue, other = _finding(), _finding(rule="other rule")
+        self.spec(issue, other)
+        self.triage()
+        tree = self.snapshots()[0]["tree"]
+        contest = [{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}]
+        self.finish(tree, contested=contest)  # changes no code
+        self.spec(issue, other, contests=[{"finding": self.spec_id(issue), "verdict": "concede",
+                                           "reason": "it holds"}])
+        self.triage()
+        self.assertEqual([s["tree"] for s in self.snapshots()], [tree, tree])
+        self.spec(issue, other, claim_note="rewritten", contests=[
+            {"finding": self.spec_id(issue), "verdict": "concede", "reason": "it holds"}])
+        self.triage()
+        self.assertEqual(len(self.entries()), 2)
+        self.coder(cycle=3, baseline=tree, **_FIX_FIELDS)
+        self.spec(contests=[{"finding": self.spec_id(issue), "verdict": "concede", "reason": "it holds"}])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
     def test_baseline_resolves_a_triage_taken_snapshot(self):
         self.spec(_finding())
         self.triage()
@@ -3454,6 +3474,13 @@ class TestGate(TriageStoreTestCase):
         self.assertEqual(self._git("diff", "--cached", "--name-only").split(), ["a.py"])
         self.assertEqual(self._git("diff", "--name-only").split(), ["z.py"])
 
+    def test_stage_final_adds_a_file_to_the_whole_change_footprint(self):
+        ledger.cmd_stage(self.store, "final", None, ["lib/y.py"])
+        footprint = ledger.scope_footprint(self.store, ledger.load_progress_log(self.store), "final")
+        self.assertEqual(footprint, {"a.py", "lib/y.py"})
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_stage(self.store, 4, None, ["b.py"])
+
     def test_the_final_footprint_adds_the_final_coders_changed_files(self):
         (self.repo / "lib").mkdir()
         (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
@@ -3595,13 +3622,43 @@ class TestCommit(TriageStoreTestCase):
         gate = json.loads((self.store / "task-3-gate.json").read_text())
         self.assertEqual(gate["status"], "fail")
 
-    def test_a_gate_already_passed_on_the_same_files_is_not_rerun(self):
+    def test_a_gate_already_passed_on_the_same_files_and_commands_is_not_rerun(self):
+        self.ready_to_commit()
+        runs = Path(self._tmp.name) / "runs"
+        test = f"echo run >> {runs}"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, test, None), 0)
+        code, out = self.commit(test=test)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(runs.read_text().count("run"), 1)
+
+    def gated_then_committed(self, test: str, lint: str | None) -> str:
+        """Pass a gate with `true`, then commit with `test` and `lint`."""
         self.ready_to_commit()
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ledger.cmd_gate(self.store, 3, "true", None), 0)
-        code, out = self.commit(test="exit 1")
-        self.assertEqual(code, 0, out)
-        self.assertNotIn("gate: fail", out)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(ledger.cmd_commit(self.store, 3, self.MESSAGE, test, lint), 1)
+        return out.getvalue()
+
+    def test_a_grown_footprint_is_gated_again(self):
+        self.ready_to_commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, "true", None), 0)
+        (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "new.py"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, 3, self.MESSAGE, "test ! -e new.py", None)
+        self.assertEqual(code, 1)
+        self.assertIn("gate: fail", out.getvalue())
+
+    def test_another_test_command_is_gated_again(self):
+        self.assertIn("gate: fail", self.gated_then_committed("exit 1", None))
+
+    def test_another_lint_command_is_gated_again(self):
+        self.assertIn("gate: fail", self.gated_then_committed("true", "exit 1"))
 
     def test_a_file_changed_since_the_passing_gate_is_gated_again(self):
         self.ready_to_commit()
@@ -3615,14 +3672,29 @@ class TestCommit(TriageStoreTestCase):
         self.assertEqual(self.commit(light=True)[0], 0)
         self.assertTrue(self.completes()[0]["light"])
 
-    def test_final_commits_the_final_coders_changed_files(self):
-        (self.repo / "lib").mkdir()
-        (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
-        self.write("final-python-review-lite.json", _review_lite(task="final"))
-        self.write("final-python-coder.json", _coder(task="final", changed_files=["lib/x.py"]))
-        self.triage("final")
-        self.assertEqual(self.commit(task="final")[0], 0)
+    def test_final_completes_at_done_after_its_fix_without_a_new_commit(self):
+        self.final_fix_round()
+        self.assertEqual(self.commit(task="final")[0], 0)  # the fix, for its re-check
+        fix_head = self.head()
         self.assertIn("lib/x.py", self._git("show", "--name-only", "--format=", "HEAD").split())
+        self.write("final-python-review-lite.json", _review_lite(task="final", cycle=2))
+        self.triage("final")
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        code, out = self.commit(task="final")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.head(), fix_head)
+        self.assertEqual([e["task"] for e in self.completes()], ["final"])
+
+    def test_a_final_with_nothing_to_fix_runs_the_suite_and_completes(self):
+        self.write("final-python-review-lite.json", _review_lite(task="final"))
+        self.triage("final")
+        before = self.head()
+        ran = Path(self._tmp.name) / "suite-ran"
+        code, out = self.commit(task="final", test=f"touch {ran}")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(ran.exists())
+        self.assertEqual(self.head(), before)
+        self.assertEqual([e["task"] for e in self.completes()], ["final"])
 
     def final_fix_round(self) -> None:
         """A whole-change gate whose lite review sent a patch, and the coder's
@@ -3669,6 +3741,48 @@ class TestCommit(TriageStoreTestCase):
         self.assertEqual(code, 1)
         self.assertIn("hook says no", out)
         self.assertEqual((self.head(), self.completes()), (before, []))
+
+    def test_a_file_the_gate_rewrote_is_not_committed_until_gated_again(self):
+        self.ready_to_commit()
+        before = self.head()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, 3, self.MESSAGE, "true", "printf 'x = 3\\n' > a.py")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.head(), before)
+        self.assertIn("a.py", out.getvalue())
+        self.assertEqual(self.commit()[0], 0)
+        self.assertEqual(self._git("show", "HEAD:a.py"), "x = 3\n")
+        self.assertEqual(len(self.completes()), 1)
+
+    def test_paths_with_spaces_and_non_ascii_names_are_staged_and_committed(self):
+        for name in ("my file.py", "café.py"):
+            (self.repo / name).write_text("v = 1\n", encoding="utf-8")
+        self._git("add", "my file.py", "café.py")
+        self._git("commit", "-qm", "odd names")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "my file.py", "café.py"])
+        (self.repo / "my file.py").unlink()
+        (self.repo / "café.py").write_text("v = 2\n", encoding="utf-8")
+        self.ready_to_commit()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        committed = self._git("show", "--name-only", "--format=", "-z", "HEAD").strip("\0").split("\0")
+        self.assertEqual(sorted(committed), sorted(["a.py", "café.py", "my file.py"]))
+        self.assertEqual(self._git("status", "--porcelain"), "")
+
+    def test_the_message_is_kept_verbatim_whatever_the_cleanup_config(self):
+        self._git("config", "commit.cleanup", "strip")
+        message = "Subject\n\n\n\nbody line   \n# Why: kept\n"
+        self.ready_to_commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_commit(self.store, 3, message, "true", None), 0)
+        self.assertEqual(self._git("cat-file", "commit", "HEAD").split("\n\n", 1)[1], message)
+
+    def test_an_unreadable_gate_record_means_gate_again(self):
+        self.ready_to_commit()
+        (self.store / "task-3-gate.json").write_text("not json", encoding="utf-8")
+        log = ledger.load_progress_log(self.store)
+        self.assertFalse(ledger._gate_passed_on_staged(self.store, log, 3, self.repo, ["a.py"], "true", None))
 
     def test_a_refused_complete_after_the_commit_reports_it_and_keeps_it(self):
         self.ready_to_commit()
@@ -3793,8 +3907,8 @@ class TestReady(TriageStoreTestCase):
     def test_a_light_completion_is_recorded_and_reported(self):
         _write(self.store, "task-3-gate.json", {
             "schema": 2, "agent": "ledger", "role": "gate", "task": 3, "status": "pass",
-            "tree": self._git("write-tree").strip(), "files": [], "commands": [], "findings": [],
-            "recurring": [], "introduced_by_fix": []})
+            "tree": self._git("write-tree").strip(), "files": ["a.py"], "commands": [],
+            "findings": [], "recurring": [], "introduced_by_fix": []})
         ledger.cmd_append(self.store, "complete", 3, "shipped", light=True)
         self.assertTrue(ledger.load_progress_log(self.store)[-1]["light"])
         report = ledger.render_report(ledger.load_progress_log(self.store), [])
@@ -3884,6 +3998,28 @@ class TestPlansAndVerdict(GitRepoTestCase):
         self.assertEqual(lines[0], "Verdict: remediation")
         self.assertIn("task 3", lines[1])
         self.assertIn("plans/b.md", self._state("plans/a.md")[1])
+
+    def test_a_remediation_plan_resumes_before_its_first_brief(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        _completable(self.store, 1)
+        ledger.cmd_append(self.store, "complete", 1, "commits a..b")
+        ledger._append_progress(self.store, {"type": "close_round", "round": 1, "head": "h",
+                                             "note": "plans/a.md"})
+        ledger.cmd_append(self.store, "progress", "final",
+                          "close-gate remediation r1: plan plans/b.md, decision d.md, "
+                          "intent i.md, front-end coherent-change")
+        lines = self._state("plans/b.md")
+        self.assertEqual(lines[0], "Verdict: remediation")
+        self.assertIn("task 3", lines[1])
+
+    def test_an_unreadable_plan_never_reads_as_every_task_complete(self):
+        ledger.record_plan(self.store, "plans/a.md")
+        _completable(self.store, 1)
+        ledger.cmd_append(self.store, "complete", 1, "commits a..b")
+        (self.repo / "plans" / "a.md").unlink()
+        next_line = self._state()[1]
+        self.assertNotIn("every task is complete", next_line)
+        self.assertIn("couldn't read", next_line)
 
     def test_read_renders_a_plan_entry(self):
         ledger.record_plan(self.store, "plans/a.md")

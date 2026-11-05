@@ -74,6 +74,12 @@ class TestResume(unittest.TestCase):
         _, nxt = classify(completed=(1, 3))
         self.assertIn("task 2", nxt)
 
+    def test_an_unknown_task_list_never_reads_as_complete(self):
+        verdict, nxt = classify(completed=(1,), plan_tasks=())
+        self.assertEqual(verdict, "resume")
+        self.assertNotIn("complete", nxt)
+        self.assertIn("couldn't read", nxt)
+
     def test_every_task_complete_points_at_the_whole_change_gate(self):
         verdict, nxt = classify(completed=(1, 2, 3, 4))
         self.assertEqual(verdict, "resume")
@@ -120,6 +126,13 @@ class TestRemediation(unittest.TestCase):
                                 remediation=self.NOTE)
         self.assertEqual(verdict, "remediation")
         self.assertIn(REMEDIATION, nxt)
+
+    def test_the_remediation_plan_is_a_remediation_run_before_its_first_brief(self):
+        verdict, nxt = classify(plans=(PLAN,), plan=REMEDIATION, plan_first_index=None,
+                                completed=(1, 2, 3, 4, 5), plan_tasks=(6, 7),
+                                close_round_indices=(9,), remediation=self.NOTE)
+        self.assertEqual(verdict, "remediation")
+        self.assertIn("task 6", nxt)
 
     def test_a_note_without_a_front_end_still_resumes(self):
         verdict, _ = classify(plans=(PLAN, REMEDIATION), plan=REMEDIATION, plan_first_index=12,

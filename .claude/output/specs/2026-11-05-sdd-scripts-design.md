@@ -42,6 +42,7 @@ Four mechanical decisions that subagent-driven-development (SDD), verification-b
 | 1 | the progress log is empty | `fresh` | start at the plan's first task |
 | 2 | no plan recorded, nothing completed, no close round | `fresh` | start at the plan's first task (only setup entries exist) |
 | 3 | no plan recorded, and something completed or a close round exists | `ambiguous` | the store predates plan recording: read it and ask the user before clearing |
+| 3a | one close round, and the remediation note names the requested plan (recorded or not: its first brief records it) | `remediation` | as row 8 |
 | 4 | the requested plan is not recorded | `foreign` | another plan's store: `clear` it (show `report` first when anything is open) |
 | 5 | no close round | `resume` | the plan's first task `completed` doesn't list; when every task is complete, the whole-change gate, then verification |
 | 6 | two close rounds | `finished` | this run has closed: `clear` before starting again |
@@ -50,7 +51,7 @@ Four mechanical decisions that subagent-driven-development (SDD), verification-b
 | 9 | one close round, no remediation note | `ambiguous` | a close interrupted before its note, or a close that needed no remediation: ask the user |
 
 - A **remediation note** is a `progress` entry on task `final` whose note starts `close-gate remediation r1:` and names `plan <path>` and `front-end <skill>` (the format verification already logs).
-- A plan's task numbers come from its task headings, parsed the way `task_brief.py` parses them. A `--plan` path that doesn't exist is a usage error.
+- A plan's task numbers come from its task headings, parsed the way `task_brief.py` parses them. A `--plan` path that doesn't exist is a usage error. A plan whose tasks can't be read (a recorded plan since moved, or no `Task N` headings) never reads as complete: `Next` says the task list couldn't be read.
 
 ### 4.3 `ledger.py commit`
 
@@ -59,13 +60,13 @@ Four mechanical decisions that subagent-driven-development (SDD), verification-b
 1. **Ready.** The blockers `ready` reports (`--light` passes through). Any blocker: print them, exit 1, stage nothing.
 2. **Footprint.** For a task, the latest `stage` footprint. For `final`, every task's footprint plus the `changed_files` of the scope's coder records. For a task, a `changed_files` entry on its latest coder record outside the footprint is refused, naming the files and telling the orchestrator to re-issue `stage`.
 3. **Stage.** Every change under the footprint paths (edits, new files, deletions), and nothing else.
-4. **Gate.** The `gate` checks (labels, lint, test) on the staged footprint, writing the gate record. When the last gate record passed on exactly the tree just staged, the gate is not re-run. A failure: print the gate lines, exit 1, no commit.
-5. **Commit.** Only the footprint paths, with MSG verbatim. Paths other tasks staged stay staged and are not committed. Git hooks run normally; a refused commit exits 1 with git's output and appends nothing.
+4. **Gate.** The `gate` checks (labels, lint, test) on the staged footprint, writing the gate record. The gate is not re-run only when the last gate record passed on the same footprint files, staged as they are now, with the same test and lint commands. A failure: print the gate lines, exit 1, no commit. A staged file whose working copy changed while the gate ran (a formatter in the lint command) stops the commit, exit 1, until it is gated again.
+5. **Commit.** Only the footprint paths, with MSG verbatim (`--cleanup=verbatim`), path names read NUL-delimited so a space or non-ASCII name is exact. Paths other tasks staged stay staged and are not committed. Git hooks run normally; a refused commit exits 1 with git's output and appends nothing.
 6. **Complete.** Append `complete` for the scope with note `commits <before7>..<after7>` (and `light` when given), through the existing checks. If they refuse (a hook changed a gated file), print the new commit and the refusal and exit 1; the commit is never undone.
 
 It prints the gate lines, `committed <hash>`, and `<scope> complete`.
 
-**A whole-change fix** is committed before review-lite re-checks it. At `final`, when the latest triage step is a fix whose coder has finished (§4.1), `commit` skips steps 1 and 6: it stages, gates and commits the fix, and prints that the fix awaits its re-check. The scope completes through `commit` once triage reaches `done`. An unfinished final fix, or a task mid-fix, is refused by step 1 as usual.
+**A whole-change fix** is committed before review-lite re-checks it. At `final`, when the latest triage step is a fix whose coder has finished (§4.1), `commit` skips steps 1 and 6: it stages, gates and commits the fix, and prints that the fix awaits its re-check. The scope completes through `commit` once triage reaches `done`: the gate then runs over HEAD (at `final` it runs even with nothing staged), and with nothing left uncommitted `final` completes without a new commit. `stage --task final --files` adds a file outside every task to `final`'s footprint, for the light path, which has no final coder record. An unfinished final fix, or a task mid-fix, is refused by step 1 as usual.
 
 `gate` changes to stage the footprint itself (the same rule as step 3), so re-checking a gate finding is `gate` then `triage`, with no staging step in prose.
 

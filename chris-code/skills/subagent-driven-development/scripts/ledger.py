@@ -1094,6 +1094,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             ids = ", ".join(f"`{n}`" for n in entry.get("notes", [])) or "(none)"
             lines.append(f"- task {entry.get('task')} received notes via "
                           f"{entry.get('via')}: {ids}")
+        elif entry.get("type") == "stage" and entry.get("task") == "final":
+            lines.append(f"- the whole-change gate's footprint adds: "
+                          f"{', '.join(entry.get('files', []))}")
         elif entry.get("type") == "stage":
             lines.append(f"- task {entry.get('task')} in stage {entry.get('stage')}: "
                           f"{', '.join(entry.get('files', []))}")
@@ -1346,13 +1349,21 @@ def _normalize_path(path: str) -> str:
     return posixpath.normpath(path.strip().replace("\\", "/"))
 
 
-def cmd_stage(store_dir: Path, task: int, stage: int, files: list[str]) -> None:
+def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[str]) -> None:
     """Record `task`'s stage and file footprint. Tasks in one stage run in
     parallel on one working tree, so a footprint sharing a path with another
-    unfinished task in the same stage is refused."""
+    unfinished task in the same stage is refused. `final` takes no stage: its
+    files join the whole-change gate's footprint (a fix outside every task)."""
     footprint = sorted({_normalize_path(f) for f in files if f.strip()})
     if not footprint or "." in footprint:
         raise RecordError(f"--files: got {files!r}, expected the paths task {task} will touch")
+    if task == "final":
+        with store_lock(store_dir):
+            _append_progress(store_dir, {"type": "stage", "task": "final", "files": footprint,
+                                         "at": _now()})
+        return
+    if stage is None:
+        raise RecordError(f"task {task} needs --stage: the stage it runs in")
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
         done = set(completed_task_ids(log))
@@ -2528,7 +2539,8 @@ def task_footprint(log: list[dict], task: int | str) -> set[str] | None:
     integer task has no stage entry."""
     stages = stage_map(log)
     if task == "final":
-        return {f for entry in stages.values() for f in entry.get("files", [])}
+        added = [e for e in log if e.get("type") == "stage" and e.get("task") == "final"]
+        return {f for entry in [*stages.values(), *added[-1:]] for f in entry.get("files", [])}
     entry = stages.get(task)
     return None if entry is None else set(entry.get("files", []))
 
@@ -2921,7 +2933,8 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             # The fix's baseline, taken in the same lock so nothing sits
             # between the step and the snapshot that `fix_round` pairs.
             snapshot = {"type": "snapshot", "task": task, "tree": entry["tree"],
-                        "label": f"triage {entry['kind']} round {entry['round']}"}
+                        "label": f"triage {entry['kind']} round {entry['round']}",
+                        "coder_cycle": coder.data["cycle"] if coder else None}
             _append_progress(store_dir, snapshot)
         footprint = scope_footprint(store_dir, load_progress_log(store_dir), task)
     print(_render_triage(entry, filed_notes, snapshot, footprint))
@@ -2945,12 +2958,16 @@ def _round_baseline(log: list[dict], task: int | str) -> dict | None:
 def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                  baseline: dict | None) -> bool:
     """True while the latest step's fix hasn't finished: no coder record in
-    the scope is done (or done with concerns) from that step's baseline."""
+    the scope is done (or done with concerns) from that step's baseline, at
+    a cycle newer than the coder record the step saw. The cycle matters when
+    a round changed no code, so the next step's snapshot is the same tree."""
     if baseline is None:
         return False
+    seen = baseline.get("coder_cycle")
     coders = _scope_records(store_dir, scope_prefix(log, task)).coders
     return not any(r.data.get("status") in DIAGNOSIS_STATUSES
-                   and r.data.get("baseline") == baseline["tree"] for r in coders)
+                   and r.data.get("baseline") == baseline["tree"]
+                   and (seen is None or r.data.get("cycle", 0) > seen) for r in coders)
 
 
 def _inputs_digest(inputs: dict, reviewers: list[Record], coder: Record | None) -> str:
@@ -3021,9 +3038,15 @@ def _gate_path(store_dir: Path, log: list[dict], task: int | str) -> Path:
     return store_dir / f"{scope_prefix(log, task)}-gate.json"
 
 
+def _git_paths(top: Path, *args: str) -> list[str]:
+    """A git command's NUL-delimited path list: unquoted, so a name with a
+    space or a non-ASCII character comes back exactly as on disk."""
+    return [p for p in _git(top, *args).split("\0") if p]
+
+
 def _staged_scope(top: Path, files: list[str]) -> list[str]:
-    out = _git(top, "diff", "--cached", "--name-only", "--no-relative", "HEAD", "--", *files)
-    return sorted(line for line in out.splitlines() if line.strip())
+    return sorted(_git_paths(top, "diff", "--cached", "--name-only", "-z", "--no-relative",
+                             "HEAD", "--", *files))
 
 
 def scope_footprint(store_dir: Path, log: list[dict], task: int | str) -> set[str] | None:
@@ -3042,7 +3065,7 @@ def _stage_footprint(top: Path, files: list[str]) -> None:
     """Stage every change under the footprint paths (edits, new files and
     deletions) and nothing else. A path that is neither on disk nor tracked
     has nothing to stage."""
-    tracked = set(_git(top, "ls-files", "--full-name", "--", *files).split())
+    tracked = set(_git_paths(top, "ls-files", "--full-name", "-z", "--", *files))
     present = [f for f in files if (top / f).exists() or f in tracked]
     if present:
         _git(top, "add", "-A", "--", *present)
@@ -3079,13 +3102,16 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
         files = sorted(footprint)
         _stage_footprint(top, files)
         staged = _staged_scope(top, files)
-        if not staged:
+        if not staged and task != "final":
             raise RecordError(f"nothing to gate: task {task!r}'s files ({', '.join(files)}) "
                               "have no changes")
+        # At `final` with every fix already committed, the gate still runs
+        # the suite, over HEAD.
         tree = _git(top, "write-tree").strip()
         coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
         hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
-                                   coder.data.get(CONCERN_FIELD, []) if coder else [])
+                                   coder.data.get(CONCERN_FIELD, []) if coder else []) \
+            if staged else []
     commands = [{"kind": "labels", "command": "ledger.py labels (staged)",
                  "passed": not hits,
                  "excerpt": "\n".join(f"{h.path}:{h.line}: {h.label}: {h.text}"
@@ -3138,17 +3164,28 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     files = sorted(footprint)
     _check_coder_inside_footprint(store_dir, log, task, footprint)
     _stage_footprint(top, files)
-    if not _gate_passed_on_staged(store_dir, log, task, top) \
+    if not _gate_passed_on_staged(store_dir, log, task, top, files, test, lint) \
             and cmd_gate(store_dir, task, test, lint) != 0:
         return 1
     before = _git(top, "rev-parse", "HEAD").strip()
     staged = _staged_scope(top, files)
     if not staged:
+        if task == "final" and not final_fix:
+            # Every whole-change fix was committed for its re-check, and
+            # the gate just checked HEAD: the scope completes as it stands.
+            return _complete(store_dir, task, f"nothing left to commit; the change is at "
+                                              f"{before[:7]}", light)
         # An empty path list would commit the whole index, other tasks' too.
         print(f"{_scope_name(task)}: nothing to commit in {', '.join(files)}")
         return 1
-    done = subprocess.run(["git", "commit", "--only", "-m", message, "--", *staged], cwd=top,
-                          capture_output=True, text=True, errors="replace")
+    rewritten = _git_paths(top, "diff", "--name-only", "-z", "--", *staged)
+    if rewritten:
+        print(f"{', '.join(rewritten)} changed while the gate ran (a formatter, say), so the gate "
+              "didn't check what would be committed: run `commit` again to gate the new content")
+        return 1
+    done = subprocess.run(["git", "commit", "--only", "--cleanup=verbatim", "-m", message,
+                           "--", *staged], cwd=top, capture_output=True, text=True,
+                          errors="replace")
     if done.returncode != 0:
         print((done.stdout + done.stderr).strip())
         print(f"{_scope_name(task)}: git refused the commit")
@@ -3158,8 +3195,12 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     if final_fix:
         print("final: the fix is committed; re-check it, then run `triage --task final`")
         return 0
+    return _complete(store_dir, task, f"commits {before[:7]}..{after[:7]}", light)
+
+
+def _complete(store_dir: Path, task: int | str, note: str, light: bool) -> int:
     try:
-        cmd_append(store_dir, "complete", task, f"commits {before[:7]}..{after[:7]}", light)
+        cmd_append(store_dir, "complete", task, note, light)
     except RecordError as e:
         print(f"{_scope_name(task)} not completed: {e}")
         return 1
@@ -3181,15 +3222,20 @@ def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | 
                           "recorded footprint: re-issue `ledger.py stage` with those files")
 
 
-def _gate_passed_on_staged(store_dir: Path, log: list[dict], task: int | str, top: Path) -> bool:
-    """The scope's last gate passed on exactly the staged contents of the
-    files it gated, so running it again would check nothing new."""
-    path = _gate_path(store_dir, log, task)
-    if not path.is_file():
+def _gate_passed_on_staged(store_dir: Path, log: list[dict], task: int | str, top: Path,
+                           files: list[str], test: str, lint: str | None) -> bool:
+    """The scope's last gate passed on these same files, staged exactly as
+    they are now, with these same commands, so running it again would check
+    nothing new. An unreadable gate record means gate again."""
+    try:
+        gate = json.loads(_gate_path(store_dir, log, task).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return False
-    gate = json.loads(path.read_text(encoding="utf-8"))
-    return gate.get("status") == "pass" and all(
-        _blob(top, gate["tree"], f) == _blob(top, "", f) for f in gate.get("files", []))
+    ran = {c.get("kind"): c.get("command") for c in gate.get("commands", [])
+           if c.get("kind") in ("lint", "test")}
+    wanted = {"test": test, **({"lint": lint} if lint else {})}
+    return gate.get("status") == "pass" and sorted(gate.get("files", [])) == files \
+        and ran == wanted and all(_blob(top, gate["tree"], f) == _blob(top, "", f) for f in files)
 
 
 def _gate_record(task: int | str, tree: str, commands: list[dict], files: list[str]) -> dict:
@@ -3224,6 +3270,9 @@ def _check_gate_matches_commit(store_dir: Path, task: int | str) -> None:
     gate = json.loads(path.read_text(encoding="utf-8"))
     if gate.get("status") != "pass":
         raise RecordError(f"task {task!r}'s last gate failed; fix, re-stage, and gate again")
+    footprint = scope_footprint(store_dir, log, task)
+    if footprint and sorted(footprint) != sorted(gate.get("files", [])):
+        raise RecordError(f"task {task!r}'s footprint changed since its last gate; gate again")
     top = _store_repo(store_dir)
     if top is None:
         return
@@ -3685,8 +3734,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage = sub.add_parser("stage", parents=[store_parent],
                               help="record a task's stage and file footprint; refuses a "
                                    "path shared with another unfinished task in the stage")
-    p_stage.add_argument("--task", required=True, type=_positive_int)
-    p_stage.add_argument("--stage", required=True, type=_positive_int)
+    p_stage.add_argument("--task", required=True, type=_task_arg,
+                         help="a task number, or 'final' to add files to the whole-change "
+                              "gate's footprint")
+    p_stage.add_argument("--stage", type=_positive_int, help="the stage (a task number needs it)")
     p_stage.add_argument("--files", required=True, nargs="+")
 
     p_handle = sub.add_parser("handle", parents=[store_parent],
