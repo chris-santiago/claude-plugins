@@ -59,7 +59,7 @@ __all__ = [
     "UsageError", "BriefValidationError",
     "ConsumesPointer", "ConsumesFindings", "BriefRequest",
     "extract_task_entry", "extract_section", "heading_section_numbers",
-    "find_consumes_pointers", "validate_consumes", "validate_cases",
+    "find_consumes_pointers", "validate_consumes", "validate_cases", "rigor_line",
     "build_brief", "run", "build_parser", "main",
 ]
 
@@ -89,6 +89,8 @@ CASES_OPEN_RE = re.compile(r"^open:\s*(?P<question>.*)$", re.IGNORECASE)
 # A `Verify:` line, with or without a list marker or bold label.
 VERIFY_LINE_RE = re.compile(
     r"^(\s*)(?:[-*+][ \t]+(?:\[[ xX]\][ \t]+)?|\d+[.)][ \t]+)?(?:\*\*)?Verify(?:\*\*)?:(?:\*\*)?\s*(.*)$")
+# A task's `Rigor:` line, in the same forms as `Cases:`; group 1 is its value.
+RIGOR_LINE_RE = re.compile(r"^\s*" + _LIST_MARKER + r"?(?:\*\*)?Rigor(?:\*\*)?:(?:\*\*)?\s*(.*)$")
 CASES_PLACEHOLDERS = frozenset({"none", "tbd", "todo", "-", "—", "–", "?", "na", "n.a", "n/a"})
 HEADING_NUMBER_RE = re.compile(r"^#{1,6}\s+(\d+(?:\.\d+)?)\.?(?=\s|$)")
 
@@ -589,6 +591,18 @@ def validate_verify(task_entry: str, task_n: str) -> None:
                 f"task {task_n}: 'Verify: {match.group(2).strip()}' has no command; write it in "
                 "backticks, one where exit 0 means pass (a zero-matches check is "
                 "`! rg -q '<pattern>' <paths>`)")
+
+
+def rigor_line(task_entry: str) -> str | None:
+    """The first word of the entry's first `Rigor:` line outside a code
+    fence, lowercased and undecorated, or None without one. Words after
+    it are the planner's note."""
+    for line, in_fence in _iter_fence_aware(task_entry.splitlines()):
+        m = None if in_fence else RIGOR_LINE_RE.match(line)
+        if m is not None:
+            words = _normalize(m.group(1)).split()
+            return words[0] if words else ""
+    return None
 
 
 def _cases_blocks(task_entry: str) -> list[list[str]]:

@@ -32,6 +32,8 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+import ledger  # this script's directory: the store's stage entries
+
 LEVELS = ("light", "standard", "heavy")
 LIGHT_BELOW = 5_000
 HEAVY_ABOVE = 30_000
@@ -89,12 +91,18 @@ def _git_lines(repo: Path, *args: str) -> list[str] | None:
     return [p for p in out.decode(errors="replace").split("\0") if p]
 
 
-def _excluded(rel: str) -> bool:
+def _excluded(top: Path, rel: str) -> bool:
+    """Tests, vendored and generated code, and tracked symlinks (git
+    tracks the link, not what it points at)."""
     *dirs, name = rel.split("/")
-    return bool(EXCLUDED_DIRS.intersection(dirs)) or bool(EXCLUDED_NAME_RE.search(name))
+    return (bool(EXCLUDED_DIRS.intersection(dirs)) or bool(EXCLUDED_NAME_RE.search(name))
+            or (top / rel).is_symlink())
 
 
 def _read(path: Path) -> str | None:
+    """A regular file's text, or None: a device or FIFO would never end."""
+    if not path.is_file():
+        return None
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -122,7 +130,7 @@ def _count_source(top: Path, files: list[str]) -> tuple[int, list[str]]:
     per_language: Counter[str] = Counter()
     for rel in files:
         language = LANGUAGES.get(Path(rel).suffix)
-        if language is None or _excluded(rel):
+        if language is None or _excluded(top, rel):
             continue
         text = _read(top / rel)
         if text is not None:
@@ -207,7 +215,7 @@ def _markers(top: Path, files: list[str]) -> tuple[set[str], set[str]]:
     """(binding markers, numeric markers) found in the tracked manifests."""
     bindings, numeric = set(), set()
     for rel in files:
-        if _excluded(rel):
+        if _excluded(top, rel):
             continue
         name = rel.rsplit("/", 1)[-1]
         if name not in ("Cargo.toml", "pyproject.toml", "setup.cfg", "environment.yml") and not (
@@ -265,20 +273,83 @@ def project_level(repo: Path) -> Resolution:
     return Resolution(level, tuple(reasons))
 
 
+def task_level(project: Resolution, declared: str | None, task: str) -> Resolution:
+    """A task's level from its plan `Rigor:` value (None when it has
+    none): the project level, or the higher one the line raises it to
+    (spec §4.2). A value below the project level, or no level, raises
+    RigorError."""
+    if declared is None or declared == project.level:
+        return project
+    if declared not in LEVELS or _rank(declared) < _rank(project.level):
+        raise RigorError(
+            f"task {task}: 'Rigor: {declared}' would lower or name no level; the project is "
+            f"{project.line()}. A task's Rigor: line can only raise it (standard or heavy)")
+    return Resolution(declared, (f"task {task} raised from {project.level}", *project.reasons))
+
+
+def _plan_task_level(task_brief, project: Resolution, plan_text: str, task: str) -> Resolution:
+    entry = task_brief.extract_task_entry(plan_text, task)
+    return task_level(project, task_brief.rigor_line(entry), task)
+
+
+def file_levels(task_brief, project: Resolution, plan_text: str,
+                store_dir: Path) -> dict[str, str]:
+    """Each file a raised task's latest stage footprint lists, at the
+    highest level among the tasks that list it. Staged tasks the plan
+    doesn't hold take the project level."""
+    levels: dict[str, str] = {}
+    for task, entry in sorted(ledger.stage_map(ledger.load_progress_log(store_dir)).items()):
+        try:
+            level = _plan_task_level(task_brief, project, plan_text, str(task)).level
+        except task_brief.UsageError:
+            continue
+        if level == project.level:
+            continue
+        for path in entry.get("files", []):
+            if _rank(level) > _rank(levels.get(path, project.level)):
+                levels[path] = level
+    return levels
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve the test rigor level.")
     parser.add_argument("--repo", default=".", help="a directory in the work tree (default: .)")
+    parser.add_argument("--plan", help="plan file whose task Rigor: lines to apply")
+    parser.add_argument("--task", help="with --plan: print this task's level")
+    parser.add_argument("--store", help="with --plan --files: the run's ledger store")
+    parser.add_argument("--files", action="store_true",
+                        help="with --plan --store: print the files above the project level")
     return parser
 
 
+def _run(args: argparse.Namespace, task_brief) -> list[str]:
+    project = project_level(Path(args.repo))
+    if args.plan is None:
+        return [project.line()]
+    plan_text = Path(args.plan).read_text(encoding="utf-8")
+    if args.task is not None:
+        return [_plan_task_level(task_brief, project, plan_text, args.task).line()]
+    levels = file_levels(task_brief, project, plan_text, Path(args.store))
+    return [project.line(), *(f"{levels[path]} {path}" for path in sorted(levels))]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    task_mode = args.task is not None and args.store is None and not args.files
+    files_mode = args.task is None and args.store is not None and args.files
+    if args.plan is None and (args.task is not None or args.store is not None or args.files):
+        parser.error("--task, --store, and --files need --plan")
+    if args.plan is not None and not (task_mode or files_mode):
+        parser.error("--plan takes either --task N, or --store STORE --files")
+    # Here, not at module level: task_brief imports this module.
+    import task_brief
     try:
-        project = project_level(Path(args.repo))
-    except RigorError as e:
+        lines = _run(args, task_brief)
+    except (RigorError, OSError, ledger.RecordError, task_brief.UsageError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
-    print(project.line())
+    print("\n".join(lines))
     return 0
 
 

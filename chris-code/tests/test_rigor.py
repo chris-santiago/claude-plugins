@@ -87,6 +87,15 @@ class TestSizeBase(RepoTestCase):
             self.write(rel, _lines(10000))
         self.assertEqual(self.level().reasons, ("1,000 source lines (python)",))
 
+    def test_tracked_symlinks_are_not_followed(self):
+        self.write("src/app.py", _lines(1000))
+        (self.repo / "src/zero.py").symlink_to("/dev/zero")
+        (self.repo / "requirements.txt").symlink_to("/dev/zero")
+        self.track()
+        proc = subprocess.run([sys.executable, str(RIGOR_PY), "--repo", str(self.repo)],
+                              capture_output=True, text=True, timeout=20)
+        self.assertEqual(proc.stdout, "light: 1,000 source lines (python)\n")
+
 
 class TestMarkers(RepoTestCase):
     def test_binding_floors_a_small_project_at_standard(self):
@@ -219,6 +228,97 @@ class TestProjectCli(RepoTestCase):
         proc = self.cli()
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout, "standard: 1,000 source lines (python); numpy +1\n")
+
+
+LIGHT = rigor.Resolution("light", ("1,000 source lines (python)",))
+STANDARD = rigor.Resolution("standard", ("6,000 source lines (python)",))
+
+
+class TestTaskLevel(unittest.TestCase):
+    def test_a_line_raises_the_task(self):
+        result = rigor.task_level(LIGHT, "heavy", "3")
+        self.assertEqual(result.level, "heavy")
+        self.assertEqual(result.reasons,
+                         ("task 3 raised from light", "1,000 source lines (python)"))
+
+    def test_a_line_equal_to_the_project_is_accepted(self):
+        self.assertEqual(rigor.task_level(STANDARD, "standard", "3"), STANDARD)
+
+    def test_no_line_takes_the_project_level(self):
+        self.assertEqual(rigor.task_level(STANDARD, None, "3"), STANDARD)
+
+    def test_a_lower_or_unknown_line_is_refused(self):
+        for declared in ("light", "extreme"):
+            with self.subTest(declared=declared):
+                with self.assertRaises(rigor.RigorError) as caught:
+                    rigor.task_level(STANDARD, declared, "3")
+                message = str(caught.exception)
+                self.assertIn("task 3", message)
+                self.assertIn(f"Rigor: {declared}", message)
+                self.assertIn(STANDARD.line(), message)
+
+
+PLAN = """# Plan
+
+## 5. Tasks
+
+### Task 1: risky kernel
+- Rigor: heavy
+- Cases: x → y
+
+### Task 2: parser
+- **Rigor:** `standard`
+- Cases: x → y
+
+### Task 3: wiring
+- Cases: n/a — wiring only
+
+```markdown
+- Rigor: heavy
+```
+
+## 6. Acceptance checks
+"""
+
+
+class TestPlanCli(RepoTestCase):
+    def setUp(self):
+        super().setUp()
+        self.write("src/app.py", _lines(1000))
+        self.write("plan.md", PLAN)
+
+    def test_task_line_raises(self):
+        proc = self.cli("--plan", str(self.repo / "plan.md"), "--task", "1")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout,
+                         "heavy: task 1 raised from light; 1,000 source lines (python)\n")
+
+    def test_a_fenced_line_is_ignored(self):
+        proc = self.cli("--plan", str(self.repo / "plan.md"), "--task", "3")
+        self.assertEqual(proc.stdout, "light: 1,000 source lines (python)\n")
+
+    def test_a_lowering_line_exits_2(self):
+        self.write("CLAUDE.md", "Test rigor: heavy\n")
+        proc = self.cli("--plan", str(self.repo / "plan.md"), "--task", "2")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("task 2", proc.stderr)
+        self.assertIn("heavy: set in CLAUDE.md", proc.stderr)
+
+    def test_files_take_the_highest_raising_task(self):
+        store = self.repo / ".sdd"
+        ledger = rigor.ledger
+        ledger.ensure_store(store)
+        ledger.cmd_stage(store, 1, 1, ["src/kernel.py", "src/shared.py"])
+        ledger.cmd_stage(store, 2, 2, ["src/shared.py", "src/parse.py"])
+        ledger.cmd_stage(store, 3, 3, ["src/wire.py"])
+        proc = self.cli("--plan", str(self.repo / "plan.md"), "--store", str(store), "--files")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.splitlines(), [
+            "light: 1,000 source lines (python)",
+            "heavy src/kernel.py",
+            "standard src/parse.py",
+            "heavy src/shared.py",
+        ])
 
 
 if __name__ == "__main__":
