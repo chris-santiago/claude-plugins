@@ -3116,13 +3116,18 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     a commit already made is never undone."""
     if not message.strip():
         raise RecordError("--message is empty: give the commit its message")
-    blockers = ready_blockers(store_dir, task, light)
+    log = load_progress_log(store_dir)
+    # A whole-change fix is committed before review-lite re-checks it, so
+    # it commits without `ready` or `complete` once the coder has finished
+    # the fix triage routed. The scope completes when triage reaches done.
+    final_fix = task == "final" and _round_baseline(log, task) is not None \
+        and not _fix_is_open(store_dir, log, task, _round_baseline(log, task))
+    blockers = [] if final_fix else ready_blockers(store_dir, task, light)
     if blockers:
         for blocker in blockers:
             print(f"- {blocker}")
         print(f"{_scope_name(task)}: not committed")
         return 1
-    log = load_progress_log(store_dir)
     footprint = scope_footprint(store_dir, log, task)
     if not footprint:
         raise RecordError(f"task {task!r} has no recorded footprint; record it with "
@@ -3150,6 +3155,9 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
         return 1
     after = _git(top, "rev-parse", "HEAD").strip()
     print(f"committed {after}")
+    if final_fix:
+        print("final: the fix is committed; re-check it, then run `triage --task final`")
+        return 0
     try:
         cmd_append(store_dir, "complete", task, f"commits {before[:7]}..{after[:7]}", light)
     except RecordError as e:

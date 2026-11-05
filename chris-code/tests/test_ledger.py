@@ -3624,6 +3624,41 @@ class TestCommit(TriageStoreTestCase):
         self.assertEqual(self.commit(task="final")[0], 0)
         self.assertIn("lib/x.py", self._git("show", "--name-only", "--format=", "HEAD").split())
 
+    def final_fix_round(self) -> None:
+        """A whole-change gate whose lite review sent a patch, and the coder's
+        finished fix from triage's baseline."""
+        (self.repo / "lib").mkdir()
+        self.write("final-python-review-lite.json",
+                   _review_lite(task="final", status="block", findings=[_finding(sites=["lib/x.py:1"])]))
+        self.triage("final")
+        (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
+        self.write("final-python-coder.json", _coder(
+            task="final", cycle=2, baseline=_baseline(self.store, "final"),
+            changed_files=["lib/x.py"], **_FIX_FIELDS))
+
+    def test_a_finished_final_fix_is_committed_for_its_re_check_without_completing(self):
+        self.final_fix_round()
+        code, out = self.commit(task="final")
+        self.assertEqual(code, 0, out)
+        self.assertIn("lib/x.py", self._git("show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual(self.completes(), [])
+        self.assertIn("re-check", out)
+
+    def test_an_unfinished_final_fix_is_not_committed(self):
+        self.final_fix_round()
+        self.write("final-python-coder.json", _coder(task="final", cycle=2, status="needs_context",
+                                                     baseline=_baseline(self.store, "final")))
+        before = self.head()
+        self.assertEqual(self.commit(task="final")[0], 1)
+        self.assertEqual(self.head(), before)
+
+    def test_a_task_mid_fix_is_still_refused(self):
+        self.spec(_finding())
+        self.triage()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.fixed(changed_files=["a.py"])
+        self.assertEqual(self.commit()[0], 1)
+
     def test_a_commit_git_refuses_appends_nothing(self):
         self.ready_to_commit()
         hook = self.repo / ".git" / "hooks" / "pre-commit"
