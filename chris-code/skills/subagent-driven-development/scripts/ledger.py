@@ -3315,24 +3315,35 @@ def _check_contest_answers(path: Path, data: dict) -> None:
 
 
 def changed_lines(diff: str) -> dict[str, set[int]]:
-    """New-side line numbers each file's hunks added or changed; a hunk that
-    only deletes marks the line it deleted before. Hunk line counts are
-    tracked (as `_file_line_changes` does), so an added line whose text
-    starts with `++ ` is never read as a file header."""
+    """New-side line numbers each file's hunks added or changed. A deletion
+    that nothing replaces marks the lines on each side of the gap it left,
+    whether or not context lines surround it. Hunk line counts are tracked
+    (as `_file_line_changes` does), so an added line whose text starts with
+    `++ ` is never read as a file header."""
     changed: dict[str, set[int]] = {}
-    path, line_no, old_left, new_left = None, 0, 0, 0
+    path, line_no, old_left, new_left, deleting = None, 0, 0, 0, False
+
+    def mark(*lines: int) -> None:
+        if path is not None:
+            changed.setdefault(path, set()).update(n for n in lines if n >= 1)
+
     for raw in diff.split("\n"):
         if old_left > 0 or new_left > 0:
             tag = raw[:1]
             if tag == "+":
-                new_left -= 1
-                if path is not None:
-                    changed.setdefault(path, set()).add(line_no)
+                new_left, deleting = new_left - 1, False
+                mark(line_no)
                 line_no += 1
             elif tag == "-":
-                old_left -= 1
+                old_left, deleting = old_left - 1, True
             elif tag != "\\":
+                if deleting:
+                    mark(line_no - 1, line_no)
+                    deleting = False
                 old_left, new_left, line_no = old_left - 1, new_left - 1, line_no + 1
+            if deleting and old_left <= 0 and new_left <= 0:
+                mark(line_no - 1, line_no)
+                deleting = False
             continue
         if raw.startswith("+++ "):
             path = _diff_side(raw[4:], "b/")
@@ -3341,8 +3352,9 @@ def changed_lines(diff: str) -> dict[str, set[int]]:
         if header:
             old_left = int(header.group(1) or 1)
             line_no, new_left = int(header.group(2)), int(header.group(3) or 1)
-            if new_left == 0 and path is not None:
-                changed.setdefault(path, set()).add(max(line_no, 1))
+            if new_left == 0:
+                # An empty new side names the line before the gap, not the next one.
+                line_no += 1
     return changed
 
 

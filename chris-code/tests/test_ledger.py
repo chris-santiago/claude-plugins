@@ -3370,9 +3370,35 @@ class TestChangedLines(unittest.TestCase):
         diff = '--- "a/sp ace.py"\n+++ "b/sp ace.py"\n@@ -1 +1 @@\n-x = 0\n+x = 1\n'
         self.assertEqual(ledger.changed_lines(diff), {"sp ace.py": {1}})
 
-    def test_a_pure_deletion_marks_the_line_it_removed(self):
+    def test_a_pure_deletion_marks_the_lines_on_each_side_of_it(self):
         diff = "--- a/a.py\n+++ b/a.py\n@@ -2 +1,0 @@\n-y = 2\n"
+        self.assertEqual(ledger.changed_lines(diff), {"a.py": {1, 2}})
+
+    def test_a_deletion_between_context_lines_marks_the_lines_on_each_side_of_it(self):
+        diff = ("--- a/a.py\n+++ b/a.py\n@@ -2,7 +2,6 @@\n l2\n l3\n l4\n-l5\n l6\n l7\n l8\n")
+        self.assertEqual(ledger.changed_lines(diff), {"a.py": {4, 5}})
+
+    def test_a_replaced_line_marks_only_itself(self):
+        diff = "--- a/a.py\n+++ b/a.py\n@@ -3,3 +3,3 @@\n l3\n-l4\n+l4 = 4\n l5\n"
+        self.assertEqual(ledger.changed_lines(diff), {"a.py": {4}})
+
+    def test_a_deletion_of_the_first_line_marks_the_new_first_line(self):
+        diff = "--- a/a.py\n+++ b/a.py\n@@ -1,4 +1,3 @@\n-l1\n l2\n l3\n l4\n"
         self.assertEqual(ledger.changed_lines(diff), {"a.py": {1}})
+
+
+class TestDeletionHunks(GitRepoTestCase):
+    """A row naming a line the fix deleted touches the fix's diff, in git's
+    default diff format, which wraps a deletion in context lines."""
+
+    def test_a_site_at_a_deleted_line_inside_the_file_touches_the_diff(self):
+        (self.repo / "a.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10)))
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "a.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10) if i != 5))
+        changed = ledger.changed_lines(ledger.diff_trees(self.repo, base, ledger.snapshot_tree(self.repo)))
+        self.assertTrue(ledger.site_touches("a.py:5", changed))
+        self.assertTrue(ledger.site_touches("a.py:4", changed))
+        self.assertFalse(ledger.site_touches("a.py:7", changed))
 
 
 class TestPlainSnapshot(LedgerTestCase):

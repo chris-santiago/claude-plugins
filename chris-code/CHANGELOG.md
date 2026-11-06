@@ -8,6 +8,11 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-11-06
+
+### Fixed
+- **A deleted line counts as changed.** `ledger.py`'s record of which lines a diff changed missed any deletion with code above and below it, because git's default diff surrounds it with context lines and only a deletion with none was counted. `check` then refused a fix whose sweep row or decision row claimed a hunk at a line it deleted, and a reviewer's `reopens` at a deleted site. A deletion that nothing replaces now marks the lines on each side of the gap it left, with or without context; an edited line still marks only itself.
+
 ## [0.14.2] - 2026-11-05
 
 ### Fixed
