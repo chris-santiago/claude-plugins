@@ -297,6 +297,9 @@ LABEL_SCANNED_NAMES = ("cmakelists.txt",)
 # A docstring may carry a string prefix: r"""..., rb"""..., u"""...
 DOCSTRING_OPEN_RE = re.compile(r"^[rRbBuUfF]{0,2}(?:\"\"\"|''')")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+# `changed_lines`' mark for a file with no new-side line to cite (deleted,
+# renamed or binary): every site in it touches the diff.
+WHOLE_FILE = 0
 
 
 class RecordError(Exception):
@@ -1863,11 +1866,12 @@ def diff_trees(repo: Path, base_tree: str, tree: str,
                paths: list[str] | tuple[str, ...] = ()) -> str:
     """The diff between two trees, limited to `paths`, in git's default
     format whatever the user's diff config says (color, external diff,
-    textconv, relative paths, prefixes)."""
+    textconv, rename and copy detection, relative paths, prefixes)."""
     if base_tree.startswith("-"):
         # Agents pass this argument; it must never reach git as an option.
         raise RecordError(f"tree id must not start with '-': got {base_tree!r}")
-    return _git(repo, "-c", "core.quotePath=true", "diff", "--no-color", "--no-ext-diff",
+    return _git(repo, "-c", "core.quotePath=true", "-c", "diff.renames=true",
+                "diff", "--no-color", "--no-ext-diff",
                 "--no-textconv",
                 "--no-relative", "--src-prefix=a/", "--dst-prefix=b/",
                 base_tree, tree, "--", *paths)
@@ -2337,12 +2341,13 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
     waived = _user_waived(log)
     sent = [f for f in entry["findings"]
             if f["tier"] not in ("defer", "held") and f["id"] not in waived]
+    _check_skips_are_notes(data, sent)
     if entry["kind"] in ("patch", "polish", "ruling"):
         _check_coverage(data, sent)
     if entry["kind"] in ("patch", "ruling"):
         _check_tests_first(data, [f for f in sent if f["tier"] != "note"])
     if entry["kind"] == "holistic":
-        _check_holistic_decision(path, data, entry, sent)
+        _check_holistic_decision(path, data, entry, sent, waived)
     if repo is None:
         return
     # Tasks in a stage share the working tree: read only this task's files,
@@ -2362,7 +2367,9 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
                               f"{row['hunk']}, which the fix didn't change")
     _check_flagged_rows(path, data, {f["id"] for f in sent} - _left_unfixed(data))
     for test in data.get("tests_first", []):
-        if "n/a" not in test and test["test"].split("::")[0] not in changed:
+        # A deleted or renamed-away file is marked WHOLE_FILE: it holds no new test.
+        lines = changed.get(test["test"].split("::")[0], set())
+        if "n/a" not in test and not lines - {WHOLE_FILE}:
             raise RecordError(f"{path}: tests_first names {test['test']}, which the fix diff "
                               "doesn't touch; write the failing test as part of the fix")
     _check_test_changes(path, data, diff)
@@ -2386,6 +2393,11 @@ def _check_coverage(data: dict, sent: list[dict]) -> None:
     if twice:
         raise RecordError(f"{', '.join(twice)} covered more than once; each sent finding "
                           "goes in exactly one place")
+
+
+def _check_skips_are_notes(data: dict, sent: list[dict]) -> None:
+    """Only a note can be skipped, in every kind of round: a skipped finding
+    is filed as a follow-up and needs no rows."""
     skipped = {i["finding"] for i in data.get("notes_skipped", [])}
     not_notes = sorted(f["id"] for f in sent if f["id"] in skipped and f["tier"] != "note")
     if not_notes:
@@ -2395,9 +2407,11 @@ def _check_coverage(data: dict, sent: list[dict]) -> None:
 def _left_unfixed(data: dict) -> set[str]:
     """Sent findings the fix leaves as they are. A contested finding isn't
     fixed, one raised to contract reach stops before its fix, and a skipped
-    note is skipped; none has a test to write or a flagged site to row."""
+    note is skipped; none has a test to write or a flagged site to row. A
+    finding the fix also sweeps is being fixed, whatever else lists it."""
+    swept = {fid for sweep in data.get("sweeps", []) for fid in sweep["findings"]}
     return {e["finding"] for field in ("contested", "reach_raised", "notes_skipped")
-            for e in data.get(field, [])}
+            for e in data.get(field, [])} - swept
 
 
 def _check_tests_first(data: dict, serious: list[dict]) -> None:
@@ -2408,11 +2422,14 @@ def _check_tests_first(data: dict, serious: list[dict]) -> None:
                           f"test first, or give an n/a category ({', '.join(TESTS_FIRST_NA)})")
 
 
-def _check_holistic_decision(path: Path, data: dict, entry: dict, sent: list[dict]) -> None:
+def _check_holistic_decision(path: Path, data: dict, entry: dict, sent: list[dict],
+                             waived: set[str]) -> None:
     """A holistic fix implements this round's decision doc, which passes
     `check`: it maps every case of every fix choice to a hunk, contests each
     finding the doc escalates (the raising reviewer answers in the round's
-    re-check), and fixes or skips each sent note no fix choice took."""
+    re-check), and fixes or skips each sent note no fix choice took. A
+    finding the user waived since is no longer the fix's: it isn't
+    contested, and a fix choice whose findings are all waived isn't built."""
     expected = entry.get("decision")
     named = Path(data.get("decision", "")).stem
     if named != expected:
@@ -2421,14 +2438,14 @@ def _check_holistic_decision(path: Path, data: dict, entry: dict, sent: list[dic
     doc = check_record(path.parent / f"{expected}.json")
     mapped = {(r["choice"], r["case"]) for r in data.get("decision_rows", [])}
     unmapped = [f"{c_idx}/{k_idx}" for c_idx, choice in enumerate(doc["choices"])
-                if choice["kind"] == "fix" for k_idx in range(len(choice["cases"]))
-                if (c_idx, k_idx) not in mapped]
+                if choice["kind"] == "fix" and not set(choice["findings"]) <= waived
+                for k_idx in range(len(choice["cases"])) if (c_idx, k_idx) not in mapped]
     if unmapped:
         raise RecordError(f"{path}: decision cases {', '.join(unmapped)} (choice/case) have no "
                           "decision_rows entry mapping them to a hunk")
     contested = {c["finding"] for c in data.get("contested", [])}
     uncontested = sorted(f for c in doc["choices"] if c["kind"] == "escalate"
-                         for f in c["findings"] if f not in contested)
+                         for f in c["findings"] if f not in contested | waived)
     if uncontested:
         raise RecordError(f"{path}: the decision escalates {', '.join(uncontested)}; contest "
                           "each with the decision's evidence (reason wrong or plan-conflict)")
@@ -3317,15 +3334,22 @@ def _check_contest_answers(path: Path, data: dict) -> None:
 def changed_lines(diff: str) -> dict[str, set[int]]:
     """New-side line numbers each file's hunks added or changed. A deletion
     that nothing replaces marks the lines on each side of the gap it left,
-    whether or not context lines surround it. Hunk line counts are tracked
-    (as `_file_line_changes` does), so an added line whose text starts with
-    `++ ` is never read as a file header."""
+    whether or not context lines surround it. A file with no new-side line
+    to cite is marked WHOLE_FILE: a deleted file, a binary change, a
+    rename's old name, and its new name when the rename changed no line.
+    Hunk line counts are tracked (as `_file_line_changes` does), so an added
+    line whose text starts with `++ ` is never read as a file header."""
     changed: dict[str, set[int]] = {}
     path, line_no, old_left, new_left, deleting = None, 0, 0, 0, False
+    old_path = header_path = renamed_to = None
 
     def mark(*lines: int) -> None:
         if path is not None:
             changed.setdefault(path, set()).update(n for n in lines if n >= 1)
+
+    def mark_whole(file: str | None) -> None:
+        if file is not None:
+            changed.setdefault(file, set()).add(WHOLE_FILE)
 
     for raw in diff.split("\n"):
         if old_left > 0 or new_left > 0:
@@ -3345,8 +3369,30 @@ def changed_lines(diff: str) -> dict[str, set[int]]:
                 mark(line_no - 1, line_no)
                 deleting = False
             continue
+        if raw.startswith("diff --git "):
+            mark_whole(renamed_to)
+            header_path = _git_header_path(raw[len("diff --git "):])
+            renamed_to = None
+            continue
+        if raw.startswith("rename from "):
+            mark_whole(_diff_side(raw[len("rename from "):], ""))
+            continue
+        if raw.startswith("rename to "):
+            # Whole only if no hunk follows to give it lines.
+            renamed_to = _diff_side(raw[len("rename to "):], "")
+            continue
+        if raw.startswith("Binary files "):
+            mark_whole(header_path or renamed_to)
+            continue
+        if raw.startswith("--- "):
+            old_path = _diff_side(raw[4:], "a/")
+            continue
         if raw.startswith("+++ "):
             path = _diff_side(raw[4:], "b/")
+            if path is None:
+                mark_whole(old_path)
+            if path == renamed_to:
+                renamed_to = None
             continue
         header = HUNK_HEADER_RE.match(raw)
         if header:
@@ -3355,14 +3401,31 @@ def changed_lines(diff: str) -> dict[str, set[int]]:
             if new_left == 0:
                 # An empty new side names the line before the gap, not the next one.
                 line_no += 1
+    mark_whole(renamed_to)
     return changed
 
 
+def _git_header_path(rest: str) -> str | None:
+    """The path a `diff --git a/<path> b/<path>` header names when both
+    sides agree (not a rename), C-quoting decoded; None otherwise. Splitting
+    the unquoted form in half keeps a path with spaces whole."""
+    if rest.startswith('"'):
+        quoted = re.match(r'"(?:[^"\\]|\\.)*" ', rest)
+        if quoted is None:
+            return None
+        old, new = _diff_side(quoted[0][:-1], "a/"), _diff_side(rest[quoted.end():], "b/")
+    else:
+        half = (len(rest) - 1) // 2
+        old, new = _diff_side(rest[:half], "a/"), _diff_side(rest[half + 1:], "b/")
+    return old if old is not None and old == new else None
+
+
 def site_touches(site: str, changed: dict[str, set[int]]) -> bool:
-    """Whether a site overlaps the changed lines (a bare path: any change)."""
+    """Whether a site overlaps the changed lines (a bare path, or a file
+    marked WHOLE_FILE: any change)."""
     match = SITE_RE.match(site)
     lines = changed.get(_normalize_path(match["path"]), set())
-    if match["start"] is None:
+    if match["start"] is None or WHOLE_FILE in lines:
         return bool(lines)
     start = int(match["start"])
     end = int(match["end"]) if match["end"] else start

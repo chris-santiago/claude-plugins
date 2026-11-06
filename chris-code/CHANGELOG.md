@@ -8,6 +8,14 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-11-06
+
+### Fixed
+- **A deleted, renamed or binary file counts as changed.** Such a file has no new-side lines in the diff, so `changed_lines` recorded nothing and `check` refused any row citing it, even by its bare path. It now marks the whole file, and any site in it touches the diff: a deleted file, a binary change, a rename's old name, and its new name when the rename changed no line (an edited rename keeps its line marks). A test the fix "wrote first" in a file it deleted is still refused. The fix diff also detects renames whatever the user's `diff.renames` setting says, so a copy no longer shows up with no lines.
+- **Only a note can be skipped, in every round.** 0.14.2 exempted skipped findings from listing their flagged sites as rows, but a holistic round never checked that a skipped finding was a note, so an S3+ could be skipped past its flagged sites and filed as a follow-up. `check` now refuses a skipped non-note in any round, and a finding the fix also sweeps keeps its flagged rows even if it's contested.
+- **A mid-round waiver reaches the decision doc.** In a holistic round, `check` still asked the coder to contest a waived finding the decision escalates, and to map a fix choice whose findings were all waived. Both now drop out with the waiver.
+- **The coders' protocol says how to cite a deletion:** by the new-file line beside the gap, or a deleted or renamed file by its bare path.
+
 ## [0.14.3] - 2026-11-06
 
 ### Fixed

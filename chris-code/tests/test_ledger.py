@@ -2887,6 +2887,19 @@ class TestFixChecks(TriageStoreTestCase):
                  tests_first=[{"finding": sent[0], "n/a": "existing", "reason": "r",
                                "test": "tests/test_a.py::test_x"}])
 
+    def test_a_written_test_in_a_file_the_fix_deleted_is_refused(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        (self.repo / "tests" / "test_a.py").unlink()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.fix(tree, sent, changed_files=["a.py", "tests/test_a.py"],
+                     tests_first=[{"finding": sent[0], "test": "tests/test_a.py::test_x",
+                                   "command": "pytest", "failed_output": "AssertionError"}],
+                     test_changes=[{"kind": "deleted", "test": "tests/test_a.py::test_x",
+                                    "old": "test_x", "new": "", "reason": "r"}])
+        self.assertIn("doesn't touch", str(ctx.exception))
+
     def test_a_patch_finding_without_tests_first_is_refused(self):
         sent = self.review()
         tree = self.snapshot()
@@ -3072,6 +3085,51 @@ class TestHolisticFix(TriageStoreTestCase):
         self.assertIn(fid, str(ctx.exception))
         self.holistic_fix(tree, contested=[{"finding": fid, "reason": "plan-conflict",
                                             "evidence": "plan §3: the decision's escalation"}])
+
+    def test_a_serious_finding_skipped_or_contested_while_swept_still_needs_its_flagged_rows(self):
+        issue = _finding(sites=["a.py:1"], reach="contract")
+        self.coder()
+        self.spec(issue, recurring=[{"site": "a.py:1", "why": "same rule as c1"}])
+        self.triage()
+        tree = _baseline(self.store, 3)
+        fid = self.spec_id(issue)
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, reviewer_records=["task-3-spec-reviewer"], choices=[_fix_choice([fid])]))
+        (self.repo / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+        rows = dict(decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}],
+                    hunk_map=[{"site": "a.py:2", "implements": "choice 0"}])
+        sweep = [{"findings": [fid], "rule": "size must be positive",
+                  "rows": [{"site": "a.py:2", "hunk": "a.py:2"}],
+                  "searched": {"command": "rg size", "result": "1 match"}}]
+        for name, extra, expected in (
+                ("skipped", {"notes_skipped": [{"finding": fid, "reason": "skip"}]}, "isn't a note"),
+                ("contested and swept", {"sweeps": sweep, "contested": [
+                    {"finding": fid, "reason": "wrong", "evidence": "e"}]}, "a.py:1")):
+            with self.subTest(name):
+                with self.assertRaises(ledger.RecordError) as ctx:
+                    self.holistic_fix(tree, **rows, **extra)
+                self.assertIn(expected, str(ctx.exception))
+
+    def waived_holistic_round(self, status: str, choice: dict) -> str:
+        """A holistic round whose decision covers one finding, which the user
+        then waives before the fix lands."""
+        issue = _finding(reach="contract")
+        tree = self.holistic_round(issue)
+        fid = self.spec_id(issue)
+        self.write("task-3-decision-c2.json", _decision(
+            [fid], task=3, status=status, reviewer_records=["task-3-spec-reviewer"],
+            choices=[{**choice, "findings": [fid]}]))
+        ledger.cmd_resolve(self.store, fid, "user ruling: land as-is, filed as a follow-up")
+        return tree
+
+    def test_an_escalated_finding_the_user_waives_mid_round_needs_no_contest(self):
+        tree = self.waived_holistic_round("escalated", {"kind": "escalate", "why": "the plan fixes the API",
+                                                        "evidence": "plan §3"})
+        self.holistic_fix(tree)
+
+    def test_a_fix_choice_whose_findings_the_user_waives_mid_round_needs_no_decision_rows(self):
+        tree = self.waived_holistic_round("decided", _fix_choice(["placeholder"]))
+        self.holistic_fix(tree)
 
 
 class TestUserDecisionsRouteBack(TriageStoreTestCase):
@@ -3388,17 +3446,69 @@ class TestChangedLines(unittest.TestCase):
 
 
 class TestDeletionHunks(GitRepoTestCase):
-    """A row naming a line the fix deleted touches the fix's diff, in git's
-    default diff format, which wraps a deletion in context lines."""
+    """A deletion is cited by the new-file lines on either side of the gap it
+    left, in git's default diff format, which wraps it in context lines. A
+    file the fix deleted, renamed or changed as binary counts as changed at
+    every site, since it has no new-side lines to cite."""
 
-    def test_a_site_at_a_deleted_line_inside_the_file_touches_the_diff(self):
+    def changed(self, base: str) -> dict[str, set[int]]:
+        return ledger.changed_lines(ledger.diff_trees(self.repo, base, ledger.snapshot_tree(self.repo)))
+
+    def test_the_lines_beside_a_deletion_inside_the_file_touch_the_diff(self):
         (self.repo / "a.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10)))
         base = ledger.snapshot_tree(self.repo)
         (self.repo / "a.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10) if i != 5))
-        changed = ledger.changed_lines(ledger.diff_trees(self.repo, base, ledger.snapshot_tree(self.repo)))
+        changed = self.changed(base)
         self.assertTrue(ledger.site_touches("a.py:5", changed))
         self.assertTrue(ledger.site_touches("a.py:4", changed))
         self.assertFalse(ledger.site_touches("a.py:7", changed))
+
+    def test_a_deleted_file_touches_the_diff_at_any_of_its_sites(self):
+        (self.repo / "legacy.py").write_text("def old():\n    return 1\n")
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "legacy.py").unlink()
+        changed = self.changed(base)
+        for site in ("legacy.py", "legacy.py:1-2", "legacy.py:2"):
+            self.assertTrue(ledger.site_touches(site, changed), site)
+        self.assertFalse(ledger.site_touches("a.py", changed))
+
+    def test_a_renamed_file_touches_the_diff_under_both_names(self):
+        (self.repo / "old.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10)))
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "old.py").rename(self.repo / "new.py")
+        changed = self.changed(base)
+        for site in ("old.py", "old.py:3", "new.py", "new.py:3"):
+            self.assertTrue(ledger.site_touches(site, changed), site)
+
+    def test_a_renamed_and_edited_file_keeps_its_line_marks_under_the_new_name(self):
+        (self.repo / "old.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10)))
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "old.py").unlink()
+        (self.repo / "new.py").write_text("".join(f"l{i} = {i * (i != 3)}\n" for i in range(1, 10)))
+        changed = self.changed(base)
+        self.assertTrue(ledger.site_touches("new.py:3", changed))
+        self.assertFalse(ledger.site_touches("new.py:8", changed))
+        self.assertTrue(ledger.site_touches("old.py:8", changed))
+
+    def test_a_copy_counts_whatever_the_users_rename_setting(self):
+        self._git("config", "diff.renames", "copies")
+        (self.repo / "src.py").write_text("".join(f"l{i} = {i}\n" for i in range(1, 10)))
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "dst.py").write_text((self.repo / "src.py").read_text())
+        # Copy detection only looks at sources the diff also modifies.
+        (self.repo / "src.py").write_text("l0 = 0\n" + (self.repo / "src.py").read_text())
+        self.assertTrue(ledger.site_touches("dst.py:4", self.changed(base)))
+
+    def test_a_changed_binary_file_touches_the_diff(self):
+        (self.repo / "img.bin").write_bytes(b"\x00\x01\x02")
+        base = ledger.snapshot_tree(self.repo)
+        (self.repo / "img.bin").write_bytes(b"\x00\x01\x03")
+        self.assertTrue(ledger.site_touches("img.bin", self.changed(base)))
+
+    def test_a_binary_file_with_a_space_in_its_name_is_named_whole(self):
+        diff = ("diff --git a/my img.bin b/my img.bin\nindex 1..2 100644\n"
+                "Binary files a/my img.bin and b/my img.bin differ\n")
+        self.assertTrue(ledger.site_touches("my img.bin", ledger.changed_lines(diff)))
 
 
 class TestPlainSnapshot(LedgerTestCase):
