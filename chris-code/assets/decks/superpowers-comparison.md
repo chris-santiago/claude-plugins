@@ -78,7 +78,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 |---|---|---|
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality review → scripted triage → commit gate), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
-| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step gate, run as a close round:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree) dispatched together, with the Requirements check alongside. Findings are triaged once; non-trivial ones go to remediation as one batch, capped at two rounds. |
+| **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Six-step gate, run as a close round:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree, run only when you choose it) dispatched together, with the Requirements check alongside. Findings are triaged once; non-trivial ones go to remediation as one batch, capped at two rounds. |
 | **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
 
 ---
@@ -111,7 +111,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
-| `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes, and runs advisory on-demand. |
+| `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes when you choose to run it, and runs advisory on-demand. |
 | `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can resolve a `cannot_verify` item without reading the code; forms no verdict. |
 
 ---

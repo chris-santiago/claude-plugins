@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2676,23 +2677,100 @@ class TestTriageBaseline(TriageStoreTestCase):
         self.triage("final")
         self.assertEqual(len([e for e in self.entries() if e["task"] == "final"]), 2)
 
+    def checked(self, **fields) -> None:
+        ledger.cmd_check(str(self.coder(**fields)))
+
+    def contest(self, issue: dict) -> dict:
+        return {"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}
+
+    def concede(self, issue: dict) -> dict:
+        return {"finding": self.spec_id(issue), "verdict": "concede", "reason": "it holds"}
+
     def test_a_second_round_on_an_unchanged_tree_stays_open_until_a_newer_fix(self):
         issue, other = _finding(), _finding(rule="other rule")
         self.spec(issue, other)
         self.triage()
         tree = self.snapshots()[0]["tree"]
-        contest = [{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}]
-        self.finish(tree, contested=contest)  # changes no code
-        self.spec(issue, other, contests=[{"finding": self.spec_id(issue), "verdict": "concede",
-                                           "reason": "it holds"}])
+        self.checked(cycle=2, baseline=tree, contested=[self.contest(issue), self.contest(other)],
+                     **_FIX_FIELDS)  # changes no code
+        self.spec(issue, other, contests=[self.concede(issue)])
         self.triage()
         self.assertEqual([s["tree"] for s in self.snapshots()], [tree, tree])
-        self.spec(issue, other, claim_note="rewritten", contests=[
-            {"finding": self.spec_id(issue), "verdict": "concede", "reason": "it holds"}])
+        self.spec(issue, other, claim_note="rewritten", contests=[self.concede(issue)])
         self.triage()
         self.assertEqual(len(self.entries()), 2)
-        self.coder(cycle=3, baseline=tree, **_FIX_FIELDS)
-        self.spec(contests=[{"finding": self.spec_id(issue), "verdict": "concede", "reason": "it holds"}])
+        self.checked(cycle=3, baseline=tree, contested=[self.contest(other)], **_FIX_FIELDS)
+        self.spec(contests=[self.concede(issue), self.concede(other)])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_fix_paused_before_the_next_round_lets_the_finished_round_close(self):
+        # The coder's pause overwrites the record that finished round 1.
+        issue, other = _finding(), _finding(rule="other rule")
+        self.checked()
+        self.spec(issue)
+        self.triage()
+        first = _baseline(self.store, 3)
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
+        self.checked(cycle=2, baseline=first, changed_files=["a.py"],
+                     contested=[self.contest(issue)], **mapped)
+        self.spec(other, contests=[self.concede(issue)])
+        self.checked(cycle=3, status="needs_context")  # dispatched before triage
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch"])
+        second = _baseline(self.store, 3)
+        self.assertNotEqual(second, first)
+        (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
+        self.checked(cycle=3, baseline=second, changed_files=["a.py"],
+                     contested=[self.contest(other)], **mapped)
+        self.spec(contests=[self.concede(issue), self.concede(other)])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_fix_paused_before_its_round_finishes_at_the_cycle_it_kept(self):
+        # A fix dispatched before triage has no Fix baseline, so the coder
+        # pauses at prior + 1; resumed with the baseline, it keeps that cycle.
+        for task, prefix in ((3, "task-3"), ("final", "final")):
+            with self.subTest(task=task):
+                self.store = ledger.ensure_store(self.repo / f".sdd-{prefix}")
+                ledger.cmd_stage(self.store, 3, 1, ["a.py"])
+                coder, reviewer = f"{prefix}-python-coder.json", f"{prefix}-python-review-lite.json"
+                if task == 3:
+                    self.coder()
+                    self.spec(_finding())
+                else:
+                    self.write(reviewer, _review_lite(task="final", status="block",
+                                                      findings=[_finding()]))
+                self.write(coder, _coder(task=task, cycle=2, status="needs_context"))
+                self.triage(task)
+                tree = _baseline(self.store, task)
+                (self.repo / "a.py").write_text(f"x = {prefix!r}\n", encoding="utf-8")
+                self.write(coder, _coder(task=task, cycle=2, baseline=tree, **_FIX_FIELDS))
+                if task == 3:
+                    self.spec()
+                else:
+                    self.write(reviewer, _review_lite(task="final"))
+                self.triage(task)
+                self.assertEqual([e["kind"] for e in self.entries() if e["task"] == task],
+                                 ["patch", "done"])
+
+    def test_a_snapshot_from_before_fix_cycles_stays_open_until_a_newer_fix(self):
+        self.coder()
+        self.spec(_finding())
+        self.triage()
+        path = self.store / ledger.PROGRESS_FILENAME
+        log = ledger.load_progress_log(self.store)
+        log[-1].pop("fix_cycle")
+        log[-1]["coder_cycle"] = 1
+        path.write_text("".join(json.dumps(e) + "\n" for e in log), encoding="utf-8")
+        tree = _baseline(self.store, 3)
+        self.coder(cycle=1, baseline=tree)
+        self.spec()
+        self.triage()
+        self.assertEqual(len(self.entries()), 1)
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.finish(tree)
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
@@ -3041,6 +3119,12 @@ class TestHolisticFix(TriageStoreTestCase):
         ledger.cmd_check(str(self.coder(decision="task-3-decision-c2", **fields,
                                         decision_rows=[{"choice": 0, "case": 0, "hunk": "a.py:2"}])))
 
+    def test_a_fix_paused_before_its_holistic_round_keeps_its_cycle_in_the_decision_name(self):
+        self.coder()
+        self.spec(_finding(reach="contract"))
+        self.coder(cycle=2, status="needs_context")  # dispatched before triage: no baseline
+        self.triage()
+        self.assertEqual(self.entries()[-1]["decision"], "task-3-decision-c2")
 
     def holistic_round(self, *issues: dict) -> str:
         """Review, triage to a holistic round, and snapshot for its fix."""
@@ -4629,6 +4713,174 @@ class TestCLI(LedgerTestCase):
         self.assertIn("working on it", result.stdout)
         self.assertIn("**COMPLETE**", result.stdout)
         self.assertIn("shipped", result.stdout)
+
+
+class TestScratch(GitRepoTestCase):
+    """A quality reviewer breaks code to see whether a test notices. It
+    reviews uncommitted work in a checkout other reviewers read at the same
+    time, so every break happens in a private copy of that working state."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = self.repo / ".sdd"
+
+    def _cli(self, *args):
+        return subprocess.run([sys.executable, str(LEDGER_PY), "scratch", *args,
+                               "--store", str(self.store)],
+                              cwd=self.repo, capture_output=True, text=True)
+
+    def test_the_copy_holds_uncommitted_and_new_files(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
+        copy = ledger.make_scratch(self.repo, self.store, "python-quality-reviewer-3")
+        self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 2\n")
+        self.assertEqual((copy / "new.py").read_text(encoding="utf-8"), "n = 1\n")
+
+    def test_breaking_the_copy_leaves_the_checkout_alone(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        status = self._git("status", "--porcelain")
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        (copy / "a.py").write_text("x = 99\n", encoding="utf-8")
+        self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 2\n")
+        self.assertEqual(self._git("status", "--porcelain"), status)
+
+    def test_the_copy_stays_out_of_later_snapshots(self):
+        before = ledger.snapshot_tree(self.repo)
+        ledger.make_scratch(self.repo, self.store, "r-1")
+        self.assertEqual(ledger.snapshot_tree(self.repo), before)
+
+    def test_making_it_again_replaces_a_left_over_copy(self):
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        (copy / "a.py").write_text("x = 99\n", encoding="utf-8")
+        (copy / "junk.txt").write_text("left over\n", encoding="utf-8")
+        (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
+        again = ledger.make_scratch(self.repo, self.store, "r-1")
+        self.assertEqual(again, copy)
+        self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 3\n")
+        self.assertFalse((copy / "junk.txt").exists())
+
+    def test_remove_deletes_the_copy_and_its_registration(self):
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        (copy / "build.so").write_bytes(b"\0")  # a build output copied in
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertFalse(copy.exists())
+        self.assertNotIn(str(copy), self._git("worktree", "list", "--porcelain"))
+
+    def test_removing_a_copy_that_is_gone_is_a_no_op(self):
+        ledger.remove_scratch(self.repo, self.store, "never-made")
+
+    def test_a_name_that_would_leave_the_scratch_folder_is_refused(self):
+        for name in ("../escape", "a/b", "-x", "", ".", "r-1\n"):
+            with self.subTest(name=name), self.assertRaises(ledger.RecordError):
+                ledger.make_scratch(self.repo, self.store, name)
+
+    def test_a_left_over_folder_git_no_longer_knows_is_replaced_and_removed(self):
+        stray = self.store / "scratch" / "r-1"
+        stray.mkdir(parents=True)
+        (stray / "old.txt").write_text("stale\n", encoding="utf-8")
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        self.assertTrue((copy / "a.py").is_file())
+        self.assertFalse((copy / "old.txt").exists())
+        (copy / ".git").unlink()  # a copy git can no longer validate
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertFalse(copy.exists())
+
+    def test_a_read_only_build_folder_in_the_copy_does_not_block_removal(self):
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        locked = copy / "cache"
+        locked.mkdir()
+        (locked / "dep.o").write_bytes(b"\0")
+        locked.chmod(0o555)
+        self.addCleanup(lambda: locked.exists() and locked.chmod(0o755))
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertFalse(copy.exists())
+        self.assertIsNotNone(ledger.make_scratch(self.repo, self.store, "r-1"))
+
+    def test_an_unreadable_folder_in_a_left_over_copy_does_not_block_removal(self):
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        (copy / ".git").unlink()  # forces the fallback delete
+        sealed = copy / "out" / "sealed"
+        sealed.mkdir(parents=True)
+        (sealed / "x.o").write_bytes(b"\0")
+        sealed.chmod(0o000)
+        self.addCleanup(lambda: sealed.exists() and sealed.chmod(0o755))
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertFalse(copy.exists())
+
+    def test_removal_never_changes_permissions_outside_the_copy(self):
+        outside = Path(self._tmp.name + "-outside")
+        outside.mkdir()
+        self.addCleanup(lambda: (outside.chmod(0o755), shutil.rmtree(outside)))
+        outside.chmod(0o555)
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        (copy / ".git").unlink()
+        (copy / "link").symlink_to(outside, target_is_directory=True)
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertFalse(copy.exists())
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o555)
+
+    def test_a_copy_whose_folder_was_deleted_by_hand_can_be_made_again(self):
+        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        shutil.rmtree(copy)
+        self.assertEqual(ledger.make_scratch(self.repo, self.store, "r-1"), copy)
+
+    def test_removing_one_copy_keeps_another_worktree_registration(self):
+        other = Path(self._tmp.name + "-elsewhere")
+        self._git("worktree", "add", "--detach", "-q", str(other))
+        shutil.rmtree(other)  # e.g. on a volume that isn't mounted right now
+        ledger.make_scratch(self.repo, self.store, "r-1")
+        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.assertIn(other.name, self._git("worktree", "list", "--porcelain"))
+
+    def test_no_git_identity_is_needed(self):
+        self._git("config", "--unset", "user.email")
+        self._git("config", "--unset", "user.name")
+        self._git("config", "user.useConfigOnly", "true")
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("GIT_AUTHOR", "GIT_COMMITTER", "EMAIL", "XDG_CONFIG_HOME"))}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.dict(os.environ, {"HOME": self._tmp.name,
+                                             "GIT_CONFIG_NOSYSTEM": "1"}):
+            copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        self.assertTrue((copy / "a.py").is_file())
+
+    def test_a_store_git_does_not_ignore_is_refused(self):
+        store = self.repo / "notes"
+        store.mkdir()
+        (store / ".gitignore").write_text("*.json\n", encoding="utf-8")
+        with self.assertRaises(ledger.RecordError):
+            ledger.make_scratch(self.repo, store, "r-1")
+        self.assertFalse((store / "scratch").exists())
+
+    def test_a_store_outside_the_repo_works(self):
+        store = Path(self._tmp.name + "-store")
+        self.addCleanup(shutil.rmtree, store, True)
+        copy = ledger.make_scratch(self.repo, store, "r-1")
+        self.assertTrue((copy / "a.py").is_file())
+        ledger.remove_scratch(self.repo, store, "r-1")
+        self.assertFalse(copy.exists())
+
+    def test_cli_from_a_subfolder_uses_the_default_store(self):
+        (self.repo / "pkg").mkdir()
+        result = subprocess.run([sys.executable, str(LEDGER_PY), "scratch", "--name", "r-1"],
+                                cwd=self.repo / "pkg", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(result.stdout.splitlines()[0]),
+                         (self.store / "scratch" / "r-1").resolve())
+
+    def test_cli_prints_the_copy_and_its_own_cargo_target(self):
+        # Copies built at the same time must not share artifacts: cargo
+        # judges a path dependency fresh by mtime, so one copy could run
+        # another's broken build.
+        result = self._cli("--name", "rust-quality-reviewer-2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path, target = result.stdout.splitlines()
+        self.assertTrue(Path(path).is_dir())
+        self.assertEqual(target, "CARGO_TARGET_DIR="
+                         f"{self.store.resolve() / 'scratch-target' / 'rust-quality-reviewer-2'}")
+        removed = self._cli("--name", "rust-quality-reviewer-2", "--remove")
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertFalse(Path(path).exists())
 
 
 if __name__ == "__main__":

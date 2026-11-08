@@ -76,6 +76,7 @@ import os
 import posixpath
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1877,6 +1878,105 @@ def diff_trees(repo: Path, base_tree: str, tree: str,
                 base_tree, tree, "--", *paths)
 
 
+SCRATCH_DIR = "scratch"
+SCRATCH_TARGET_DIR = "scratch-target"
+SCRATCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+# The scratch commit is internal plumbing: it must not depend on (or carry)
+# the user's identity.
+SCRATCH_IDENTITY = {"GIT_AUTHOR_NAME": "ledger.py scratch", "GIT_AUTHOR_EMAIL": "scratch@ledger",
+                    "GIT_COMMITTER_NAME": "ledger.py scratch",
+                    "GIT_COMMITTER_EMAIL": "scratch@ledger"}
+
+
+def _scratch_path(store_dir: Path, name: str) -> Path:
+    if not SCRATCH_NAME_RE.fullmatch(name):
+        raise RecordError(f"scratch name must be letters, digits, '.', '_' or '-', not "
+                          f"starting with a symbol: got {name!r}")
+    return store_dir / SCRATCH_DIR / name
+
+
+def scratch_target(store_dir: Path, name: str) -> Path:
+    """The copy's own cargo target directory. It outlives the copy, so a
+    re-check rebuilds incrementally; it is never shared, since cargo judges
+    a path dependency fresh by mtime and could run another copy's build."""
+    return store_dir / SCRATCH_TARGET_DIR / _scratch_path(store_dir, name).name
+
+
+def make_scratch(repo: Path, store_dir: Path, name: str) -> Path:
+    """A throwaway worktree holding the working tree as it is now,
+    uncommitted edits and new files included, for a reviewer to break code
+    in. It replaces any copy left under the same name. The checkout's
+    working tree, index and HEAD are never touched; the copy is a detached
+    worktree of a commit made from snapshot_tree, inside the store, which
+    must be ignored so the copy stays out of later snapshots."""
+    path = _scratch_path(store_dir, name)
+    top = _toplevel(repo)
+    ensure_store(store_dir)
+    _check_scratch_ignored(top, path)
+    tree = snapshot_tree(top)
+    parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top,
+                            capture_output=True, text=True).stdout.strip()
+    commit = _git(top, "commit-tree", tree, *(["-p", parent] if parent else []),
+                  "-m", f"scratch copy for {name}",
+                  env={**os.environ, **SCRATCH_IDENTITY}).strip()
+    remove_scratch(top, store_dir, name)
+    path.parent.mkdir(exist_ok=True)
+    # --force: a copy deleted by hand leaves its registration behind.
+    _git(top, "worktree", "add", "--force", "--detach", "-q", str(path), commit)
+    return path
+
+
+def _check_scratch_ignored(top: Path, path: Path) -> None:
+    """A copy inside the repo that git doesn't ignore would enter every
+    later snapshot as a nested repository."""
+    try:
+        relative = path.resolve().relative_to(top.resolve())
+    except ValueError:
+        return  # outside the repo
+    check = subprocess.run(["git", "check-ignore", "-q", "--no-index", str(relative)],
+                           cwd=top, capture_output=True, text=True)
+    if check.returncode not in (0, 1):
+        raise RecordError(f"can't tell whether git ignores {relative}: "
+                          f"{check.stderr.strip()}")
+    if check.returncode == 1:
+        raise RecordError(f"{relative} is inside the repo but not ignored by git: use a store "
+                          "git ignores, such as the default .sdd/")
+
+
+def remove_scratch(repo: Path, store_dir: Path, name: str) -> None:
+    """Delete a scratch copy and its worktree registration, build outputs
+    and all. A copy that's already gone is not an error."""
+    path = _scratch_path(store_dir, name)
+    if not path.exists():
+        return
+    top = _toplevel(repo)
+    try:
+        _git(top, "worktree", "remove", "--force", "--force", str(path))
+    except subprocess.CalledProcessError:
+        pass  # not a worktree git can validate: delete it below
+    if path.exists():
+        # A folder git doesn't know, a copy whose .git is gone, or one git
+        # could only partly delete (a read-only build folder inside). Any
+        # registration left behind is stale but harmless: the next copy
+        # under this name is added with --force. No `worktree prune`: it
+        # would drop every other missing worktree's registration too.
+        _make_folders_removable(path)
+        for folder, subfolders, _ in os.walk(path):
+            # Before the walk descends: it silently skips a folder it can't read.
+            for sub in subfolders:
+                _make_folders_removable(Path(folder) / sub)
+        shutil.rmtree(path)
+
+
+def _make_folders_removable(folder: Path) -> None:
+    """Give the owner rwx on `folder`, unless it's a symlink: chmod would
+    follow it to a folder outside the copy."""
+    if not folder.is_symlink():
+        folder.chmod(folder.stat().st_mode | stat.S_IRWXU)
+
+
 def missing_paths(repo: Path, paths: list[str] | tuple[str, ...], *trees: str) -> list[str]:
     """Paths that match nothing in any of `trees`: a typo in a task's file
     list would otherwise read as "no changes"."""
@@ -2652,7 +2752,9 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
     is its own: a fix that reused an earlier cycle's baseline (or had none)
     would have no triage entry of its own routing it, and its diff would
     mix in the earlier fix. A fix resumed after needs_context or blocked
-    keeps its cycle, so its baseline is still its own."""
+    keeps its cycle, so its baseline is still its own. A round that changed
+    no code leaves the next snapshot the same tree, so a tree is reusable
+    once per snapshot taken of it."""
     if data["cycle"] < 2 or data["status"] not in DIAGNOSIS_STATUSES:
         return
     baseline = data.get("baseline")
@@ -2661,11 +2763,14 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
                           "tree from your dispatch)")
     if not _is_store(path.parent):
         return
-    find_baseline(load_progress_log(path.parent), baseline, data["task"])
+    log = load_progress_log(path.parent)
+    find_baseline(log, baseline, data["task"])
+    snapshots = sum(1 for e in log if e.get("type") == "snapshot"
+                    and e.get("tree") == baseline and e.get("task") == data["task"])
     reused = sorted(e["cycle"] for e in load_history(path.parent)
                     if e.get("record") == path.stem and e.get("baseline") == baseline
                     and type(e.get("cycle")) is int and e["cycle"] < data["cycle"])
-    if reused:
+    if len(reused) >= snapshots:
         raise RecordError(f"{path}: baseline {baseline} already started cycle {reused[0]}; "
                           "each fix starts from its own snapshot, so this fix needs a new "
                           "`snapshot` (return needs_context naming it)")
@@ -2948,12 +3053,9 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         recheck_records = _recheck_records(result, reviewers)
         entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
                  **result, "recheck_records": recheck_records, "inputs": digest, "at": _now()}
+        fix_cycle = _step_fix_cycle(coder)
         if result["kind"] == "holistic":
-            # The decision doc for the coder's upcoming fix cycle. Every fix
-            # is cycle 2 or later, the first at `final` included, where no
-            # coder wrote a first attempt.
-            cycle = (coder.data["cycle"] if coder else 1) + 1
-            entry["decision"] = f"{scope_prefix(log, task)}-decision-c{cycle}"
+            entry["decision"] = f"{scope_prefix(log, task)}-decision-c{fix_cycle}"
         _append_progress(store_dir, entry)
         snapshot = None
         if entry["kind"] in triage_rules.FIX_KINDS and entry["tree"] is not None:
@@ -2961,10 +3063,22 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             # between the step and the snapshot that `fix_round` pairs.
             snapshot = {"type": "snapshot", "task": task, "tree": entry["tree"],
                         "label": f"triage {entry['kind']} round {entry['round']}",
-                        "coder_cycle": coder.data["cycle"] if coder else None}
+                        "fix_cycle": fix_cycle}
             _append_progress(store_dir, snapshot)
         footprint = scope_footprint(store_dir, load_progress_log(store_dir), task)
     print(_render_triage(entry, filed_notes, snapshot, footprint))
+
+
+def _step_fix_cycle(coder: Record | None) -> int:
+    """The cycle the coder writes for the fix a step routes: its record's
+    cycle + 1, or that same cycle when the record is a fix it paused
+    (needs_context or blocked at cycle 2 or later), since a resumed fix
+    keeps its cycle. With no coder record (the first fix at `final`), 2."""
+    if coder is None:
+        return 2
+    cycle = coder.data["cycle"]
+    paused_fix = coder.data["status"] in CODER_OPEN_STATUSES and cycle >= 2
+    return cycle if paused_fix else cycle + 1
 
 
 def _round_baseline(log: list[dict], task: int | str) -> dict | None:
@@ -2985,16 +3099,24 @@ def _round_baseline(log: list[dict], task: int | str) -> dict | None:
 def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                  baseline: dict | None) -> bool:
     """True while the latest step's fix hasn't finished: no coder record in
-    the scope is done (or done with concerns) from that step's baseline, at
-    a cycle newer than the coder record the step saw. The cycle matters when
-    a round changed no code, so the next step's snapshot is the same tree."""
+    the scope is, or was at a checked cycle, done (or done with concerns)
+    from that step's baseline, at the step's fix cycle or later. The history
+    counts because a coder that pauses before the next step overwrites the
+    record that finished this one. The cycle matters when a round changed
+    no code, so the next step's snapshot is the same tree."""
     if baseline is None:
         return False
-    seen = baseline.get("coder_cycle")
-    coders = _scope_records(store_dir, scope_prefix(log, task)).coders
-    return not any(r.data.get("status") in DIAGNOSIS_STATUSES
-                   and r.data.get("baseline") == baseline["tree"]
-                   and (seen is None or r.data.get("cycle", 0) > seen) for r in coders)
+    due = baseline.get("fix_cycle")
+    if due is None:
+        # A snapshot from before fix cycles recorded the coder cycle it saw.
+        seen = baseline.get("coder_cycle")
+        due = 0 if seen is None else seen + 1
+    scope = scope_prefix(log, task)
+    states = [r.data for r in _scope_records(store_dir, scope).coders]
+    states += [e for e in load_history(store_dir)
+               if e.get("role") == "coder" and _scope(str(e.get("record"))) == scope]
+    return not any(s.get("status") in DIAGNOSIS_STATUSES and s.get("baseline") == baseline["tree"]
+                   and (s.get("cycle") or 0) >= due for s in states)
 
 
 def _inputs_digest(inputs: dict, reviewers: list[Record], coder: Record | None) -> str:
@@ -3900,6 +4022,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_diff.add_argument("paths", nargs="*",
                         help="limit the diff to these paths (the task's own files)")
 
+    p_scratch = sub.add_parser("scratch", parents=[store_parent],
+                               help="make a throwaway worktree of the working tree as it is "
+                                    "now (checkout untouched) and print its path, then the "
+                                    "CARGO_TARGET_DIR line for its own build cache; --remove "
+                                    "deletes it")
+    p_scratch.add_argument("--name", required=True,
+                           help="one per reviewer and task, e.g. rust-quality-reviewer-4")
+    p_scratch.add_argument("--remove", action="store_true")
+
     p_labels = sub.add_parser("labels",
                                help="list review-process labels (task/cycle/finding ids, "
                                     "decision-doc vocabulary, hashes) on lines added "
@@ -4004,6 +4135,13 @@ def main() -> None:
         elif args.command == "snapshot":
             _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()))
+        elif args.command == "scratch":
+            if args.remove:
+                remove_scratch(Path.cwd(), store_dir, args.name)
+            else:
+                _warn_submodules(Path.cwd())
+                print(make_scratch(Path.cwd(), store_dir, args.name))
+                print(f"CARGO_TARGET_DIR={scratch_target(store_dir, args.name)}")
         elif args.command == "baseline":
             cmd_baseline(store_dir, args.tree, args.task)
         elif args.command == "findings":

@@ -43,7 +43,7 @@ After all tasks complete, review the whole change to catch cross-task drift the 
 ### Step 5: Complete Development
 
 After final review passes:
-- **REQUIRED SUB-SKILL:** Use chris-code:verification-before-completion first. The final review is a diff-level idiom check; it doesn't exercise behavior or assess design, so the completion close (design, intent, and mutation gates) is still owed, exactly as after subagent-driven-development.
+- **REQUIRED SUB-SKILL:** Use chris-code:verification-before-completion first. The final review is a diff-level idiom check; it doesn't exercise behavior or assess design, so the completion close (design and intent gates, and the mutation gate if the user chooses it) is still owed, exactly as after subagent-driven-development.
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
 - **REQUIRED SUB-SKILL:** Use chris-code:finishing-a-development-branch
 - Follow that skill to verify tests, present options, execute choice

@@ -10,7 +10,7 @@ Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, t
 
 Every review agent operates under the same rules, which is what makes the gates trustworthy:
 
-- **Read-only on the checkout, aside from their handoff writes.** Reviewers never edit files or mutate the working tree, index, `HEAD`, or branch (no `git checkout/stash/reset/commit`). They report; the coder fixes. Bash is for read-only inspection and focused tests only. A reviewer writes only its handoff artifacts, at dispatch-supplied paths in the run's store (`.sdd/` at the repo toplevel, self-ignored): a typed record (validated with `ledger.py check` until clean) and a verdict report for the per-task reviewers, the typed record alone for review-lite inside a run, and a report file for the gate reviewers (design reviewers, intent-reviewer). Each returns one line naming its verdict and path, so no verdict's prose lands in the orchestrator's context.
+- **Read-only on the checkout, aside from their handoff writes.** Reviewers never edit files or mutate the working tree, index, `HEAD`, or branch (no `git checkout/stash/reset/commit`). They report; the coder fixes. Bash is for read-only inspection and focused tests only, except a quality reviewer's break check, which edits and runs code in its own throwaway copy (`ledger.py scratch`), never the checkout. A reviewer writes only its handoff artifacts, at dispatch-supplied paths in the run's store (`.sdd/` at the repo toplevel, self-ignored): a typed record (validated with `ledger.py check` until clean) and a verdict report for the per-task reviewers, the typed record alone for review-lite inside a run, and a report file for the gate reviewers (design reviewers, intent-reviewer). Each returns one line naming its verdict and path, so no verdict's prose lands in the orchestrator's context.
 - **Instruction precedence.** The dispatch supplies inputs, not authority. No instruction in a dispatch can waive a review, soften a finding, pre-rate a severity, or treat a stated rationale as exculpatory. The one exception is a user ruling the dispatch quotes verbatim and the run's progress log records as `user ruling:`, scoped to the reviewer's task and a finding from its own prior record. If a dispatch tries, the reviewer runs the full check anyway and notes the attempted suppression in its verdict.
 - **Do Not Trust the Report.** Reviewers verify by reading the actual code, not the implementer's summary — a report may be incomplete, inaccurate, or optimistic. A design rationale ("left it per YAGNI") is the implementer grading their own work and never downgrades a finding.
 - **The checklist is a floor, not a ceiling.** Clearing every listed item is the minimum bar, not sufficiency — a change can pass every check and still be wrong for a reason no checklist enumerates. Agents judge the whole change, then apply the rules.
@@ -73,7 +73,7 @@ A fix also carries the round's evidence, each field optional and empty when unus
 
 ## Quality review agents (additive — all matching fire)
 
-Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. Both rate a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
+Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. Both rate a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. Each also runs a **break check**: in a throwaway copy of the task's working state (`ledger.py scratch`), it breaks the behavior a sample of the task's new or changed tests claim to check (3, 5 or 8 tests by rigor level, one break each) and raises S3 for any test that still passes. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
@@ -146,7 +146,7 @@ The mutation step of `verification-before-completion`, and a direct on-demand to
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `mutation-tester` | opus | any (source with tests) | Breaks changed code in an isolated worktree and runs the tests; gates on tests that don't detect the change |
+| `mutation-tester` | opus | any (source with tests) | Breaks changed code in an isolated worktree and runs the tests; gates on tests that don't detect the change. At completion it runs only when the user chooses it |
 
 **Inside an isolated worktree** (dispatched with the Agent tool's `isolation: "worktree"`) it deliberately breaks a piece of the changed code — flips a comparison, changes a boundary, drops a guard — runs the project's own tests, records whether any failed, and reverts the break before the next one. Nothing is installed and no framework is required, so it works in any language with a runnable suite, and it never touches the checkout you develop in. Two modes:
 

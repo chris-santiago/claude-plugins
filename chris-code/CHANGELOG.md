@@ -8,6 +8,21 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-06
+
+### Added
+- **Quality reviewers break-check the task's tests.** The mutation gate exists to catch tests that pass whether or not the code works, but it ran only at the close, over the whole change, and could take hours. Each quality reviewer now checks a sample of the tests its task added or changed: in a private copy of the task's working state, it breaks the behavior a test claims to check, runs that test, and raises S3 when the test still passes. Rigor sets the sample (3, 5 or 8 tests, one break each). Only tests of code in the reviewer's own language are checked, so no cross-language build runs per task. A re-check re-applies each surviving break and expects the test to fail.
+- **`ledger.py scratch --name <name>`** makes that private copy: a throwaway worktree of the working tree as it is now, inside the store. It includes uncommitted edits and new files, but not ignored files (build outputs) or edits inside submodules. The checkout, its index and HEAD are never touched, and a store git doesn't ignore is refused, so the copy can't enter later snapshots. It prints the copy's path and a `CARGO_TARGET_DIR=` line naming the copy's own build cache, which outlives the copy so a re-check rebuilds incrementally. `--remove` deletes the copy, read-only build folders included.
+
+### Changed
+- **The close asks before running the mutation gate.** It shows the range it would mutate, warns that it can take hours, and records your answer as a ruling that holds for both close rounds. When you decline, the gate is skipped and the completion report says so. The gate itself is unchanged.
+- The quality reviewers may edit files, but only in their own scratch copy; they stay read-only on the checkout.
+
+### Fixed
+- **A fix the coder paused before its round started can finish.** A fix dispatched before `triage` has no `Fix baseline`, so the coder pauses with `needs_context` at its next cycle and, resumed with the baseline, keeps that cycle. Triage's snapshot expected a cycle past the paused record, while `check` refused a later cycle on the same baseline, so the round never closed and `commit` refused the task. Triage now records the cycle the round's fix writes (the paused record's own cycle, or one past a finished one), and the holistic decision doc takes the same cycle in its name. Snapshots from earlier versions keep their old rule.
+- **A round stays finished when the coder pauses before the next one.** The paused record overwrites the one that finished the round, so triage kept reprinting the finished round and its used baseline. Triage now also reads the coder's checked history.
+- **A second round on an unchanged tree can finish.** A round that changes no code leaves the next snapshot the same tree, and `check` refused the next fix for reusing it. A tree is now reusable once per snapshot taken of it.
+
 ## [0.14.4] - 2026-11-06
 
 ### Fixed

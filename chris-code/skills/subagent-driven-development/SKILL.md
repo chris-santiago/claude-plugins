@@ -352,7 +352,7 @@ Breaking any rule above is a red flag. These are the ones a long run's pressure 
 **Agents:**
 - **`*-coder` agents**: specialized implementers, dispatched by file type
 - **`spec-reviewer`**: spec-compliance review per task, language-agnostic
-- **`*-quality-reviewer` agents**: design quality and bug detection, dispatched by file type
+- **`*-quality-reviewer` agents**: design quality, bug detection, and a break check of a sample of the task's new or changed tests, dispatched by file type
 - **`*-review-lite` agents**: the whole-change gate (idiom and lint across commits), dispatched by file type
 
 **Subagents use:** **chris-code:test-driven-development** for each task.

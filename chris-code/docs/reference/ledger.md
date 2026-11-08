@@ -54,6 +54,7 @@ Records carry schema version 2. A record or store written by an earlier release 
 |---|---|
 | `diff-since <tree> [<path>...]` | The diff since a snapshot tree, new files included, limited to the task's files |
 | `labels <tree> [<path>...]` | Lists review-process labels (task and finding ids, cycle numbers, commit hashes) on lines added since the tree; exits 1 if any |
+| `scratch --name <name> [--remove]` | Makes a throwaway worktree of the working tree as it is now (uncommitted edits and new files, not ignored files or edits inside submodules), inside the store, for a quality reviewer's break check. Prints its path, then a `CARGO_TARGET_DIR=` line naming the copy's own build cache. The checkout is never touched, and a store git doesn't ignore is refused. `--remove` deletes the copy |
 
 `task_brief.py`, beside it, builds each task's brief from the plan, embeds the task's notes from the store, logs their delivery, and records the plan in the store once (what `run-state` judges against). It refuses a task whose `Verify:` line has no backticked command, whose `Cases:` still carries an `open:` row, or whose `Cases:` has a row that doesn't separate its situation from its expected result with `→` or `->`. A row may group cases (`size=0, size<0 → ValueError`), and `n/a — <reason>` and the refactor form (`preserves <behavior>; covered by <tests>`) are exempt. It also opens the brief with the task's rigor level, and refuses a task `Rigor:` line below the project level.
 

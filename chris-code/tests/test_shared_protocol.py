@@ -97,8 +97,8 @@ class TestReviewerProtocol(unittest.TestCase):
 
     def test_quality_reviewers_share_their_protocol_sections(self):
         reference = self.quality["python-quality-reviewer"]
-        for heading in ("## Instruction precedence", "## Tagging each finding", "## Re-checks",
-                        "## Report and return", "## Typed record"):
+        for heading in ("## Instruction precedence", "## Break check", "## Tagging each finding",
+                        "## Re-checks", "## Report and return", "## Typed record"):
             for name, text in self.quality.items():
                 with self.subTest(section=heading, contract=name):
                     self.assertEqual(

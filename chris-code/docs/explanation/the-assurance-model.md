@@ -11,7 +11,7 @@ chris-code runs a lot of review gates. It's tempting to read a green pipeline as
 3. **Full review** — the scope-matched `*-design-reviewer` agents, read-only, returning PASS or CONCERNS.
 4. **Requirements** — every spec/plan requirement traced to the code that implements it and a test that verifies it, with nothing implemented that wasn't asked for.
 5. **Intent re-check** — the spec-blind `intent-reviewer` compares the running system to the frozen intent ledger.
-6. **Mutation re-check** — the `mutation-tester` agent, in an isolated worktree, deliberately breaks the changed code and confirms a test fails, reverting each break. It uses no external mutation-testing tool (it edits the code and runs the project's own tests, so it is language-agnostic) and gates when a test executes changed code but doesn't fail when it's broken — a trivial test that proves nothing. Runs when the change includes testable source.
+6. **Mutation re-check** — the `mutation-tester` agent, in an isolated worktree, deliberately breaks the changed code and confirms a test fails, reverting each break. It uses no external mutation-testing tool (it edits the code and runs the project's own tests, so it is language-agnostic) and gates when a test executes changed code but doesn't fail when it's broken — a trivial test that proves nothing. Runs when the change includes testable source and you choose to run it. The close asks first, since it can take hours. Each task's quality reviewers already run a smaller **break check**: they break the behavior a sample of the task's new or changed tests claim to check, and raise S3 for any test that still passes.
 
 Steps 3, 5, and 6 are independent read-only reviews of the same committed HEAD, so they are dispatched together as one **close round**, with the Step 4 trace done alongside, and every finding is triaged once. Trivial findings are fixed inline; the non-trivial set goes through `remediating-issues` as one batch, and a second round re-checks only what that remediation could have changed. The cap is two rounds: whatever non-trivial work survives goes to you. [The close round](execution-mechanics.md#the-close-round) has the details.
 
@@ -19,7 +19,7 @@ A **PASS is not "nothing to do."** A gate can pass while carrying findings, and 
 
 ## More passes raise recall, not residual assurance
 
-Stacking review stages does not multiply into a proof. Most of the gates are LLM judgments that share a model, a training distribution, and often a framing — so they tend to miss the same things together. Only a few axes are genuinely independent: the deterministic linter (not an LLM at all), conformance (does the behavior match the spec/intent), and the mutation gate (which breaks the code and runs the real tests — its verdict is test execution, not another LLM re-read). The rest are correlated re-reads.
+Stacking review stages does not multiply into a proof. Most of the gates are LLM judgments that share a model, a training distribution, and often a framing — so they tend to miss the same things together. Only a few axes are genuinely independent: the deterministic linter (not an LLM at all), conformance (does the behavior match the spec/intent), and the mutation gate and the quality reviewers' break check (which break the code and run the real tests — their verdict is test execution, not another LLM re-read). The rest are correlated re-reads.
 
 The consequence: more passes surface **more** issues (higher recall), but a clean run means *"nothing these lenses caught,"* not *"nothing is wrong."* So chris-code weights **diversity over quantity** — a check that fails *differently* (a deterministic linter, a spec-blind behavior check, a mutation probe of test strength, an actual failing test, a human read) is worth more than another same-model re-review of the same diff.
 
@@ -44,4 +44,4 @@ Every doer is told "Do Not Trust the Report" — verify by reading the actual co
 
 ## What to take away
 
-The gates are worth running — they catch real drift. Just don't read green as proof of its absence. The assurance comes from the *independent* and *decorrelated* checks (the linter, the spec-blind intent re-check, the mutation probe of test strength, real tests, your own read), not from the number of passes.
+The gates are worth running — they catch real drift. Just don't read green as proof of its absence. The assurance comes from the *independent* and *decorrelated* checks (the linter, the spec-blind intent re-check, the mutation probe and break check of test strength, real tests, your own read), not from the number of passes.

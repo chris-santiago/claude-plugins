@@ -49,7 +49,7 @@ When all tasks are in, `verification-before-completion` runs a six-step gate:
 3. Full review — the senior `*-design-reviewer` agents
 4. Requirements — every spec item traced
 5. **Intent re-check** — a spec-blind `intent-reviewer` compares the shipped behavior to your frozen intent ledger
-6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change
+6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change. The close asks before running it, since it can take hours
 
 Tests and lints run first. Steps 3, 5, and 6 then run together as one **close round**, with the requirements trace done alongside, and their findings are triaged once: small ones are fixed on the spot, bigger ones that belong in this change are fixed as one batch and re-checked in a second round, and separable improvements are filed as follow-ups. Before a round, it asks you any open questions the run filed and lands any doc disclosures still owed. If something is still open after two rounds, it comes to you. When it passes, the completion report is built from the run's store: your rulings, the follow-ups, and where each disclosure landed.
 
