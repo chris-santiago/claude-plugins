@@ -30,8 +30,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py notes --task N [--deliver | --waive ID --reason "..."] [--store DIR]
        python3 ledger.py stage --task N --stage K --files PATH... [--store DIR]
        python3 ledger.py handle --task N|final --role NAME --agent ID [--store DIR]
-       python3 ledger.py close-round --expect 1|2 --note "..." [--store DIR]
-       python3 ledger.py triage --task N|final [--store DIR]
+       python3 ledger.py close-round --note "..." [--store DIR]
+       python3 ledger.py triage --task N|final|close [--store DIR]
        python3 ledger.py snapshot --task N --label "..." [--store DIR]
        python3 ledger.py baseline <tree> --task N [--store DIR]
        python3 ledger.py findings <decision-path> [--store DIR]
@@ -44,7 +44,7 @@ A per-task decision is itself a record (role "decision", written by
 remediating-issues' per-task variant). Beyond its own shape, `check`
 verifies it against the store and the repo: it accounts for every
 finding on every reviewer record in its scope (task-N, final, or
-final-r2, from the file names), reconciles with every decision written
+close, from the file names), reconciles with every decision written
 before it, and cites precedents that exist. Only a holistic round has
 one, and its fix implements it case by case.
 
@@ -121,6 +121,10 @@ STATUS_ENUMS = {
     "decision": {"decided", "escalated"},
     # The scripted commit gate (labels, lint, the task's Verify command).
     "gate": {"pass", "fail"},
+    # The completion close's gates (verification-before-completion).
+    "design-reviewer": {"pass", "concerns"},
+    "intent-reviewer": {"pass", "concerns"},
+    "mutation-tester": {"pass", "concerns", "skipped", "inconclusive"},
 }
 # Derived, never restated: a role added to STATUS_ENUMS alone (or vice
 # versa) would turn `check`'s corrective RecordError into a raw KeyError
@@ -142,6 +146,9 @@ DECISION_LIST_FIELDS = {
     "quality-reviewer": ("recurring", "findings"),
     "review-lite": ("findings",),
     "gate": ("findings",),
+    "design-reviewer": ("findings",),
+    "intent-reviewer": ("findings", "statements"),
+    "mutation-tester": ("findings",),
 }
 
 # Decision-driving list fields validated only when present (2026-10-06).
@@ -155,14 +162,19 @@ OPTIONAL_LIST_FIELDS = {
 # severity and reach alone. Spec findings live in `issues`, the rest in
 # `findings`.
 FINDING_LIST_FIELD = {"spec-reviewer": "issues", "quality-reviewer": "findings",
-                      "review-lite": "findings", "gate": "findings"}
+                      "review-lite": "findings", "gate": "findings",
+                      "design-reviewer": "findings", "intent-reviewer": "findings",
+                      "mutation-tester": "findings"}
 MAX_SEVERITY = 5
 SERIOUS_SEVERITY = 3
 REACHES = ("local", "class", "contract")
 # path, path:line, or path:start-end, relative to the repo toplevel.
 SITE_RE = re.compile(r"^(?P<path>[^:\s][^:]*?)(?::(?P<start>\d+)(?:-(?P<end>\d+))?)?$")
 # A reviewer's status says whether it found anything serious.
-SERIOUS_STATUS = {"spec-reviewer": "issues", "quality-reviewer": "issues"}
+SERIOUS_STATUS = {"spec-reviewer": "issues", "quality-reviewer": "issues",
+                  "design-reviewer": "concerns", "mutation-tester": "concerns"}
+# An intent re-check judges each statement of the intent ledger.
+INTENT_VERDICTS = ("met", "not-met", "can't-tell")
 FLAG_FIELDS = ("recurring", "introduced_by_fix")
 # A re-checking reviewer answers each contest it was sent.
 CONTEST_VERDICTS = ("concede", "hold")
@@ -218,11 +230,11 @@ COUPLING_KEYS = ("site", "effect")
 PREMISE_KEYS = ("assumption", "probe")
 MIN_CANDIDATES = 2
 # A record's scope is the prefix of its dispatch-supplied file name: one
-# task, the whole-change gate, or that gate in a close-gate remediation run
-# (final-r2-*). A decision covers the reviewer records of its own scope, so
-# its file name carries its scope and cycle.
-SCOPE_RE = re.compile(r"^(?P<scope>task-(?P<task>\d+)|final-r2|final)-")
-DECISION_STEM_RE = re.compile(r"^(?P<scope>task-\d+|final-r2|final)-decision-c(?P<cycle>\d+)$")
+# task, the whole-change gate, or the completion close. A decision covers
+# the reviewer records of its own scope, so its file name carries its
+# scope and cycle.
+SCOPE_RE = re.compile(r"^(?P<scope>task-(?P<task>\d+)|final|close)-")
+DECISION_STEM_RE = re.compile(r"^(?P<scope>task-\d+|final|close)-decision-c(?P<cycle>\d+)$")
 # An escalated decision choice is open until the user's ruling resolves it.
 ESCALATION_KIND = "escalation"
 RULING_PREFIX = "user ruling:"
@@ -251,6 +263,9 @@ OWNED_NOTE_KINDS = ("disclosure", "question")
 # superseded by the next one, so neither is ever open.
 RESOLVABLE_NOTE_KINDS = frozenset({"task-note", "run-note", "follow-up", "disclosure", "question"})
 CLOSE_OWNER = "close"
+# The completion close is a scope of its own: its records, its triage, its
+# fixes and the rulings about it (`--task close`).
+CLOSE_SCOPE = CLOSE_OWNER
 NOTE_ID_PREFIX = "note#"
 # A coder's `concerns` entry for a case its brief's Cases: line didn't list.
 UNLISTED_CASE_PREFIX = "unlisted case:"
@@ -386,8 +401,9 @@ def validate_record(data: object) -> None:
     if data["schema"] != SCHEMA_VERSION or isinstance(data["schema"], bool):
         raise RecordError(f"schema: got {data['schema']!r}, expected {SCHEMA_VERSION}")
     # Records are matched to tasks by value: a "1" would hide from task 1.
-    if data["task"] != "final" and not _positive_int_value(data["task"]):
-        raise RecordError(f"task: got {data['task']!r}, expected a positive integer or 'final'")
+    if data["task"] not in ("final", CLOSE_SCOPE) and not _positive_int_value(data["task"]):
+        raise RecordError(f"task: got {data['task']!r}, expected a positive integer, "
+                          "'final' or 'close'")
 
     role = data["role"]
     # isinstance guard, not a type table: role/status must be hashable
@@ -446,6 +462,8 @@ def validate_record(data: object) -> None:
         _validate_coder_evidence(data)
     elif role == "decision":
         _validate_decision(data)
+    elif role == "intent-reviewer":
+        _validate_intent(data)
     if role in FINDING_LIST_FIELD:
         _validate_finding_tags(data, role)
 
@@ -612,6 +630,43 @@ def _validate_finding_tags(data: dict, role: str) -> None:
         if entry.get("verdict") not in CONTEST_VERDICTS:
             raise RecordError(f"{where}.verdict: got {entry.get('verdict')!r}, "
                               f"allowed set: {list(CONTEST_VERDICTS)}")
+
+
+def _validate_intent(data: dict) -> None:
+    """Each intent ledger statement is judged met, not-met or can't-tell,
+    and each not-met is exactly the finding that cites it, so triage can
+    route it and a re-check can answer it. A can't-tell names what would
+    settle it; the verdict is concerns exactly when a statement is not met."""
+    verdicts: dict[int, str] = {}
+    for idx, entry in enumerate(data["statements"]):
+        where = f"statements[{idx}]"
+        number = entry.get("statement")
+        if not _positive_int_value(number):
+            raise RecordError(f"{where}.statement: got {number!r}, expected the statement's "
+                              "1-based number in the intent ledger")
+        if entry.get("verdict") not in INTENT_VERDICTS:
+            raise RecordError(f"{where}.verdict: got {entry.get('verdict')!r}, "
+                              f"allowed set: {list(INTENT_VERDICTS)}")
+        _require_strs(entry, ("evidence",), where)
+        if entry["verdict"] == "can't-tell" and not _non_empty_str(entry.get("needs")):
+            raise RecordError(f"{where}: a can't-tell names what would settle it in `needs` "
+                              "(the access or observation it lacks)")
+        verdicts[number] = entry["verdict"]
+    cited = set()
+    for idx, entry in enumerate(data["findings"]):
+        number = entry.get("statement")
+        if verdicts.get(number) != "not-met":
+            raise RecordError(f"findings[{idx}].statement: got {number!r}; each finding is one "
+                              "not-met statement and cites its number")
+        cited.add(number)
+    not_met = {n for n, verdict in verdicts.items() if verdict == "not-met"}
+    if not_met - cited:
+        raise RecordError(f"not-met statement(s) {sorted(not_met - cited)} have no finding "
+                          "citing them")
+    if (data["status"] == "concerns") != bool(not_met):
+        raise RecordError(f"status: got {data['status']!r} with "
+                          f"{'a' if not_met else 'no'} not-met statement; expected "
+                          f"{'concerns' if not_met else 'pass'}")
 
 
 def _non_empty_str(value: object) -> bool:
@@ -1086,8 +1141,11 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         elif entry.get("type") == "snapshot":
             lines.append(f"- task {entry.get('task')} snapshot `{entry.get('tree')}`: "
                           f"{entry.get('label', '')}")
-        elif entry.get("type") == "close_round":
+        elif entry.get("type") == "close_round" and "round" in entry:
             lines.append(f"- **close round {entry.get('round')}** at `{entry.get('head', '')}`: "
+                          f"{entry.get('note', '')}")
+        elif entry.get("type") == "close_round":
+            lines.append(f"- **close started** at `{entry.get('head', '')}`: "
                           f"{entry.get('note', '')}")
         elif entry.get("type") == TRIAGE_ENTRY:
             lines.append(f"- {_scope_name(entry.get('task'))} triage: {entry.get('kind')} "
@@ -1759,53 +1817,33 @@ def cmd_ready(store_dir: Path, task: int | str, light: bool = False) -> int:
 
 
 def _task_scopes(task: int | str) -> tuple[str, ...]:
-    return ("final", "final-r2") if task == "final" else (f"task-{task}",)
+    return (f"task-{task}",) if isinstance(task, int) else (task,)
 
 
-def cmd_close_round(store_dir: Path, note: str, head: str, expect: int) -> None:
-    """Start the next close-gate round and print its number. `expect` is
-    the round the caller believes it is starting (1 for a fresh close, 2
-    on return from a close-gate remediation); a mismatch means the store
-    belongs to another run, so it raises instead of silently starting a
-    new run at round 2. The entry records the HEAD the round reviews, so
-    round 2 can name the remediation range (round-1 head..HEAD). Past
-    CLOSE_ROUND_CAP this raises and appends nothing: the cap is the
-    escalation trigger, so a further round must never start silently."""
+def cmd_close_round(store_dir: Path, note: str, head: str) -> None:
+    """Start the completion close and print the HEAD its gates review.
+    Its rounds are triage's to count (`triage --task close`), so a second
+    start is refused while this release's latest close hasn't reached
+    done, as is any start while the close owns an open note."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
-        _check_close_round(log, expect)
+        _check_close_open(log)
         _check_close_notes(log)
-        started = close_rounds(log)
-        _append_progress(store_dir,
-                      {"type": "close_round", "round": started + 1, "head": head, "note": note})
-    print(started + 1)
+        _append_progress(store_dir, {"type": "close_round", "head": head, "note": note})
+    print(head)
 
 
-def _check_close_round(log: list[dict], expect: int) -> None:
-    started = close_rounds(log)
-    if expect == 1 and started >= CLOSE_ROUND_CAP:
-        raise RecordError(
-            f"expected round 1, but this store already records {started} close "
-            "rounds. If the latest round's note names the work you are closing, "
-            "this run's close has used both rounds: finish round 2's triage and "
-            "escalate any non-trivial finding to the user. Otherwise the rounds "
-            "belong to an earlier, finished run: `clear` the store, then retry.")
-    if expect == 1 and started >= 1:
-        raise RecordError(
-            f"expected round 1, but this store already records {started} close "
-            "round(s). If the latest round's note names the work you are "
-            "closing, it is this run's round 1: resume its triage instead, and "
-            "after the remediation start round 2 with --expect 2. Otherwise the "
-            "rounds belong to an earlier, finished run: `clear` the store, then retry.")
-    if started < CLOSE_ROUND_CAP and expect != started + 1:
-        raise RecordError(
-            f"expected round {expect}, but this store records {started} close "
-            f"round(s): round {expect} only follows round {expect - 1} of the same run.")
-    if started >= CLOSE_ROUND_CAP:
-        raise RecordError(
-            f"close-round cap ({CLOSE_ROUND_CAP}) reached: escalate the open "
-            "gate findings to the user instead of starting another round, and "
-            "never clear the store to get past the cap.")
+def _check_close_open(log: list[dict]) -> None:
+    """Refuse a start while a close this release started is unfinished.
+    Entries from earlier releases carry a `round` and never block."""
+    starts = [e for e in log if e.get("type") == "close_round" and "round" not in e]
+    if not starts:
+        return
+    latest = latest_triage(log, CLOSE_SCOPE)
+    if latest is None or latest.get("kind") != "done":
+        raise RecordError(f"the close started at {starts[-1].get('head')!r} "
+                          f"({starts[-1].get('note')}) hasn't reached done: resume it with "
+                          "`ledger.py triage --task close` instead of starting another")
 
 
 def _git(repo: Path, *args: str, env: dict | None = None) -> str:
@@ -2275,41 +2313,33 @@ def _check_note_resolvable(log: list[dict], resolve_id: str, note: str) -> None:
 # records): briefs, reports, gate reports, and review packages. Gate
 # reviewers read their own report path as their prior verdict, so these
 # must not outlive the run that wrote them.
-HANDOFF_FILE_PATTERNS = ("task-*-*.md", "final-*.md", "gate-*-report.md", "intent-issue.md",
+HANDOFF_FILE_PATTERNS = ("task-*-*.md", "final-*.md", "close-*.md", "gate-*-report.md",
+                         "intent-issue.md",
                          "review-*.diff",
                          # names from before `path` named every report
                          "design-review-*.md", "intent-recheck.md", "mutation-review.md")
 # `path` scopes beyond a task number, and the kinds of file it names.
-PATH_SCOPES = ("final", "close", "ruling", "gate")
+PATH_SCOPES = ("final", CLOSE_SCOPE)
+# Scopes `path` named before the close had its own; each now names the close.
+RETIRED_PATH_SCOPES = ("gate", "ruling")
 PATH_KINDS = ("record", "report", "brief")
 
 
 def handoff_path(store_dir: Path, log: list[dict], scope: int | str, agent: str | None,
                  kind: str = "record") -> Path:
     """The store path of a handoff file: a task's or a scope's record or
-    report for `agent`, a gate's report, or a task's brief. `final` follows
-    `scope_prefix` (final-r2 once a close round has started), `close` the
-    latest close round, and `gate` keeps one path across rounds so a re-run
-    reads its prior report."""
+    report for `agent`, or a task's brief. A re-run of the same agent in
+    the same scope gets the same path, so it reads its prior report."""
+    if scope in RETIRED_PATH_SCOPES:
+        raise UsageError(f"--task {scope} is retired: the close's gates, fixes and rulings "
+                         "are all named by --task close")
     if kind == "brief":
         if not isinstance(scope, int):
             raise UsageError("a brief belongs to a task: --task N --kind brief")
         return store_dir / f"task-{scope}-brief.md"
     if not agent or "/" in agent or "\\" in agent or ".." in agent:
         raise UsageError(f"--agent {agent!r}: give the agent's registered name")
-    if scope == "gate":
-        if kind != "report":
-            raise UsageError("the close-round gates write reports only: --kind report")
-        stem = f"gate-{agent}"
-    elif scope in ("close", "ruling"):
-        rounds = close_rounds(log)
-        if not rounds:
-            raise UsageError(f"--task {scope} names a close-round fix, but no close round "
-                             "has started")
-        stem = f"final-close-r{rounds}-{agent}" if scope == "close" \
-            else f"final-close-ruling-{agent}"
-    else:
-        stem = f"{scope_prefix(log, scope)}-{agent}"
+    stem = f"{scope_prefix(log, scope)}-{agent}"
     return store_dir / (f"{stem}.json" if kind == "record" else f"{stem}-report.md")
 
 
@@ -2832,7 +2862,7 @@ def _scope(stem: str) -> str | None:
 
 
 def _scope_task(scope: str) -> int | str:
-    return int(scope.removeprefix("task-")) if scope.startswith("task-") else "final"
+    return int(scope.removeprefix("task-")) if scope.startswith("task-") else scope
 
 
 @dataclass
@@ -2867,19 +2897,17 @@ TRIAGE_ENTRY = "triage"
 
 def _scope_log(log: list[dict], task: int | str) -> list[dict]:
     """The log entries that count for `task`: everything for a numbered
-    task, and only what follows the last close round for the whole-change
-    gate, whose remediation run starts fresh (final-r2-* records)."""
-    if task != "final":
+    task and the whole-change gate, and for the close only what follows
+    its latest start."""
+    if task != CLOSE_SCOPE:
         return log
     starts = [i for i, e in enumerate(log) if e.get("type") == "close_round"]
     return log[starts[-1] + 1:] if starts else log
 
 
 def scope_prefix(log: list[dict], task: int | str) -> str:
-    """The record-name prefix of `task`'s current records."""
-    if task != "final":
-        return f"task-{task}"
-    return "final-r2" if close_rounds(log) else "final"
+    """The record-name prefix of `task`'s records."""
+    return f"task-{task}" if isinstance(task, int) else str(task)
 
 
 def triage_entries(log: list[dict], task: int | str) -> list[dict]:
@@ -3628,7 +3656,7 @@ def _check_decision_name(path: Path, data: dict) -> str:
     match = DECISION_STEM_RE.match(path.stem)
     if (path.suffix != ".json" or not match or _scope_task(match["scope"]) != data["task"]
             or int(match["cycle"]) != data["cycle"]):
-        scope = "final (final-r2 in a close-gate remediation run)" if data["task"] == "final" \
+        scope = data["task"] if data["task"] in ("final", CLOSE_SCOPE) \
             else f"task-{data['task']}"
         raise RecordError(f"{path.name}: a decision for task {data['task']!r} at cycle "
                           f"{data['cycle']} is named <scope>-decision-c{data['cycle']}.json, "
@@ -3700,7 +3728,7 @@ def cmd_findings(path: Path) -> None:
     match = DECISION_STEM_RE.match(path.stem)
     if path.suffix != ".json" or not match:
         raise RecordError(f"{path.name}: a decision is named <scope>-decision-c<cycle>.json "
-                          "(scope task-N, final, or final-r2)")
+                          "(scope task-N, final, or close)")
     found = _scope_records(path.parent, match["scope"])
     reviewers = found.reviewers
     decisions = [r for r in found.decisions if r.stem != path.stem]
@@ -3832,13 +3860,15 @@ def _positive_int(value: str) -> int:
 
 
 def _task_arg(value: str) -> int | str:
-    """A positive integer, or 'final' for the whole-change commit gate."""
-    if value == "final":
+    """A positive integer, 'final' for the whole-change gate, or 'close' for
+    the completion close."""
+    if value in ("final", CLOSE_SCOPE):
         return value
     try:
         return _positive_int(value)
     except argparse.ArgumentTypeError:
-        raise argparse.ArgumentTypeError("must be a positive integer or 'final'") from None
+        raise argparse.ArgumentTypeError(
+            f"must be a positive integer, 'final' or '{CLOSE_SCOPE}'") from None
 
 
 def _append_task_arg(value: str) -> int | str:
@@ -3850,12 +3880,13 @@ def _append_task_arg(value: str) -> int | str:
         return _task_arg(value)
     except argparse.ArgumentTypeError:
         raise argparse.ArgumentTypeError(
-            f"must be a positive integer, 'final' or '{RUN_SCOPE}'") from None
+            f"must be a positive integer, 'final', '{CLOSE_SCOPE}' or '{RUN_SCOPE}'") from None
 
 
 def _path_scope_arg(value: str) -> int | str:
-    """A positive task number, or one of the PATH_SCOPES."""
-    if value in PATH_SCOPES:
+    """A positive task number, or one of the PATH_SCOPES (a retired scope
+    passes through, so `handoff_path` can name its replacement)."""
+    if value in PATH_SCOPES or value in RETIRED_PATH_SCOPES:
         return value
     try:
         return _positive_int(value)
@@ -3955,11 +3986,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_handle.add_argument("--agent", required=True, help="the agent id the dispatch returned")
 
     p_close = sub.add_parser("close-round", parents=[store_parent],
-                              help="start the next close-gate round and print its "
-                                   f"number; fails past the cap ({CLOSE_ROUND_CAP})")
-    p_close.add_argument("--expect", required=True, type=_positive_int,
-                          help="the round you are starting: 1 for a fresh close, "
-                               "2 on return from a close-gate remediation")
+                              help="start the completion close and print the HEAD its "
+                                   "gates review; triage --task close counts its rounds")
+    # Retired: named only so its use gets the new usage, not a parse error.
+    p_close.add_argument("--expect", help=argparse.SUPPRESS)
     p_close.add_argument("--note", required=True)
 
     p_snapshot = sub.add_parser("snapshot", parents=[store_parent],
@@ -4156,7 +4186,11 @@ def main() -> None:
             sys.exit(cmd_commit(store_dir, args.task, args.message, args.test, args.lint,
                                 args.light))
         elif args.command == "close-round":
-            cmd_close_round(store_dir, args.note, _git_head(), args.expect)
+            if args.expect is not None:
+                raise UsageError("close-round --expect is retired: start the close with "
+                                 "`close-round --note \"...\"`, and `triage --task close` "
+                                 "counts its rounds")
+            cmd_close_round(store_dir, args.note, _git_head())
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":

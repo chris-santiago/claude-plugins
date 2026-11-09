@@ -99,9 +99,9 @@ class TestStoreLock(StoreTestCase):
         log = self._log()  # raises on any torn or merged line
         self.assertEqual(len(log), 160)
 
-    def test_concurrent_close_rounds_start_exactly_one_round(self):
+    def test_concurrent_close_starts_start_exactly_one_close(self):
         procs = [subprocess.Popen(
-                    [sys.executable, str(LEDGER_PY), "close-round", "--expect", "1",
+                    [sys.executable, str(LEDGER_PY), "close-round",
                      "--note", "close", "--store", str(self.store)],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                  for _ in range(6)]
@@ -110,7 +110,7 @@ class TestStoreLock(StoreTestCase):
             proc.stdout.close()
             proc.stderr.close()
         self.assertEqual(codes.count(0), 1, codes)
-        self.assertEqual(ledger.close_rounds(self._log()), 1)
+        self.assertEqual([e["type"] for e in self._log()], ["close_round"])
 
     def test_clear_keeps_the_lock_file(self):
         ledger.cmd_append(self.store, "progress", 1, "x")
@@ -137,8 +137,6 @@ class TestStoreLock(StoreTestCase):
         missing = Path(self._tmp.name) / "nowhere"
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_resolve(missing, "bogus", "x")
-        with self.assertRaises(ledger.RecordError):
-            ledger.cmd_close_round(missing, "close", "abc", 2)
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_note(missing, "task-note", "x")
         self.assertFalse(missing.exists())
@@ -447,17 +445,17 @@ class TestCloseRoundGate(DeliveryTestCase):
         q = self._note("question", "ship it?", owner="close")
         t = self._note("task-note", "for a task that never ran", for_task=9)
         for nid in (d, q, t):
-            self.assertRefused(nid, ledger.cmd_close_round, self.store, "close", "abc", 1)
+            self.assertRefused(nid, ledger.cmd_close_round, self.store, "close", "abc")
         ledger.cmd_resolve(self.store, d, "spec.md in abc1234")
         ledger.cmd_resolve(self.store, q, "user ruling: ship")
         ledger.cmd_resolve(self.store, t, "superseded: task 9 was dropped")
-        self.assertEqual(self._out(ledger.cmd_close_round, self.store, "close", "abc", 1).strip(),
-                         "1")
+        self.assertEqual(self._out(ledger.cmd_close_round, self.store, "close", "abc").strip(),
+                         "abc")
 
     def test_follow_ups_dispositions_and_run_notes_do_not_block_the_close(self):
         for kind in ("follow-up", "disposition", "run-note", "checkpoint"):
             self._note(kind, f"a {kind}")
-        self._out(ledger.cmd_close_round, self.store, "close", "abc", 1)
+        self._out(ledger.cmd_close_round, self.store, "close", "abc")
 
 
 class TestOpenListsNoteItems(DeliveryTestCase):

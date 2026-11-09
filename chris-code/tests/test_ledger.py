@@ -1006,103 +1006,131 @@ class TestCompletion(LedgerTestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
-# --- close-gate rounds (batched close remediation, 2026-10-04) ---
+# --- the close: one start per close, rounds counted by triage ---
 
-class TestCloseRounds(LedgerTestCase):
-    def test_close_rounds_counts_only_close_round_entries(self):
-        log = [
-            {"type": "complete", "task": 1, "note": "shipped"},
-            {"type": "close_round", "round": 1, "note": "first close"},
-            {"type": "resolution", "resolves": "x#status", "note": ""},
-        ]
-        self.assertEqual(ledger.close_rounds(log), 1)
+def _close_record(agent: str, role: str, **overrides) -> dict:
+    data = {"schema": 2, "agent": agent, "role": role, "task": "close", "status": "pass",
+            "findings": []}
+    data.update(overrides)
+    return data
 
-    def test_first_and_second_rounds_print_their_number_and_append_typed_entries(self):
-        for expected, head in ((1, "aaa1111"), (2, "bbb2222")):
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                ledger.cmd_close_round(self.store, f"round {expected}", head, expect=expected)
-            self.assertEqual(buf.getvalue().strip(), str(expected))
-        log = ledger.load_progress_log(self.store)
-        # Each round records the HEAD it reviewed, so round 2 can name the
-        # remediation range (round-1 head..HEAD) without memory.
-        self.assertEqual(log, [
-            {"type": "close_round", "round": 1, "head": "aaa1111", "note": "round 1"},
-            {"type": "close_round", "round": 2, "head": "bbb2222", "note": "round 2"},
-        ])
 
-    def test_round_past_the_cap_raises_and_appends_nothing(self):
-        # The cap is the escalation trigger: a third close round must not
-        # start silently — round 2's findings go to the user instead.
-        for n in range(ledger.CLOSE_ROUND_CAP):
-            with contextlib.redirect_stdout(io.StringIO()):
-                ledger.cmd_close_round(self.store, f"round {n + 1}", "abc1234", expect=n + 1)
+def _statement(n: int, verdict: str = "met", **extra) -> dict:
+    return {"statement": n, "verdict": verdict, "evidence": f"observed {n}", **extra}
+
+
+class TestCloseStart(LedgerTestCase):
+    def start(self, note: str = "plan.md", head: str = "aaa1111") -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_close_round(self.store, note, head)
+        return out.getvalue().strip()
+
+    def test_a_close_records_its_head_and_note_and_prints_the_head(self):
+        self.assertEqual(self.start(), "aaa1111")
+        self.assertEqual(ledger.load_progress_log(self.store),
+                         [{"type": "close_round", "head": "aaa1111", "note": "plan.md"}])
+
+    def test_a_close_still_open_refuses_another_start_and_appends_nothing(self):
+        self.start()
         before = ledger.load_progress_log(self.store)
         with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_close_round(self.store, "one more", "abc1234",
-                                   expect=ledger.CLOSE_ROUND_CAP + 1)
-        message = str(ctx.exception)
-        self.assertIn(f"cap ({ledger.CLOSE_ROUND_CAP})", message)
-        self.assertIn("escalate", message)
-        # The error must not read as an invitation to bypass the cap.
-        self.assertIn("never clear", message)
+            self.start(head="bbb2222")
+        self.assertIn("triage --task close", str(ctx.exception))
         self.assertEqual(ledger.load_progress_log(self.store), before)
 
-    def test_expect_mismatch_raises_and_appends_nothing(self):
-        # A fresh close expects round 1; a store left by an earlier run
-        # would otherwise silently start it at round 2.
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_close_round(self.store, "old run", "abc1234", expect=1)
-        before = ledger.load_progress_log(self.store)
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_close_round(self.store, "new feature", "def5678", expect=1)
-        message = str(ctx.exception)
-        self.assertIn("expected round 1", message)
-        self.assertIn("clear", message)
-        self.assertEqual(ledger.load_progress_log(self.store), before)
+    def test_a_close_that_reached_done_lets_a_new_one_start(self):
+        self.start()
+        ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "done"})
+        self.assertEqual(self.start(head="bbb2222"), "bbb2222")
 
-    def _two_rounds(self):
+    def test_legacy_round_entries_never_block_a_new_close(self):
         for n in (1, 2):
-            with contextlib.redirect_stdout(io.StringIO()):
-                ledger.cmd_close_round(self.store, "plan.md", "abc1234", expect=n)
+            ledger._append_progress(self.store, {"type": "close_round", "round": n, "head": "h",
+                                                 "note": "old"})
+        self.assertEqual(self.start(), "aaa1111")
 
-    def test_expect_one_on_a_capped_store_says_finish_or_escalate_not_resume(self):
-        # "Resume round 1, then --expect 2" would point at a command that
-        # then fails; with both rounds used, the only moves are finishing
-        # round 2's triage and escalating — or clearing an unrelated run.
-        self._two_rounds()
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_close_round(self.store, "plan.md", "def5678", expect=1)
-        message = str(ctx.exception)
-        self.assertIn("both rounds", message)
-        self.assertIn("escalate", message)
-        self.assertNotIn("--expect 2", message)
+    def test_the_close_scope_starts_after_the_latest_start(self):
+        ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "patch"})
+        self.start()
+        self.assertEqual(ledger.triage_entries(ledger.load_progress_log(self.store), "close"), [])
 
-    def test_repeated_expect_two_past_the_cap_gets_the_escalation_message(self):
-        self._two_rounds()
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_close_round(self.store, "plan.md", "def5678", expect=2)
-        self.assertIn(f"cap ({ledger.CLOSE_ROUND_CAP})", str(ctx.exception))
-        self.assertIn("escalate", str(ctx.exception))
-
-    def test_expect_two_on_an_empty_store_raises(self):
-        # Round 2 only follows a round 1 of the same run.
-        with self.assertRaises(ledger.RecordError) as ctx:
-            ledger.cmd_close_round(self.store, "orphan", "abc1234", expect=2)
-        self.assertIn("expected round 2", str(ctx.exception))
-
-    def test_clear_resets_the_round_count(self):
+    def test_the_close_takes_rulings_and_files_notes_under_its_own_scope(self):
+        ledger.cmd_append(self.store, "progress", "close", "user ruling: mutation gate: no")
         with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_close_round(self.store, "round 1", "abc1234", expect=1)
-        ledger.cmd_clear(self.store)
-        self.assertEqual(ledger.close_rounds(ledger.load_progress_log(self.store)), 0)
+            ledger.cmd_note(self.store, "follow-up", "a design finding for later", source="close")
+        log = ledger.load_progress_log(self.store)
+        self.assertEqual([(e["type"], e.get("task", e.get("from"))) for e in log],
+                         [("progress", "close"), ("note", "close")])
 
-    def test_close_round_entries_render_in_read(self):
-        log = [{"type": "close_round", "round": 2, "note": "after remediation"}]
-        rendered = ledger.render_store_markdown([], log)
-        line = next(ln for ln in rendered.splitlines() if "after remediation" in ln)
-        self.assertIn("close round 2", line)
+    def test_the_cli_takes_close_as_a_task(self):
+        parser = ledger.build_parser()
+        for argv in (["append", "--type", "progress", "--task", "close", "--note", "x"],
+                     ["note", "--kind", "follow-up", "--text", "x", "--from", "close"],
+                     ["triage", "--task", "close"], ["commit", "--task", "close", "--message", "m",
+                                                     "--test", "true"]):
+            with self.subTest(argv[0]):
+                parser.parse_args(argv)
+
+    def test_a_close_entry_renders_in_read(self):
+        rendered = ledger.render_store_markdown([], [{"type": "close_round", "head": "abc",
+                                                      "note": "plan.md"}])
+        line = next(ln for ln in rendered.splitlines() if "plan.md" in ln)
+        self.assertIn("close started", line)
         self.assertNotIn("unknown entry", rendered)
+
+
+class TestCloseRecords(LedgerTestCase):
+    def check(self, name: str, data: dict) -> None:
+        ledger.cmd_check(str(_write(self.store, name, data)))
+
+    def test_each_close_gate_record_passes_check(self):
+        cases = {
+            "close-python-design-reviewer.json": _close_record(
+                "python-design-reviewer", "design-reviewer", status="concerns",
+                findings=[_finding(severity=4)]),
+            "close-intent-reviewer.json": _close_record(
+                "intent-reviewer", "intent-reviewer", status="concerns",
+                statements=[_statement(1), _statement(2, "not-met")],
+                findings=[_finding(statement=2)]),
+            "close-mutation-tester.json": _close_record(
+                "mutation-tester", "mutation-tester", status="skipped"),
+        }
+        for name, data in cases.items():
+            with self.subTest(name):
+                self.check(name, data)
+
+    def test_intent_records_must_tie_findings_to_not_met_statements(self):
+        cases = {
+            "a not-met with no finding": dict(statements=[_statement(1, "not-met")], findings=[]),
+            "a finding citing a met statement": dict(statements=[_statement(1)],
+                                                     findings=[_finding(statement=1)]),
+            "a finding citing no statement": dict(statements=[_statement(1, "not-met")],
+                                                  findings=[_finding()]),
+            "a can't-tell without needs": dict(statements=[_statement(1, "can't-tell")]),
+            "pass with a not-met": dict(status="pass", statements=[_statement(1, "not-met")],
+                                        findings=[_finding(statement=1)]),
+            "an unknown verdict": dict(statements=[_statement(1, "maybe")]),
+        }
+        for label, overrides in cases.items():
+            with self.subTest(label):
+                data = _close_record("intent-reviewer", "intent-reviewer",
+                                     **{"status": "concerns", **overrides})
+                with self.assertRaises(ledger.RecordError):
+                    self.check("close-intent-reviewer.json", data)
+
+    def test_a_cant_tell_with_needs_passes(self):
+        self.check("close-intent-reviewer.json", _close_record(
+            "intent-reviewer", "intent-reviewer",
+            statements=[_statement(1, "can't-tell", needs="a run with a GPU")]))
+
+    def test_a_status_outside_the_roles_set_is_refused(self):
+        for role, status in (("design-reviewer", "skipped"), ("intent-reviewer", "inconclusive"),
+                             ("mutation-tester", "issues")):
+            with self.subTest(role=role):
+                with self.assertRaises(ledger.RecordError):
+                    self.check(f"close-{role}.json", _close_record(role, role, status=status,
+                                                                    statements=[]))
 
 
 # --- store-dir (spec Sec 6, amended 2026-08-27) ---
@@ -1970,6 +1998,14 @@ class TestDecisionContext(DecisionStoreTestCase):
                 self.assertCheckFails(self._complete(), "-decision-c2.json, scope task-1",
                                       name=name)
 
+    def test_a_close_decision_is_named_for_the_close(self):
+        design = _close_record("python-design-reviewer", "design-reviewer",
+                               findings=[_QUALITY_FINDING])
+        _write(self.store, "close-python-design-reviewer.json", design)
+        fid = _entry_id("close-python-design-reviewer", "findings", _QUALITY_FINDING)
+        self._check(_decision([fid], task="close", reviewer_records=["close-python-design-reviewer"]),
+                    name="close-decision-c2.json")
+
     def test_a_final_decision_is_named_for_final(self):
         lite = _review_lite(task="final", status="block", findings=[_QUALITY_FINDING])
         _write(self.store, "final-python-review-lite.json", lite)
@@ -1977,15 +2013,12 @@ class TestDecisionContext(DecisionStoreTestCase):
         data = _decision([lite_id], task="final", reviewer_records=["final-python-review-lite"])
         self._check(data, name="final-decision-c2.json")
 
-    def test_a_round_two_final_decision_covers_only_round_two(self):
+    def test_a_close_decision_covers_only_the_closes_records(self):
         _write(self.store, "final-python-review-lite.json",
                _review_lite(task="final", status="block", findings=[_QUALITY_FINDING]))
-        _write(self.store, "final-r2-python-review-lite.json",
-               _review_lite(task="final", status="block", findings=[_NOTE]))
-        r2_id = _entry_id("final-r2-python-review-lite", "findings", _NOTE)
-        data = _decision([r2_id], task="final", reviewer_records=["final-r2-python-review-lite"])
-        self._check(data, name="final-r2-decision-c2.json")
-        self.assertCheckFails(data, "final-python-review-lite", name="final-decision-c2.json")
+        lite_id = _entry_id("final-python-review-lite", "findings", _QUALITY_FINDING)
+        data = _decision([lite_id], task="close", reviewer_records=["final-python-review-lite"])
+        self.assertCheckFails(data, "final-python-review-lite", name="close-decision-c2.json")
 
     def test_a_precedent_cannot_cite_the_store(self):
         _write(self.store, "notes.json", {"x": 1})
@@ -2127,9 +2160,9 @@ class TestEscalations(DecisionStoreTestCase):
         ledger.cmd_append(self.store, "complete", 2, "shipped")
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), ["2"])
 
-    def test_final_completion_waits_on_a_close_gate_escalation(self):
+    def test_final_completion_waits_on_its_decisions_escalation(self):
         escalate = {"kind": "escalate", "findings": ["x"], "why": "w", "evidence": "e"}
-        _write(self.store, "final-r2-decision-c1.json",
+        _write(self.store, "final-decision-c1.json",
                _decision(["x"], task="final", cycle=1, status="escalated", choices=[escalate]))
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_append(self.store, "complete", "final", "shipped")
@@ -4317,41 +4350,33 @@ class TestPath(LedgerTestCase):
             ledger.cmd_path(self.store, scope, agent, kind)
         return out.getvalue().strip()
 
-    def close_round(self, n: int) -> None:
-        ledger._append_progress(self.store, {"type": "close_round", "round": n, "head": "h",
-                                             "note": "plan.md"})
-
     def test_a_task_names_its_record_report_and_brief(self):
         self.assertEqual(self.path(3, "python-coder"), str(self.store / "task-3-python-coder.json"))
         self.assertEqual(self.path(3, "spec-reviewer", "report"),
                          str(self.store / "task-3-spec-reviewer-report.md"))
         self.assertEqual(self.path(3, kind="brief"), str(self.store / "task-3-brief.md"))
 
-    def test_final_switches_to_final_r2_once_a_close_round_exists(self):
-        self.assertEqual(self.path("final", "python-review-lite"),
-                         str(self.store / "final-python-review-lite.json"))
-        self.close_round(1)
+    def test_final_keeps_its_names_after_a_close_starts(self):
+        ledger._append_progress(self.store, {"type": "close_round", "head": "h", "note": "plan.md"})
         self.assertEqual(self.path("final", "python-coder", "report"),
-                         str(self.store / "final-r2-python-coder-report.md"))
+                         str(self.store / "final-python-coder-report.md"))
 
-    def test_close_follows_the_latest_round_and_ruling_has_its_own_stem(self):
-        self.close_round(1)
-        self.assertEqual(self.path("close", "rust-coder"), str(self.store / "final-close-r1-rust-coder.json"))
-        self.close_round(2)
-        self.assertEqual(self.path("close", "rust-coder"), str(self.store / "final-close-r2-rust-coder.json"))
-        self.assertEqual(self.path("ruling", "rust-coder", "report"),
-                         str(self.store / "final-close-ruling-rust-coder-report.md"))
+    def test_the_close_names_each_agents_record_and_report(self):
+        self.assertEqual(self.path("close", "intent-reviewer"),
+                         str(self.store / "close-intent-reviewer.json"))
+        self.assertEqual(self.path("close", "rust-coder", "report"),
+                         str(self.store / "close-rust-coder-report.md"))
 
-    def test_gate_reports_keep_one_path_every_round(self):
-        self.assertEqual(self.path("gate", "intent-reviewer", "report"),
-                         str(self.store / "gate-intent-reviewer-report.md"))
-        self.close_round(1)
-        self.assertEqual(self.path("gate", "intent-reviewer", "report"),
-                         str(self.store / "gate-intent-reviewer-report.md"))
+    def test_the_retired_gate_and_ruling_scopes_name_the_close(self):
+        for scope in ("gate", "ruling"):
+            with self.subTest(scope):
+                with self.assertRaises(ledger.UsageError) as ctx:
+                    self.path(scope, "intent-reviewer", "report")
+                self.assertIn("--task close", str(ctx.exception))
 
     def test_refusals(self):
-        cases = [("close", "rust-coder", "record"), ("ruling", "rust-coder", "record"),
-                 ("gate", "intent-reviewer", "record"), ("final", None, "brief"),
+        cases = [("close", None, "record"), ("close", "rust-coder", "brief"),
+                 ("final", None, "brief"),
                  (3, None, "record"), (3, None, "report"), (3, "a/b", "record"),
                  (3, "a\\b", "record"), (3, "..", "record"), (3, "", "record")]
         for scope, agent, kind in cases:
@@ -4361,7 +4386,8 @@ class TestPath(LedgerTestCase):
 
     def test_clear_removes_the_new_and_the_old_report_names(self):
         ledger.ensure_store(self.store)
-        names = ["gate-intent-reviewer-report.md", "final-python-coder-report.md",
+        names = ["gate-intent-reviewer-report.md", "close-intent-reviewer-report.md",
+                 "final-python-coder-report.md",
                  "final-close-r1-python-coder-report.md", "task-3-python-coder-report.md",
                  "design-review-python-design-reviewer.md", "intent-recheck.md", "mutation-review.md"]
         for name in names:
@@ -4372,7 +4398,7 @@ class TestPath(LedgerTestCase):
 
     def test_the_cli_exits_2_on_a_refusal(self):
         ledger.ensure_store(self.store)
-        run = subprocess.run([sys.executable, str(LEDGER_PY), "path", "--task", "close",
+        run = subprocess.run([sys.executable, str(LEDGER_PY), "path", "--task", "gate",
                               "--agent", "rust-coder", "--store", str(self.store)],
                              capture_output=True, text=True)
         self.assertEqual(run.returncode, 2)
@@ -4691,18 +4717,21 @@ class TestCLI(LedgerTestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
 
-    def test_close_round_cli_prints_rounds_then_fails_past_the_cap(self):
-        outputs = [self._run("close-round", "--expect", str(n), "--note", f"round {n}")
-                   for n in range(1, ledger.CLOSE_ROUND_CAP + 2)]
-        for n, result in enumerate(outputs[:-1], 1):
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), str(n))
+    def test_close_round_cli_prints_the_head_then_refuses_a_second_open_close(self):
+        first = self._run("close-round", "--note", "plan.md")
+        self.assertEqual(first.returncode, 0, first.stderr)
         # The CLI fills `head` from git (the test runs inside this repo).
-        heads = [e["head"] for e in ledger.load_progress_log(self.store)]
-        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{40}", h) for h in heads), heads)
-        past_cap = outputs[-1]
-        self.assertNotEqual(past_cap.returncode, 0)
-        self.assertIn("escalate", past_cap.stderr)
+        self.assertRegex(first.stdout.strip(), r"^[0-9a-f]{40}$")
+        second = self._run("close-round", "--note", "plan.md")
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("triage --task close", second.stderr)
+
+    def test_close_round_cli_names_the_new_usage_for_expect(self):
+        result = self._run("close-round", "--expect", "1", "--note", "plan.md")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expect", result.stderr)
+        self.assertIn("close-round --note", result.stderr)
+        self.assertEqual(ledger.load_progress_log(self.store), [])
 
     def test_read_renders_complete_entries_distinctly_from_progress(self):
         _completable(self.store, 5)
