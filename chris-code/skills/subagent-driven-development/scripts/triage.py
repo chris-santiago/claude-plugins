@@ -15,6 +15,11 @@ A finding's tier comes from its severity and reach alone:
 A coder's `root cause:` concern and a finding whose reach the coder raised
 are holistic too. A contest the raising reviewer holds is held for the user.
 `recurring` and `introduced_by_fix` never change a tier; they feed telemetry.
+
+The completion close has its own rule set (`derive_close`): an intent
+not-met, an S4+ finding or one the user promoted blocks and routes by reach
+to a patch or holistic round; everything else is filed once, and nothing
+smaller ever reaches a coder.
 """
 
 from __future__ import annotations
@@ -134,6 +139,90 @@ def derive(*, findings: list[dict], root_causes: list[str], reach_raised: set[st
         "closed": max(previous_count - survived, 0) if prior else 0,
         "survived": survived,
         "introduced": sum(1 for f in open_serious if f.get("introduced")),
+    }
+
+
+BLOCKING_SEVERITY = 4
+
+
+def close_tier(finding: dict, reach_raised: set[str], promoted: set[str]) -> str:
+    """The close's tier for a finding: patch or holistic (by effective
+    reach) when it blocks, which is an intent not-met, an S4+ finding, or
+    one the user promoted; file otherwise."""
+    blocking = (finding.get("not_met") or finding["severity"] >= BLOCKING_SEVERITY
+                or finding["id"] in promoted)
+    if not blocking:
+        return "file"
+    contract = finding["reach"] == "contract" or finding["id"] in reach_raised
+    return "holistic" if contract else "patch"
+
+
+def derive_close(*, findings: list[dict], root_causes: list[str], reach_raised: set[str],
+                 answers: dict[str, str], waived: set[str], deferred: set[str],
+                 promoted: set[str], unclear: list[str], prior: list[dict], ruled: bool,
+                 model: str | None) -> dict:
+    """The close's next step, as a triage entry (without its type, task and
+    tree). Only blocking findings are ever sent to a coder; everything else
+    is filed once. `findings` are the close gates' raised findings, each as
+    for `derive` plus `not_met` (an intent statement the behavior misses).
+    `deferred` are the waived ids whose ruling defers them, filed rather
+    than dropped. `promoted` are filed findings a user ruling reopened.
+    `unclear` are the intent statements still `can't-tell`: they are
+    clarified before any fix round, so a late not-met joins it."""
+    settled = _settled(prior, waived, answers)
+    last_kind = prior[-1]["kind"] if prior else None
+    live = [f for f in findings if f["id"] not in settled]
+    tiers = {f["id"]: close_tier(f, reach_raised, promoted) for f in live}
+    blocking = [f for f in live if tiers[f["id"]] in ("patch", "holistic")]
+    ruling_now = ruled and last_kind in ("escalate", "done") and bool(blocking or root_causes)
+    held = _held(prior, answers, settled, ruling_now, {f["id"] for f in findings})
+    for f in live:
+        if f["id"] in held:
+            tiers[f["id"]] = "held"
+    blocking = [f for f in blocking if f["id"] not in held]
+    open_work = bool(blocking or root_causes)
+    rounds = sum(1 for e in prior if e.get("kind") in FIX_ROUND_KINDS)
+
+    if ruling_now:
+        kind = "ruling"
+    elif unclear:
+        kind = "clarify"
+    elif open_work and (rounds >= MAX_FIX_ROUNDS or last_kind == "ruling"):
+        kind = "escalate"
+    elif open_work:
+        holistic = bool(root_causes) or any(tiers[f["id"]] == "holistic" for f in blocking)
+        kind = "holistic" if holistic else "patch"
+    elif held:
+        kind = "escalate"
+    else:
+        kind = "done"
+
+    sent = blocking if kind in ("patch", "holistic", "ruling", "escalate") else []
+    sent_ids = {f["id"] for f in sent}
+    already_filed = _filed(prior)
+    to_file = [{"id": f["id"], "rule": f["rule"]} for f in findings
+               if f["id"] not in already_filed and f["id"] not in promoted
+               and ((f["id"] in tiers and tiers[f["id"]] == "file") or f["id"] in deferred)]
+    newly_filed = {c["id"] for c in to_file}
+    survived = sum(1 for f in blocking if f.get("recurring"))
+    previous_count = len(prior[-1].get("findings", [])) if prior else 0
+    return {
+        "kind": kind,
+        "round": rounds + (1 if kind in FIX_ROUND_KINDS else 0),
+        "recheck": {"clarify": "intent"}.get(kind, "raising" if kind in FIX_KINDS else "none"),
+        "findings": [{"id": f["id"], "tier": tiers[f["id"]], "rule": f["rule"],
+                      "source": f["source"]} for f in live
+                     if f["id"] in sent_ids | newly_filed or tiers[f["id"]] == "held"],
+        "root_causes": list(root_causes) if kind in ("holistic", "ruling", "escalate") else [],
+        "unclear": list(unclear) if kind == "clarify" else [],
+        "held": sorted(held),
+        "settled": sorted(settled),
+        "filed": sorted(already_filed | newly_filed),
+        "to_file": to_file,
+        "model": model,
+        "closed": max(previous_count - survived, 0) if prior else 0,
+        "survived": survived,
+        "introduced": sum(1 for f in blocking if f.get("introduced")),
     }
 
 

@@ -225,6 +225,130 @@ class TestTelemetry(unittest.TestCase):
         self.assertEqual(derive([finding("a")], model=None)["closed"], 0)
 
 
+def gate_finding(fid: str, severity: int = 4, reach: str = "local", *,
+                 source: str = "close-python-design-reviewer", not_met: bool = False,
+                 recurring: bool = False) -> dict:
+    return {**finding(fid, severity, reach, source=source, recurring=recurring), "not_met": not_met}
+
+
+def not_met(fid: str, severity: int = 2, reach: str = "local") -> dict:
+    return gate_finding(fid, severity, reach, source="close-intent-reviewer", not_met=True)
+
+
+def derive_close(findings=(), *, prior=(), root_causes=(), reach_raised=(), answers=None,
+                 waived=(), deferred=(), promoted=(), unclear=(), ruled=False,
+                 model: str | None = "sonnet") -> dict:
+    return triage.derive_close(findings=list(findings), root_causes=list(root_causes),
+                               reach_raised=set(reach_raised), answers=dict(answers or {}),
+                               waived=set(waived), deferred=set(deferred),
+                               promoted=set(promoted), unclear=list(unclear),
+                               prior=list(prior), ruled=ruled, model=model)
+
+
+class TestCloseTiers(unittest.TestCase):
+    def test_each_cell_of_the_close_matrix(self):
+        cases = {(1, "local", False): "file", (3, "local", False): "file",
+                 (3, "contract", False): "file", (4, "local", False): "patch",
+                 (5, "class", False): "patch", (4, "contract", False): "holistic",
+                 (2, "local", True): "patch", (1, "contract", True): "holistic"}
+        for (severity, reach, unmet), expected in cases.items():
+            with self.subTest(severity=severity, reach=reach, not_met=unmet):
+                f = gate_finding("f", severity, reach, not_met=unmet)
+                self.assertEqual(triage.close_tier(f, set(), set()), expected)
+
+    def test_a_promoted_finding_blocks_whatever_its_severity(self):
+        self.assertEqual(triage.close_tier(gate_finding("f", 3), set(), {"f"}), "patch")
+
+    def test_a_reach_the_coder_raised_is_contract(self):
+        self.assertEqual(triage.close_tier(gate_finding("f"), {"f"}, set()), "holistic")
+
+
+class TestCloseSteps(unittest.TestCase):
+    def test_blocking_findings_start_a_patch_and_the_rest_are_filed(self):
+        design_s3 = gate_finding("d3", 3)
+        survivor = gate_finding("m", 3, source="close-mutation-tester")
+        unmet, design_s4 = not_met("n"), gate_finding("d4", 4)
+        entry = derive_close([design_s3, survivor, unmet, design_s4])
+        self.assertEqual((entry["kind"], entry["round"], entry["recheck"]), ("patch", 1, "raising"))
+        sent = {f["id"] for f in entry["findings"] if f["tier"] == "patch"}
+        self.assertEqual(sent, {"n", "d4"})
+        self.assertEqual(sorted(c["id"] for c in entry["to_file"]), ["d3", "m"])
+
+    def test_a_contract_s4_starts_a_holistic_round_rechecked_by_its_raisers(self):
+        entry = derive_close([gate_finding("c", 4, "contract")])
+        self.assertEqual((entry["kind"], entry["recheck"]), ("holistic", "raising"))
+
+    def test_only_filed_findings_are_done_on_the_first_entry(self):
+        entry = derive_close([gate_finding("a", 3), gate_finding("b", 1)])
+        self.assertEqual((entry["kind"], entry["round"]), ("done", 0))
+        self.assertEqual(len(entry["to_file"]), 2)
+
+    def test_a_clean_close_is_done(self):
+        self.assertEqual(derive_close()["kind"], "done")
+
+    def test_an_open_cant_tell_clarifies_first_without_a_round(self):
+        entry = derive_close([gate_finding("d4", 4)], unclear=["close-intent-reviewer#statements[3]"])
+        self.assertEqual((entry["kind"], entry["round"], entry["recheck"]), ("clarify", 0, "intent"))
+        self.assertEqual(entry["unclear"], ["close-intent-reviewer#statements[3]"])
+
+    def test_after_a_clarify_a_late_not_met_joins_the_fix_round(self):
+        prior = [step("clarify")]
+        entry = derive_close([gate_finding("d4", 4), not_met("late")], prior=prior)
+        self.assertEqual(entry["kind"], "patch")
+        self.assertEqual({f["id"] for f in entry["findings"] if f["tier"] == "patch"}, {"d4", "late"})
+
+    def test_blocking_work_after_two_fix_rounds_escalates(self):
+        a = gate_finding("a", 4)
+        prior = [step("patch", [(a, "patch")]), step("holistic", [(a, "holistic")])]
+        self.assertEqual(derive_close([a], prior=prior)["kind"], "escalate")
+
+    def test_a_ruling_after_escalation_starts_a_ruling_round(self):
+        a = gate_finding("a", 4)
+        prior = [step("patch", [(a, "patch")]), step("patch", [(a, "patch")]), step("escalate")]
+        entry = derive_close([a], prior=prior, ruled=True)
+        self.assertEqual((entry["kind"], entry["recheck"]), ("ruling", "raising"))
+
+    def test_a_failed_ruling_round_escalates_again(self):
+        a = gate_finding("a", 4)
+        self.assertEqual(derive_close([a], prior=[step("ruling", [(a, "patch")])])["kind"], "escalate")
+
+    def test_a_deferred_finding_is_settled_and_filed(self):
+        a, b = gate_finding("a", 4), gate_finding("b", 5)
+        prior = [step("patch"), step("patch"), step("escalate")]
+        entry = derive_close([a, b], prior=prior, waived={"a", "b"}, deferred={"a"})
+        self.assertEqual(entry["kind"], "done")
+        self.assertEqual([c["id"] for c in entry["to_file"]], ["a"])
+        self.assertTrue({"a", "b"} <= set(entry["settled"]))
+
+    def test_a_promotion_after_done_starts_a_ruling_round_sending_it(self):
+        s3 = gate_finding("s3", 3)
+        first = derive_close([s3])
+        prior = [step("done", filed=first["filed"])]
+        entry = derive_close([s3], prior=prior, promoted={"s3"}, ruled=True)
+        self.assertEqual(entry["kind"], "ruling")
+        self.assertEqual([f["id"] for f in entry["findings"] if f["tier"] == "patch"], ["s3"])
+        self.assertEqual(entry["to_file"], [])
+
+    def test_a_ruling_with_nothing_to_send_starts_no_round(self):
+        self.assertEqual(derive_close([gate_finding("a", 2)], prior=[step("done")], ruled=True)["kind"],
+                         "done")
+
+    def test_a_filed_finding_raised_again_is_not_filed_twice(self):
+        a = gate_finding("a", 3)
+        first = derive_close([a])
+        again = derive_close([a], prior=[step("done", filed=first["filed"])])
+        self.assertEqual(again["to_file"], [])
+
+    def test_a_held_contest_escalates(self):
+        a = gate_finding("a", 4)
+        entry = derive_close([a], prior=[step("patch", [(a, "patch")])], answers={"a": "hold"})
+        self.assertEqual((entry["kind"], entry["held"]), ("escalate", ["a"]))
+
+    def test_a_root_cause_starts_a_holistic_round(self):
+        self.assertEqual(derive_close(root_causes=["close-python-coder#concerns[aa]"])["kind"],
+                         "holistic")
+
+
 class TestPurity(unittest.TestCase):
     def test_the_module_never_imports_ledger(self):
         source = (SCRIPTS_DIR / "triage.py").read_text(encoding="utf-8")
