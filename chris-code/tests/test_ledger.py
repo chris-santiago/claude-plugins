@@ -2904,6 +2904,16 @@ class TestFindingLog(TriageStoreTestCase):
                     ledger.cmd_rule(self.store, ids, verb, note)
         self.assertEqual(self.states()[fid], "sent")
 
+    def test_the_report_lists_a_ruling_on_a_finding(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        _rule(self.store, fid, "drop", "user ruling: out of scope")
+        report = ledger.render_report(ledger.load_progress_log(self.store), [])
+        rulings = report.split("## User rulings")[1].split("## Follow-ups")[0]
+        self.assertIn(f"`{fid}` dropped: user ruling: out of scope", rulings)
+
     def test_a_task_store_from_before_the_finding_log_is_seeded(self):
         issue, waived = _finding(), _finding(rule="other rule")
         fid, wid = self.spec_id(issue), self.spec_id(waived)

@@ -1552,6 +1552,8 @@ def render_report(log: list[dict], records: list[Record]) -> str:
             rulings.append(f"- {_scope_name(e.get('task'))}: {e['note']}")
         elif e.get("type") == "resolution":
             rulings.append(f"- `{e.get('resolves')}`: {e['note']}")
+        elif e.get("type") == FINDING_ENTRY and e.get("by") == "user":
+            rulings.append(f"- `{e.get('id')}` {e.get('state')}: {e['note']}")
     lines += rulings or ["(none)"]
 
     lines += ["", "## Follow-ups"]
