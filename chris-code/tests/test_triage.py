@@ -198,6 +198,14 @@ class TestTaskRounds(unittest.TestCase):
         ruling = loop.review(finding("a"), finding("b"))
         self.assertEqual((ruling["kind"], sent(ruling), ruling["waiting"]), ("ruling", ["b"], ["a"]))
 
+    def test_a_minor_finding_ruled_fix_is_rechecked_by_its_raiser(self):
+        loop = Loop()
+        loop.prior = [{"kind": "patch"}, {"kind": "patch"}]
+        loop.review(finding("n", 2, source="task-1-python-quality-reviewer"))
+        loop.rule("n", "fix")
+        ruling = loop.review(rewrote=set())
+        self.assertEqual((ruling["kind"], sent(ruling), ruling["recheck"]), ("ruling", ["n"], "raising"))
+
     def test_a_file_or_drop_ruling_settles_without_a_round(self):
         for verb, state in (("file", "filed"), ("drop", "dropped")):
             with self.subTest(verb=verb):
@@ -323,6 +331,14 @@ class TestAwaiting(unittest.TestCase):
                          ["close-gate", INTENT])
         self.assertEqual(triage.awaiting(awaited, {DESIGN: "d2", INTENT: "i2", "close-gate": "g"}),
                          [])
+
+
+class TestUnchecked(unittest.TestCase):
+    def test_the_raisers_of_sent_findings_not_rechecked_since_the_send(self):
+        states = {"a": {"state": "sent", "seen": "d1", "data": {"source": DESIGN}},
+                  "b": {"state": "sent", "seen": "i1", "data": {"source": INTENT}},
+                  "c": {"state": "waiting", "seen": None, "data": {"source": "close-mutation-tester"}}}
+        self.assertEqual(triage.unchecked(states, {DESIGN: "d2", INTENT: "i1"}), [INTENT])
 
 
 class TestPurity(unittest.TestCase):

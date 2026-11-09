@@ -11,8 +11,8 @@ scope's records and calls three functions here:
   still raised, conceded or held).
 - `step`: the next step from the states, and the state changes it makes
   (findings sent, notes noted, spent findings put to the user).
-- `awaiting`: the records a fix round still waits on for its re-check;
-  ledger.py takes no new step while any is outstanding.
+- `unchecked` and `awaiting`: the records a fix round still waits on for
+  its re-check; ledger.py takes no new step while any is outstanding.
 
 Nothing here reads files, runs git, or imports ledger: ledger.py runs as
 __main__, and a module that imported it would load a second copy with its
@@ -107,6 +107,13 @@ def observe(states: dict[str, dict], raised: list[dict], answers: dict[str, str]
 
 def _rechecked(current: dict, versions: dict[str, str]) -> bool:
     return versions.get(_source(current)) != current.get("seen")
+
+
+def unchecked(states: dict[str, dict], versions: dict[str, str]) -> list[str]:
+    """The raising records of sent findings not re-checked since the send:
+    a round lasts until each finding it sent has been re-checked."""
+    return sorted({_source(s) or "" for s in states.values()
+                   if s["state"] == "sent" and not _rechecked(s, versions)})
 
 
 def awaiting(awaited: dict[str, str | None], versions: dict[str, str]) -> list[str]:
@@ -222,15 +229,15 @@ def _shown(fid: str, entry: dict, tier_name: str) -> dict:
 
 
 def _recheck(kind: str, sent: list[dict]) -> str:
-    """Who re-checks a task's step: the raising reviewers after a patch or a
-    ruling (or just the gate, when only gate findings were sent), the spec
-    reviewer after a ruling that sent no finding (an overridden behavior
-    choice), every reviewer after a holistic round, nobody otherwise."""
+    """Who re-checks a task's step: the raisers of every finding sent after
+    a patch or a ruling (just the gate, when only gate findings were sent),
+    the spec reviewer after a ruling that sent no finding (an overridden
+    behavior choice), every reviewer after a holistic round, nobody
+    otherwise. Notes are never re-checked."""
     if kind == "holistic":
         return "all"
     if kind in ("patch", "ruling"):
-        serious = [f for f in sent if f["severity"] >= SERIOUS]
-        if not serious and kind == "ruling":
+        if not sent:
             return "spec"
-        return "gate" if serious and all(f.get("gate") for f in serious) else "raising"
+        return "gate" if all(f.get("gate") for f in sent) else "raising"
     return "none"

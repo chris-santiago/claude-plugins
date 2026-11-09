@@ -3095,13 +3095,28 @@ def finding_states(log: list[dict], task: int | str) -> dict[str, dict]:
 def _persist_seed(store_dir: Path, log: list[dict], task: int | str) -> list[dict]:
     """Write a 0.15 scope's seeded states to the log before anything else
     appends a finding entry to it, so the seed never gives way to a lone
-    ruling. Returns the log as it now stands. Call under the store lock."""
+    ruling. A seeded sent or held finding whose record hasn't been written
+    since the scope's last triage entry is seen at its version now, so a
+    round in flight at the upgrade still waits for its re-check; one whose
+    record was written since (or an entry with no time) counts as
+    re-checked. Returns the log as it now stands. Call under the store lock."""
     if finding_entries(log, task):
         return log
-    for fid, seeded in _seeded_states(log, task).items():
+    seeded_states = _seeded_states(log, task)
+    if not seeded_states:
+        return log
+    at = (latest_triage(log, task) or {}).get("at")
+    since = datetime.fromisoformat(at).timestamp() * 1e9 if at else None
+    unchecked = {r.stem: _record_version(store_dir, r)
+                 for r in _scope_records(store_dir, scope_prefix(log, task)).reviewers
+                 if since is not None
+                 and (store_dir / f"{r.stem}.json").stat().st_mtime_ns <= since}
+    for fid, seeded in seeded_states.items():
+        source = (seeded.get("data") or {}).get("source")
+        seen = {"seen": unchecked.get(source)} if seeded["state"] in ("sent", "held") else {}
         _append_progress(store_dir, {"type": FINDING_ENTRY, "task": task, "id": fid,
                                      "state": seeded["state"], "by": "seed",
-                                     "data": seeded.get("data") or {},
+                                     "data": seeded.get("data") or {}, **seen,
                                      **({"tree": seeded["tree"]} if seeded.get("tree") else {}),
                                      "at": _now()})
     return load_progress_log(store_dir)
@@ -3324,12 +3339,13 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
     fix) its baseline. With nothing new since the last step, or while its
     round is in flight (`_round_waits`), reprint that step instead."""
     with store_lock(store_dir):
+        _persist_seed(store_dir, load_progress_log(store_dir), task)
         ctx = triage_inputs(store_dir, task)
         log = ctx["log"]
         digest = _triage_digest(ctx)
         latest = latest_triage(log, task)
         baseline = _round_baseline(log, task)
-        waits = _round_waits(store_dir, log, task, latest, ctx["versions"])
+        waits = _round_waits(store_dir, log, task, latest, ctx["states"], ctx["versions"])
         if latest is not None and (latest.get("inputs") == digest or waits):
             # Nothing changed since the last step, or its round is still in
             # flight: asking again (after a compaction, a paused coder or a
@@ -3349,7 +3365,6 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         step_changes = result.pop("changes")
         changes = observed + step_changes
         states = triage_rules.apply(states, step_changes)
-        _persist_seed(store_dir, log, task)
         filed_notes = [_file_finding(store_dir, load_progress_log(store_dir), task, c["id"], c["data"])
                        for c in observed if c["from"] is None and c["state"] == "filed"]
         already = {i for e in ctx["prior"] for i in e.get("filed", [])}
@@ -3462,20 +3477,28 @@ def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
 
 
 def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict | None,
-                 versions: dict[str, str]) -> list[str]:
+                 states: dict[str, dict], versions: dict[str, str]) -> list[str]:
     """What the scope's latest fix round still waits on, in order, or []
     once it is over: the coder's finished fix, at `final` and the close the
     fix's commit (the gate on it is the coder's same attempt), then a
-    re-check from each record the round named."""
+    re-check of each finding it sent and from each other record it named.
+    A round whose every sent finding the user has filed or dropped is over:
+    the user took that work out of it (a blocked coder, a fix that can't
+    pass its gate)."""
     if latest is None or latest.get("kind") not in triage_rules.FIX_KINDS:
+        return []
+    sent = [f["id"] for f in latest.get("findings", []) if f.get("tier") != "note"]
+    if sent and all(states.get(fid, {}).get("state") in ("filed", "dropped") for fid in sent):
         return []
     baseline = _round_baseline(log, task)
     if baseline is not None and _fix_is_open(store_dir, log, task, baseline):
         return ["the coder's finished fix"]
     if baseline is not None and task in PATH_SCOPES and not _fix_landed(log, task):
         return [f"the fix's commit (`ledger.py commit --task {task}`)"]
+    stems = {*triage_rules.unchecked(states, versions),
+             *triage_rules.awaiting(latest.get("awaiting", {}), versions)}
     return [f"a new `gate` run ({stem})" if _is_gate_stem(stem) else f"a re-check from {stem}"
-            for stem in triage_rules.awaiting(latest.get("awaiting", {}), versions)]
+            for stem in sorted(stems)]
 
 
 def _fix_landed(log: list[dict], task: int | str) -> bool:
@@ -3486,14 +3509,14 @@ def _fix_landed(log: list[dict], task: int | str) -> bool:
 
 
 def _awaited(result: dict, recheck_records: list[str], versions: dict[str, str]) -> dict:
-    """The records a fix step's round waits on, each with its version now:
-    the reviewers it re-dispatches, and the gate when it sent a gate
-    finding (the gate re-checks by running again)."""
+    """The records a fix step's round waits on beyond the raisers of its
+    sent findings (each finding carries its own): the other reviewers it
+    re-dispatches (every reviewer after a holistic round, the spec reviewer
+    after an override's ruling round), each with its version now."""
     if result["kind"] not in triage_rules.FIX_KINDS:
         return {}
-    stems = set(recheck_records) | {f["source"] for f in result["findings"]
-                                    if f["tier"] != "note" and _is_gate_stem(f["source"])}
-    return {stem: versions.get(stem) for stem in sorted(stems)}
+    raisers = {f["source"] for f in result["findings"] if f["tier"] != "note"}
+    return {stem: versions.get(stem) for stem in sorted(set(recheck_records) - raisers)}
 
 
 def _record_version(store_dir: Path, rec: Record) -> str:
@@ -3547,15 +3570,17 @@ def _is_gate_stem(stem: str) -> bool:
 def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
                    baseline: dict | None = None, footprint: set[str] | None = None,
                    waits: list[str] = ()) -> str:
+    """A triage entry as triage prints it. A reprint may show an entry an
+    earlier release logged, so every field but the kind is optional."""
     lines = [f"{_scope_name(entry['task'])} triage: {entry['kind']} "
-             f"(round {entry['round']}, recheck {entry['recheck']})"]
+             f"(round {entry.get('round', 0)}, recheck {entry.get('recheck', 'none')})"]
     if baseline is not None:
         lines.append(f"Fix baseline: {baseline['tree']}")
         lines.append(f"Task files: {' '.join(sorted(footprint or ()))}")
-    for finding in entry["findings"]:
+    for finding in entry.get("findings", []):
         lines.append(f"  [{finding['id']}] {finding['tier']}: {finding['rule']} "
                      f"({finding['source']})")
-    for cid in entry["root_causes"]:
+    for cid in entry.get("root_causes", []):
         lines.append(f"  [{cid}] holistic: root cause")
     for label, key in (("held", "held"), ("waiting for a ruling", "waiting")):
         for fid in entry.get(key, []):
@@ -3570,12 +3595,12 @@ def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
                      "--note \"user ruling: ...\"`, then run triage again")
     if entry.get("decision"):
         lines.append(f"decision doc: {entry['decision']}.json (written before the fix)")
-    if entry["recheck_records"]:
+    if entry.get("recheck_records"):
         lines.append("re-check: " + ", ".join(entry["recheck_records"]))
     if entry["kind"] in triage_rules.FIX_KINDS and any(
-            _is_gate_stem(f["source"]) and f["tier"] != "note" for f in entry["findings"]):
+            _is_gate_stem(f["source"]) and f["tier"] != "note" for f in entry.get("findings", [])):
         lines.append("then re-stage and re-run `gate`")
-    if entry["settled"]:
+    if entry.get("settled"):
         lines.append("settled: " + ", ".join(entry["settled"]))
     for nid in filed:
         lines.append(f"filed {nid}")
@@ -3657,11 +3682,11 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
         files = sorted(footprint)
         _stage_footprint(top, files)
         staged = _staged_scope(top, files)
-        if not staged and task != "final":
+        if not staged and task not in PATH_SCOPES:
             raise RecordError(f"nothing to gate: task {task!r}'s files ({', '.join(files)}) "
                               "have no changes")
-        # At `final` with every fix already committed, the gate still runs
-        # the suite, over HEAD.
+        # At `final` and the close with nothing staged (every fix committed,
+        # or one reverted), the gate still runs the suite, over HEAD.
         tree = _git(top, "write-tree").strip()
         coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
         hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
@@ -3727,8 +3752,6 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     files = sorted(footprint)
     _check_coder_inside_footprint(store_dir, log, task, footprint)
     _stage_footprint(top, files)
-    if final_fix and not _staged_scope(top, files):
-        return _land_unchanged_fix(store_dir, task)
     if not _gate_passed_on_staged(store_dir, log, task, top, files, test, lint) \
             and cmd_gate(store_dir, task, test, lint) != 0:
         return 1
@@ -3739,6 +3762,9 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
         return 1
     before = _git(top, "rev-parse", "HEAD").strip()
     staged = _staged_scope(top, files)
+    if not staged and final_fix:
+        # The gate just passed on HEAD: a fix that changed nothing lands there.
+        return _land_unchanged_fix(store_dir, task)
     if not staged:
         if task == "final" and not final_fix:
             # Every whole-change fix was committed for its re-check, and
@@ -3788,8 +3814,9 @@ def _log_fix_landed(store_dir: Path, task: int | str, commit: str) -> None:
 
 
 def _land_unchanged_fix(store_dir: Path, task: int | str) -> int:
-    """A fix that changed nothing (every finding contested) lands at HEAD:
-    there is nothing to gate or commit, and its re-check comes next."""
+    """A fix that changed nothing (every finding contested) lands at HEAD,
+    with nothing to commit; its re-check comes next. With no footprint at
+    all nothing in the scope ever changed, so there is nothing to gate."""
     top = _store_repo(store_dir)
     head = _git(top, "rev-parse", "HEAD").strip() if top is not None else ""
     _log_fix_landed(store_dir, task, head)

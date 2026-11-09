@@ -3825,6 +3825,53 @@ class TestRoundInFlight(TriageStoreTestCase):
         self.assertEqual(follow_ups, [])
 
 
+class TestRoundEnds(TriageStoreTestCase):
+    """A round ends when every finding it sent has been re-checked by its
+    raiser or ruled off by the user."""
+
+    QUALITY = "task-3-python-quality-reviewer"
+
+    def quality(self, *findings: dict) -> Path:
+        return self.write(f"{self.QUALITY}.json", _quality_reviewer(
+            task=3, status="issues" if any(f["severity"] >= 3 for f in findings) else "approved",
+            findings=list(findings)))
+
+    def test_a_minor_finding_ruled_fix_waits_for_its_own_reviewer(self):
+        nit = _finding(severity=2, rule="a nit")
+        nid = _entry_id(self.QUALITY, "findings", nit)
+        for n in (1, 2):
+            ledger._append_progress(self.store, {"type": "triage", "task": 3, "kind": "patch",
+                                                 "round": n, "findings": [], "settled": []})
+        self.spec()
+        self.quality(nit)
+        self.assertIn("polish", self.triage())
+        self.fixed(cycle=2, notes_skipped=[{"finding": nid, "reason": "the name reads fine"}])
+        self.triage()
+        _rule(self.store, nid, "fix", "user ruling: fix the nit properly")
+        self.assertIn(f"re-check: {self.QUALITY}", self.triage())
+        self.fixed(cycle=3, changed_files=["a.py"])
+        self.spec()
+        self.assertIn(f"waiting for: a re-check from {self.QUALITY}", self.triage())
+        self.quality()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertFalse(any("re-check" in b for b in ledger.ready_blockers(self.store, 3)))
+
+    def test_a_0_15_round_in_flight_waits_for_its_recheck(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        ledger._append_progress(self.store, {
+            "type": "triage", "task": 3, "kind": "patch", "round": 1,
+            "findings": [{"id": fid, "tier": "patch", "rule": issue["rule"],
+                          "source": "task-3-spec-reviewer"}],
+            "held": [], "settled": [], "filed": [], "at": "2999-01-01T00:00:00+00:00"})
+        self.assertIn("waiting for: a re-check from task-3-spec-reviewer", self.triage())
+        self.spec(issue)
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch"])
+
+
 class TestCloseRoundInFlight(CloseStoreTestCase):
     """At the close a fix round lasts until its fix is committed and every
     gate it named has re-checked it."""
@@ -3960,6 +4007,30 @@ class TestCloseRoundInFlight(CloseStoreTestCase):
         with contextlib.redirect_stdout(out):
             ledger.cmd_baseline(self.store, _baseline(self.store, "close"), "close")
         self.assertIn("the cache never evicts", out.getvalue())
+
+    def test_a_blocked_fix_ends_when_the_user_rules_its_findings_off(self):
+        s4 = _finding(severity=4)
+        self.design(s4)
+        self.triage()
+        self.fix(files=(), status="blocked")
+        self.assertIn("waiting for: the coder's finished fix", self.triage())
+        self.rule("drop", self.fid(self.DESIGN, s4))
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_fix_whose_gate_keeps_failing_ends_on_the_users_ruling_and_a_revert(self):
+        s4 = _finding(severity=4)
+        fid = self.fid(self.DESIGN, s4)
+        self.design(s4)
+        self.triage()
+        self.fix()
+        self.assertEqual(self.commit("false")[0], 1)
+        self.rule("file", fid)
+        self._git("checkout", "--", "a.py")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, "close", "true", None), 0)
+        self.triage()
+        self.assertEqual((self.entries()[-1]["kind"], self.states()[fid]), ("done", "filed"))
 
     def test_a_finished_close_names_only_clearing(self):
         self.design()
