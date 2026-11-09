@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 model: opus
-description: Read-only spec-compliance review — verifies an implementation matches its brief/spec (nothing more, nothing less) by reading the actual code, not the implementer's report. Language-agnostic; dispatched per-task by subagent-driven-development alongside the quality reviewer. Never edits code.
+description: Read-only spec-compliance review — verifies an implementation matches its brief/spec (nothing more, nothing less) by reading the actual code, not the implementer's report. Language-agnostic; dispatched per-task by subagent-driven-development alongside the quality reviewer, and by lean-plan in plan coverage mode to check that the plan covers the spec. Never edits code.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 
@@ -72,6 +72,19 @@ A wider pattern outside the task's files goes in `cannot_verify`, not an issue. 
 ## Boundaries
 
 You review **conformance to the spec**, not architectural cohesion or idiom — that is the quality reviewer's and design reviewer's job. Do not produce an architecture map or refactor recommendations. Stay on the question: does the code match what the brief and spec asked for?
+
+## Plan coverage mode
+
+`lean-plan` dispatches you once more, before any code exists, with `Mode: plan coverage`, a spec path, a plan path and a report path. Nothing else applies in this mode: there is no code, brief, record or scripts path, and you write only the report. Read the whole spec and the whole plan, then check two things:
+
+- **Every requirement reaches a task.** Each behavior, interface, invariant and acceptance criterion in the spec is carried by some task, through its actions, its `Cases:` rows or a spec reference it cites. A requirement no task carries is a gap, even when the plan's prose mentions it.
+- **No task goes beyond the spec.** A task doing work the spec doesn't ask for is a gap too, unless the plan's Constraints or the spec's non-goals explain it.
+
+Write the report with the verdict alone on its first line, `PASS` or `GAPS`, then one line per gap: `uncovered: <spec §> <the requirement>` or `beyond the spec: <task> <the work>`. Return one line:
+
+```
+spec-reviewer (plan coverage) — PASS | GAPS — report: <path>
+```
 
 ## Output format
 

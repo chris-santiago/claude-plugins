@@ -25,6 +25,7 @@ IMPLEMENTER_PROMPT = (CHRIS_CODE_DIR / "skills" / "subagent-driven-development"
 CODERS = ["python-coder", "rust-coder", "pytorch-coder"]
 QUALITY_REVIEWERS = ["python-quality-reviewer", "rust-quality-reviewer", "pytorch-quality-reviewer"]
 REVIEW_LITE = ["python-review-lite", "rust-review-lite"]
+DESIGN_REVIEWERS = ["python-design-reviewer", "rust-design-reviewer"]
 
 # Typed-record bullets that name the agent or its own principles and concerns.
 CODER_OWN_FIELDS = ("- `agent`:", "- `new_shared_symbols`:", "- `duplication_pending`:", "- `concerns`:")
@@ -122,6 +123,21 @@ class TestReviewerProtocol(unittest.TestCase):
         self.assertEqual(_without_fence(_section(self.spec, "## Report and return"), "spec-reviewer"),
                          _without_fence(_section(quality, "## Report and return"),
                                         "python-quality-reviewer"))
+
+    def test_design_reviewers_share_their_record_and_re_checks(self):
+        reference = _read("python-design-reviewer")
+        for heading in ("## Report file & return", "## Typed record", "## Re-checks"):
+            for name in DESIGN_REVIEWERS:
+                with self.subTest(section=heading, contract=name):
+                    self.assertEqual(
+                        _without_fence(_section(_read(name), heading), name),
+                        _without_fence(_section(reference, heading), "python-design-reviewer"))
+
+    def test_every_close_gate_that_takes_contests_says_check_holds_it_to_them(self):
+        for name in (*DESIGN_REVIEWERS, "intent-reviewer"):
+            with self.subTest(contract=name):
+                [line] = _lines(_section(_read(name), "## Typed record"), ("- `contests`:",))
+                self.assertIn("`check` refuses a re-check that leaves a contest unanswered", line)
 
     def test_every_reviewer_scopes_a_user_ruling_the_same_way(self):
         def ruling(text):
