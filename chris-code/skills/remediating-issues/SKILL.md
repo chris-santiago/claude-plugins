@@ -45,7 +45,7 @@ One issue is the atom; a set of issues is a batch (*Batch Path*).
 **3. Close it with the bug gates,** in order:
 
 1. **`chris-code:regression-test` (REQUIRED, the bug gate):** durable coverage of the *specific failure mode*, proven RED on the pre-fix code before staging, by the stash recipe in coherent-change's close (stage 6, step 1). An *inert* defect is proven structurally instead: assert the inconsistency itself is gone. The fix isn't complete until this passes.
-2. **Commit the fix, then run `chris-code:verification-before-completion`** (REQUIRED), as coherent-change's close step 2 describes. A PASS with findings is not clean: the close fixes blocking findings in place and files the rest for its close batch, where you recommend fixing every in-scope finding in this fix. A remediation has no separate intent ledger: **the issue text is the ledger**, so the gate's spec-blind intent re-check confirms the reported symptom is observably gone.
+2. **Commit the fix, then run `chris-code:verification-before-completion`** (REQUIRED), as coherent-change's close step 2 describes. A PASS with findings is not clean: the close fixes blocking findings in place and puts the rest to the user at its `decide` step, where you recommend `fix` for every in-scope finding. A remediation has no separate intent ledger: **the issue text is the ledger**, so the gate's spec-blind intent re-check confirms the reported symptom is observably gone.
 3. **`chris-code:finishing-a-development-branch`**: integration (merge / PR / keep / discard).
 
 **4. Record the resolution against the origin.** A GitHub issue: reference it in the commit and close it *with confirmation*. A review or audit finding: mark it addressed. Interactive: confirm with the user.

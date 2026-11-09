@@ -3401,34 +3401,85 @@ class CloseStoreTestCase(GitRepoTestCase):
 
 
 class TestCloseTriage(CloseStoreTestCase):
-    def test_blocking_findings_go_to_a_fix_and_the_rest_are_filed_with_their_source(self):
+    def rule(self, text: str) -> None:
+        ledger.cmd_append(self.store, "progress", "close", f"user ruling: {text}")
+
+    def test_blocking_findings_go_to_a_fix_and_the_rest_wait_for_a_ruling(self):
         s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4, rule="no silent drop")
         survivor = _finding(rule="a test that can't fail")
         unmet = _finding(severity=2, rule="the ask: refuse bad input", statement=1)
         self.design(s3, s4)
         self.gate("mutation-tester", "mutation-tester", status="concerns", findings=[survivor])
         self.intent([_statement(1, "not-met")], [unmet])
-        self.triage()
+        out = self.triage()
         [entry] = self.entries()
         self.assertEqual(entry["kind"], "patch")
-        sent = {f["id"] for f in entry["findings"] if f["tier"] == "patch"}
-        self.assertEqual(sent, {self.fid("close-python-design-reviewer", s4),
-                                self.fid("close-intent-reviewer", unmet)})
-        notes = {n["finding"]: n for n in self.follow_ups()}
-        self.assertEqual(set(notes), {self.fid("close-python-design-reviewer", s3),
-                                      self.fid("close-mutation-tester", survivor)})
-        note = notes[self.fid("close-mutation-tester", survivor)]
-        self.assertEqual((note["from"], note["source"], note["rule"], note["report"]),
-                         ("close", "close-mutation-tester", "a test that can't fail",
-                          str(self.store / "close-mutation-tester-report.md")))
+        self.assertEqual({f["id"] for f in entry["findings"]},
+                         {self.fid("close-python-design-reviewer", s4),
+                          self.fid("close-intent-reviewer", unmet)})
+        waiting = sorted([self.fid("close-python-design-reviewer", s3),
+                          self.fid("close-mutation-tester", survivor)])
+        self.assertEqual(entry["waiting"], waiting)
+        self.assertIn("waiting for a ruling", out)
+        self.assertEqual(self.follow_ups(), [])
 
-    def test_only_filed_findings_reach_done_on_the_first_triage(self):
-        self.design(_finding(), _finding(severity=1, rule="a name"))
+    def test_waiting_findings_are_decided_and_only_file_ones_become_follow_ups_at_done(self):
+        s3, s1 = _finding(), _finding(severity=1, rule="a name")
+        self.design(s3, s1)
         self.triage()
-        self.assertEqual([e["kind"] for e in self.entries()], ["done"])
-        self.assertEqual(len(self.follow_ups()), 2)
+        self.assertEqual(self.entries()[-1]["kind"], "decide")
+        s3_id, s1_id = (self.fid("close-python-design-reviewer", f) for f in (s3, s1))
+        self.rule(f"file {s3_id} drop {s1_id}")
         self.triage()
-        self.assertEqual(len(self.follow_ups()), 2)
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        [note] = self.follow_ups()
+        self.assertEqual((note["finding"], note["source"], note["from"], note["report"]),
+                         (s3_id, "close-python-design-reviewer", "close",
+                          str(self.store / "close-python-design-reviewer-report.md")))
+
+    def test_a_fix_ruling_on_a_waiting_finding_is_fixed_in_place_and_closes(self):
+        s3 = _finding()
+        self.design(s3)
+        self.triage()
+        self.rule(f"fix {self.fid('close-python-design-reviewer', s3)} before shipping")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "ruling")
+        tree = _baseline(self.store, "close")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        _write(self.store, "close-python-coder.json", _coder(
+            task="close", cycle=2, baseline=tree, changed_files=["a.py"], **_FIX_FIELDS))
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.design()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self.follow_ups(), [])
+
+    def test_a_waiting_finding_a_narrow_recheck_drops_is_still_decided(self):
+        s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4)
+        tree = self.fix_round_with(s3, s4)
+        fid4 = self.fid("close-python-design-reviewer", s4)
+        self.design(contests=[{"finding": fid4, "verdict": "concede", "reason": "it holds"}])
+        self.triage()
+        last = self.entries()[-1]
+        self.assertEqual((last["kind"], last["waiting"]),
+                         ("decide", [self.fid("close-python-design-reviewer", s3)]))
+        self.assertTrue(tree)
+
+    def fix_round_with(self, *findings: dict) -> str:
+        """Review, triage to a patch over the S4, and have the coder contest
+        it from the round's baseline. Returns the baseline."""
+        self.design(*findings)
+        self.intent([_statement(1)])
+        self.triage()
+        tree = _baseline(self.store, "close")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
+        blocking = [f for f in findings if f["severity"] >= 4]
+        self.coder(cycle=2, baseline=tree, changed_files=["a.py"],
+                   contested=[self.contest(self.fid("close-python-design-reviewer", f)) for f in blocking],
+                   **mapped)
+        return tree
 
     def test_a_cant_tell_clarifies_without_a_snapshot_then_a_late_not_met_is_fixed(self):
         self.intent([_statement(1, "can't-tell", needs="a run with real data")])
@@ -3449,19 +3500,6 @@ class TestCloseTriage(CloseStoreTestCase):
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
-    def fix_round(self, s4: dict) -> str:
-        """A design S4 sent to a patch round; the coder contests it from the
-        round's baseline. Returns the baseline."""
-        self.design(s4)
-        self.intent([_statement(1)])
-        self.triage()
-        tree = _baseline(self.store, "close")
-        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
-        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
-        self.coder(cycle=2, baseline=tree, changed_files=["a.py"],
-                   contested=[self.contest(self.fid("close-python-design-reviewer", s4))], **mapped)
-        return tree
-
     def commit(self) -> tuple[int, str]:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -3470,137 +3508,61 @@ class TestCloseTriage(CloseStoreTestCase):
 
     def test_a_close_fix_commits_and_its_raising_gate_alone_rechecks_it(self):
         s4 = _finding(severity=4)
-        self.fix_round(s4)
+        self.fix_round_with(s4)
         self.assertEqual(self.entries()[-1]["recheck_records"], ["close-python-design-reviewer"])
         code, out = self.commit()
         self.assertEqual(code, 0, out)
         self.assertIn("a.py", self._git("show", "--name-only", "--format=", "HEAD").split())
         self.assertEqual(ledger.completed_task_ids(ledger.load_progress_log(self.store)), [])
         fid = self.fid("close-python-design-reviewer", s4)
-        self.design(s4, contests=[{"finding": fid, "verdict": "concede", "reason": "it holds"}])
+        self.design(contests=[{"finding": fid, "verdict": "concede", "reason": "it holds"}])
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
     def test_a_close_fix_still_open_is_not_committed(self):
-        s4 = _finding(severity=4)
-        self.design(s4)
+        self.design(_finding(severity=4))
         self.triage()
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         before = self._git("rev-parse", "HEAD").strip()
         self.assertEqual(self.commit()[0], 1)
         self.assertEqual(self._git("rev-parse", "HEAD").strip(), before)
 
-    def test_a_second_round_held_finding_escalates_and_deferring_it_files_it(self):
-        first, second = _finding(severity=4), _finding(severity=4, rule="refuse, don't drop")
-        fid_a = self.fid("close-python-design-reviewer", first)
-        fid_b = self.fid("close-python-design-reviewer", second)
-        tree = self.fix_round(first)
-        self.design(second, contests=[{"finding": fid_a, "verdict": "concede", "reason": "it holds"}])
-        self.triage()
-        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch"])
-        later = _baseline(self.store, "close")
-        (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
-        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
-        self.coder(cycle=3, baseline=later, changed_files=["a.py"],
-                   contested=[self.contest(fid_b)], **mapped)
-        self.design(second, contests=[{"finding": fid_b, "verdict": "hold", "reason": "it doesn't"}])
+    def test_a_coder_fixing_only_the_blocking_finding_passes_and_its_round_omits_the_rest(self):
+        s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4, rule="no silent drop")
+        self.fix_round_with(s3, s4)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, _baseline(self.store, "close"), "close")
+        self.assertIn(self.fid("close-python-design-reviewer", s4), out.getvalue())
+        self.assertNotIn(self.fid("close-python-design-reviewer", s3), out.getvalue())
+
+    def test_a_held_finding_escalates_and_a_file_ruling_finishes_the_close(self):
+        s4 = _finding(severity=4)
+        fid = self.fid("close-python-design-reviewer", s4)
+        self.fix_round_with(s4)
+        self.design(s4, contests=[{"finding": fid, "verdict": "hold", "reason": "it doesn't"}])
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        ledger.cmd_resolve(self.store, fid_b, "user ruling: defer to the next release")
+        self.rule(f"file {fid} for the next release")
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
-        self.assertEqual([n["finding"] for n in self.follow_ups()], [fid_b])
-        self.assertNotEqual(tree, later)
+        self.assertEqual([n["finding"] for n in self.follow_ups()], [fid])
 
     def test_a_ruling_after_escalation_starts_a_ruling_round(self):
         s4 = _finding(severity=4)
         fid = self.fid("close-python-design-reviewer", s4)
-        ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "patch",
-                                             "round": 1, "findings": [], "settled": []})
-        ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "patch",
-                                             "round": 2, "findings": [], "settled": []})
+        for n in (1, 2):
+            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "patch",
+                                                 "round": n, "findings": [], "settled": []})
         self.design(s4)
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        ledger.cmd_append(self.store, "progress", "close", "user ruling: guard the None case")
+        self.rule(f"fix {fid}: guard the None case")
         self.triage()
         last = self.entries()[-1]
         self.assertEqual((last["kind"], [f["id"] for f in last["findings"]]), ("ruling", [fid]))
 
-    def test_a_promotion_after_done_reopens_the_filed_finding_as_a_ruling_round(self):
-        s3 = _finding()
-        self.design(s3)
-        self.triage()
-        [note] = self.follow_ups()
-        ledger.cmd_append(self.store, "progress", "close", f"user ruling: fix {note['id']} now")
-        self.triage()
-        last = self.entries()[-1]
-        self.assertEqual(last["kind"], "ruling")
-        self.assertEqual([f["id"] for f in last["findings"] if f["tier"] == "patch"],
-                         [self.fid("close-python-design-reviewer", s3)])
-        self.assertIn(note["id"], ledger.resolutions_from_log(ledger.load_progress_log(self.store)))
-
-    def test_a_coder_fixing_only_the_blocking_finding_passes_and_its_round_omits_the_filed(self):
-        s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4, rule="no silent drop")
-        self.design(s3, s4)
-        self.intent([_statement(1)])
-        self.triage()
-        tree = _baseline(self.store, "close")
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            ledger.cmd_baseline(self.store, tree, "close")
-        self.assertIn(self.fid("close-python-design-reviewer", s4), out.getvalue())
-        self.assertNotIn(self.fid("close-python-design-reviewer", s3), out.getvalue())
-        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
-        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
-        self.coder(cycle=2, baseline=tree, changed_files=["a.py"],
-                   contested=[self.contest(self.fid("close-python-design-reviewer", s4))], **mapped)
-
-    def promote_filed(self, finding: dict) -> dict:
-        """File `finding` at a first triage, then promote its follow-up."""
-        self.design(finding)
-        self.intent([_statement(1)])
-        self.triage()
-        [note] = self.follow_ups()
-        ledger.cmd_append(self.store, "progress", "close", f"user ruling: fix {note['id']} now")
-        self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "ruling")
-        return note
-
-    def test_a_promotion_round_commits_and_closes_once_its_gate_stops_raising_it(self):
-        self.promote_filed(_finding())
-        self.assertIsNotNone(ledger._round_baseline(ledger.load_progress_log(self.store), "close"))
-        tree = _baseline(self.store, "close")
-        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
-        _write(self.store, "close-python-coder.json", _coder(
-            task="close", cycle=2, baseline=tree, changed_files=["a.py"], **_FIX_FIELDS))
-        code, out = self.commit()
-        self.assertEqual(code, 0, out)
-        self.design()
-        self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "done")
-
-    def test_deferring_a_promoted_finding_files_it_again(self):
-        s3 = _finding()
-        fid = self.fid("close-python-design-reviewer", s3)
-        self.promote_filed(s3)
-        tree = _baseline(self.store, "close")
-        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
-        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
-        self.coder(cycle=2, baseline=tree, changed_files=["a.py"], contested=[self.contest(fid)],
-                   **mapped)
-        self.design(s3, contests=[{"finding": fid, "verdict": "hold", "reason": "it doesn't"}])
-        self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        ledger.cmd_resolve(self.store, fid, "user ruling: defer to the next release")
-        self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "done")
-        still_open = [n for n in ledger.open_notes(ledger.load_progress_log(self.store))
-                      if n.get("finding") == fid]
-        self.assertEqual(len(still_open), 1)
-        self.assertTrue(still_open[0]["text"].startswith("deferred by ruling:"))
-
-    def test_the_close_coders_outside_sites_are_filed(self):
+    def test_the_close_coders_outside_sites_are_filed_at_done(self):
         s4 = _finding(severity=4)
         fid = self.fid("close-python-design-reviewer", s4)
         self.design(s4)
@@ -3612,17 +3574,49 @@ class TestCloseTriage(CloseStoreTestCase):
         _write(self.store, "close-python-coder.json", _coder(
             task="close", cycle=2, baseline=tree, sweeps=[sweep],
             **{**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the sweep"}]}))
+        self.design()
         self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
         self.assertTrue(any("lib/z.py:3" in n["text"] for n in self.follow_ups()))
 
-    def test_naming_a_task_follow_up_promotes_nothing_and_says_so(self):
+    def test_a_close_coder_cant_defer_a_site_in_a_file_it_changed(self):
+        sweep = {"findings": [], "rule": "r", "rows": [], "sites_outside": ["a.py:3"]}
+        data = _coder(task="close", cycle=2, changed_files=["a.py"], sweeps=[sweep])
+        path = _write(self.store, "close-python-coder.json", data)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger._check_deferrals_outside_footprint(path, data)
+        self.assertIn("inside", str(ctx.exception))
+        ledger._check_deferrals_outside_footprint(
+            path, {**data, "sweeps": [{**sweep, "sites_outside": ["lib/z.py:3"]}]})
+
+    def test_a_ruling_on_an_unknown_id_is_reported(self):
+        self.design(_finding())
+        self.triage()
+        self.rule("fix close-python-design-reviewer#findings[deadbeef]")
+        self.assertIn("no close finding has this id", self.triage())
+
+    def test_a_close_finding_is_decided_by_a_ruling_not_resolve(self):
+        s3 = _finding()
+        self.design(s3)
+        self.triage()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_resolve(self.store, self.fid("close-python-design-reviewer", s3),
+                               "user ruling: waive")
+        self.assertIn("user ruling: fix|file|drop", str(ctx.exception))
+
+    def test_a_mutation_gate_ruling_starts_no_round(self):
         self.design(_finding(severity=2))
         self.triage()
-        with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_note(self.store, "follow-up", "a task's follow-up", source=3)
-        nid = next(n["id"] for n in self.follow_ups() if n.get("from") == 3)
-        ledger.cmd_append(self.store, "progress", "close", f"user ruling: fix {nid}")
-        self.assertIn(f"not promoted: {nid}", self.triage())
+        self.rule("mutation gate: no")
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["decide"])
+
+    def test_done_is_final(self):
+        self.design()
+        self.triage()
+        self.rule("fix close-python-design-reviewer#findings[deadbeef]")
+        self.triage()
+        self.assertEqual({e["kind"] for e in self.entries()}, {"done"})
 
     def test_the_close_is_never_completed_by_append(self):
         with self.assertRaises(ledger.RecordError):
@@ -3632,13 +3626,6 @@ class TestCloseTriage(CloseStoreTestCase):
         ledger.cmd_handle(self.store, "close", "rust-coder", "agent-123")
         text = ledger.render_run_state(ledger.load_progress_log(self.store), [])
         self.assertIn("task close rust-coder: `agent-123`", text)
-
-    def test_a_mutation_gate_ruling_starts_no_round(self):
-        self.design(_finding(severity=2))
-        self.triage()
-        ledger.cmd_append(self.store, "progress", "close", "user ruling: mutation gate: no")
-        self.triage()
-        self.assertEqual([e["kind"] for e in self.entries()], ["done"])
 
 
 class TestEndToEnd(TriageStoreTestCase):
@@ -4600,11 +4587,9 @@ class TestPlansAndVerdict(GitRepoTestCase):
     def test_a_close_in_progress_is_closing_and_run_state_shows_its_rounds_and_rulings(self):
         self.start_close()
         for kind in ("patch", "patch", "escalate"):
-            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": kind})
+            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": kind,
+                                                 "waiting": ["close-intent-reviewer#findings[ab12]"]})
         ledger.cmd_append(self.store, "progress", "close", "user ruling: ship the rest later")
-        ledger._append_progress(self.store, {"type": "resolution",
-                                             "resolves": "close-intent-reviewer#findings[ab12]",
-                                             "note": "user ruling: defer to the next release"})
         lines = self._state("plans/a.md")
         self.assertEqual(lines[0], "Verdict: closing")
         self.assertIn("escalate", lines[1])
@@ -4612,7 +4597,7 @@ class TestPlansAndVerdict(GitRepoTestCase):
         self.assertIn("## The close", text)
         self.assertIn("- steps: patch → patch → escalate", text)
         self.assertIn("- ruling: user ruling: ship the rest later", text)
-        self.assertIn("- deferred `close-intent-reviewer#findings[ab12]`", text)
+        self.assertIn("- waiting for a ruling: close-intent-reviewer#findings[ab12]", text)
 
     def test_a_close_that_reached_done_is_finished(self):
         self.start_close()

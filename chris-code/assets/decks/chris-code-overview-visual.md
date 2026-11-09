@@ -217,7 +217,7 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v3">Close: 3 Design + 4 Intent + 5 Mutation (if chosen)</div>
 <div class="vchev">↓</div>
-<div class="vbar v4">Triage: not-met / S4+ fixed in place · rest filed</div>
+<div class="vbar v4">Triage: not-met / S4+ fixed in place · rest: your ruling</div>
 <div class="vchev">↓</div>
 <div class="vbar v5">Raising gate re-checks · two fix rounds, then you</div>
 <div class="vchev">↓</div>

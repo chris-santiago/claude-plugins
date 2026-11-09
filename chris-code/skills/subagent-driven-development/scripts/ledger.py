@@ -246,10 +246,10 @@ OPUS_CODER_MODEL = "opus"
 OPUS_RULING_PREFIX = f"{RULING_PREFIX} opus coder"
 # The close's mutation-gate answer is a ruling on the close, not on its work.
 MUTATION_RULING_PREFIX = f"{RULING_PREFIX} mutation gate:"
-# A resolution that settles a close finding by filing it for later.
-DEFER_RULING_PREFIX = f"{RULING_PREFIX} defer"
-# A close ruling naming filed follow-ups reopens their findings.
-FOLLOW_UP_ID_RE = re.compile(r"note#follow-up\[[^\]]+\]")
+# A ruling on the close decides findings by verb: `user ruling: fix <id> ...`,
+# `file <id> ...` or `drop <id> ...`; each verb applies to the ids after it.
+CLOSE_RULING_RE = re.compile(r"\b(?P<verb>fix|file|drop)\b|(?P<id>close-[A-Za-z0-9._-]+#[a-z_]+\[[0-9a-f]+\])",
+                             re.IGNORECASE)
 
 PROGRESS_FILENAME = "progress.jsonl"
 # Every command that appends to or deletes from the store holds an
@@ -1451,7 +1451,7 @@ def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
 
 def _close_section(log: list[dict]) -> list[str]:
     """The close, once started: its start, its steps, the user's rulings on
-    it and the findings deferred by ruling. Filed follow-ups are in `report`."""
+    it and the findings still waiting for one. Filed follow-ups are in `report`."""
     start = close_start(log)
     if start is None:
         return []
@@ -1463,10 +1463,9 @@ def _close_section(log: list[dict]) -> list[str]:
     lines += [f"- ruling: {e.get('note', '')}" for e in scoped if e.get("type") == "progress"
               and e.get("task") == CLOSE_SCOPE
               and str(e.get("note", "")).lower().startswith(RULING_PREFIX)]
-    lines += [f"- deferred `{e.get('resolves')}`: {e.get('note', '')}" for e in scoped
-              if e.get("type") == "resolution"
-              and _scope(str(e.get("resolves", "")).split("#")[0]) == CLOSE_SCOPE
-              and str(e.get("note", "")).lower().startswith(DEFER_RULING_PREFIX)]
+    latest = latest_triage(log, CLOSE_SCOPE)
+    if latest and latest.get("waiting"):
+        lines.append("- waiting for a ruling: " + ", ".join(latest["waiting"]))
     return lines
 
 
@@ -2264,6 +2263,10 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     if resolve_id.startswith(NOTE_ID_PREFIX):
         _check_note_resolvable(log, resolve_id, note)
         return
+    if _scope(resolve_id.split("#")[0]) == CLOSE_SCOPE and "#statements[" not in resolve_id:
+        raise RecordError(f"{resolve_id!r} is a close finding: the user decides it by a ruling, "
+                          "`append --type progress --task close --note \"user ruling: fix|file|drop "
+                          f"{resolve_id}\"`")
 
     records = load_records(store_dir)
     if resolve_id in _user_settleable_ids(records):
@@ -2752,7 +2755,12 @@ def _check_deferrals_outside_footprint(path: Path, data: dict) -> None:
     deferred = _deferred_paths(data)
     if not deferred:
         return
-    footprint = task_footprint(load_progress_log(path.parent), data["task"])
+    log = load_progress_log(path.parent)
+    # The close has no staged footprint: its coders' changed files are it,
+    # this record's own included.
+    footprint = ((scope_footprint(path.parent, log, CLOSE_SCOPE) or set())
+                 | {_normalize_path(f) for f in data.get("changed_files", [])}
+                 if data["task"] == CLOSE_SCOPE else task_footprint(log, data["task"]))
     if footprint is None:
         raise RecordError(f"{path}: defers work outside task {data['task']}, but the task has "
                           "no recorded footprint; record it with `ledger.py stage` first")
@@ -3056,7 +3064,7 @@ def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record],
         for cid, reason in deferred.items()]
     if task == CLOSE_SCOPE:
         return _close_inputs(log, found.reviewers, coder, findings, root_causes, answers,
-                             waived, file_candidates), found.reviewers, coder
+                             file_candidates), found.reviewers, coder
     inputs = {
         "findings": findings, "root_causes": root_causes,
         "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
@@ -3071,25 +3079,17 @@ def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record],
 
 def _close_inputs(log: list[dict], reviewers: list[Record], coder: Record | None,
                   findings: list[dict], root_causes: list[str], answers: dict[str, str],
-                  waived: set[str], file_candidates: list[dict]) -> dict:
-    """What `triage.derive_close` reads: the gates' findings plus a promoted
-    finding no gate raises any more, until a fix round has been sent it
-    (after that, a gate that stops raising it means it is fixed), the
-    waivers that defer, the intent statements still can't-tell, and the
-    close coder's own deferrals."""
+                  file_candidates: list[dict]) -> dict:
+    """What `triage.derive_close` reads: the gates' raised findings, the
+    user's latest ruling per close finding, the intent statements still
+    can't-tell, the close's earlier entries (which carry the unsent
+    findings) and the close coder's own deferrals."""
     resolved = resolutions_from_log(log)
-    promoted = _promotions(log)
-    raised = {f["id"] for f in findings}
-    sent = _sent_ids(triage_entries(log, CLOSE_SCOPE))
-    findings = findings + [_promoted_finding(fid, note) for fid, note in promoted.items()
-                           if fid not in raised and fid not in sent]
     coder_data = coder.data if coder else {}
     return {
         "findings": findings, "root_causes": root_causes,
         "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
-        "answers": answers, "waived": waived,
-        "deferred": {i for i in waived if resolved[i].lower().startswith(DEFER_RULING_PREFIX)},
-        "promoted": set(promoted),
+        "answers": answers, "rulings": close_rulings(log),
         "unclear": [sid for sid in _cant_tell_ids(reviewers) if sid not in resolved],
         "prior": triage_entries(log, CLOSE_SCOPE),
         "ruled": _ruled_since_last_entry(log, CLOSE_SCOPE),
@@ -3098,10 +3098,23 @@ def _close_inputs(log: list[dict], reviewers: list[Record], coder: Record | None
     }
 
 
-def _sent_ids(entries: list[dict]) -> set[str]:
-    """Findings a fix step has sent to a coder."""
-    return {f["id"] for e in entries if e.get("kind") in triage_rules.FIX_KINDS
-            for f in e.get("findings", []) if f.get("tier") in ("patch", "holistic")}
+def close_rulings(log: list[dict]) -> dict[str, str]:
+    """The user's latest verb (fix, file or drop) per close finding id. A
+    ruling on the close reads left to right, each verb applying to the ids
+    after it; a later ruling on an id replaces an earlier one."""
+    rulings: dict[str, str] = {}
+    for entry in _scope_log(log, CLOSE_SCOPE):
+        note = str(entry.get("note", ""))
+        if entry.get("type") != "progress" or entry.get("task") != CLOSE_SCOPE \
+                or not note.lower().startswith(RULING_PREFIX):
+            continue
+        verb = None
+        for match in CLOSE_RULING_RE.finditer(note[len(RULING_PREFIX):]):
+            if match["verb"]:
+                verb = match["verb"].lower()
+            elif verb:
+                rulings[match["id"]] = verb
+    return rulings
 
 
 def _statement_id(stem: str, number: int) -> str:
@@ -3115,86 +3128,23 @@ def _cant_tell_ids(records: list[Record]) -> list[str]:
             for s in r.data.get("statements", []) if s.get("verdict") == "can't-tell"]
 
 
-def _promotions(log: list[dict]) -> dict[str, dict]:
-    """Each close finding a ruling on the close reopened, mapped to the
-    follow-up it was filed as: the ruling names the follow-up's id."""
-    filed = {n["id"]: n for n in notes_from_log(log)
-             if n.get("kind") == "follow-up" and n.get("finding")}
-    promoted = {}
-    for entry in _scope_log(log, CLOSE_SCOPE):
-        note = str(entry.get("note", ""))
-        if entry.get("type") == "progress" and entry.get("task") == CLOSE_SCOPE \
-                and note.lower().startswith(RULING_PREFIX):
-            for nid in FOLLOW_UP_ID_RE.findall(note):
-                if nid in filed:
-                    promoted[filed[nid]["finding"]] = filed[nid]
-    return promoted
-
-
-def _promoted_finding(fid: str, note: dict) -> dict:
-    """A promoted finding its gate no longer raises, rebuilt from its
-    follow-up so the ruling round can still send it."""
-    return {"id": fid, "source": note.get("source", ""), "gate": False,
-            "severity": SERIOUS_SEVERITY, "reach": note.get("reach", "local"),
-            "rule": note.get("rule", ""), "sites": note.get("sites", []),
-            "recurring": False, "introduced": False, "not_met": False}
-
-
-def _file_close_deferrals(store_dir: Path, log: list[dict], to_file: list[dict],
-                          findings: list[dict]) -> list[str]:
-    """File each close finding triage files as a follow-up, carrying the
-    finding, the record that raised it, its report and its reach, so the
-    close batch can show it and a ruling can promote it. A deferred
-    finding says so, and a coder's own deferral is a plain follow-up."""
-    by_id = {f["id"]: f for f in findings}
+def _file_close_deferrals(store_dir: Path, log: list[dict], to_file: list[dict]) -> list[str]:
+    """At the close's `done`, file each `file`-ruled finding as a follow-up
+    carrying its id, raising record, report path and rule, and each close
+    coder deferral as a plain follow-up with its rule."""
     filed = []
     for item in to_file:
-        finding = by_id.get(item["id"])
-        if finding is None:
-            text = item.get("text") or f"deferred {item['id']}: {item['rule']}"
-        else:
-            text = (("deferred by ruling: " if item.get("deferred") else "")
-                    + f"{finding['source']}: {finding['rule']} ({', '.join(finding['sites'])})")
+        finding = item.get("finding")
+        text = (f"{finding['source']}: {finding['rule']} ({', '.join(finding['sites'])})" if finding
+                else item.get("text") or f"deferred {item['id']}: {item['rule']}")
         if note_id("follow-up", text, None, None, CLOSE_SCOPE) in {n["id"] for n in notes_from_log(log)}:
             continue
-        if finding is None:
-            filed.append(_file_note(store_dir, log, "follow-up", text, source=CLOSE_SCOPE,
-                                    rule=item["rule"]))
-            log = load_progress_log(store_dir)
-            continue
+        extra = {"finding": finding["id"], "source": finding["source"],
+                 "report": str(store_dir / f"{finding['source']}-report.md")} if finding else None
         filed.append(_file_note(store_dir, log, "follow-up", text, source=CLOSE_SCOPE,
-                                rule=finding["rule"], extra={
-                                    "finding": finding["id"], "source": finding["source"],
-                                    "report": str(store_dir / f"{finding['source']}-report.md"),
-                                    "reach": finding["reach"], "sites": finding["sites"]}))
+                                rule=item["rule"], extra=extra))
         log = load_progress_log(store_dir)
     return filed
-
-
-def _resolve_promoted(store_dir: Path, log: list[dict], entry: dict) -> None:
-    """Close each promoted follow-up still open whose finding this fix step
-    sent: the finding is back in the close."""
-    open_ids = {n["id"] for n in open_notes(log)}
-    sent = _sent_ids([entry])
-    for fid, note in _promotions(log).items():
-        if note["id"] in open_ids and fid in sent:
-            _append_progress(store_dir, {"type": "resolution", "resolves": note["id"],
-                                         "note": f"promoted: sent to the close's {entry['kind']} "
-                                                 f"round {entry['round']}"})
-
-
-def _unpromotable(log: list[dict]) -> list[str]:
-    """Follow-ups a ruling on the close since its last step names that
-    aren't close findings, so naming them promotes nothing."""
-    scoped = _scope_log(log, CLOSE_SCOPE)
-    last = max((i for i, e in enumerate(scoped) if e.get("type") == TRIAGE_ENTRY
-                and e.get("task") == CLOSE_SCOPE), default=-1)
-    close_notes = {n["id"] for n in notes_from_log(log) if n.get("finding")}
-    named = [nid for e in scoped[last + 1:] if e.get("type") == "progress"
-             and e.get("task") == CLOSE_SCOPE
-             and str(e.get("note", "")).lower().startswith(RULING_PREFIX)
-             for nid in FOLLOW_UP_ID_RE.findall(str(e["note"]))]
-    return sorted({nid for nid in named if nid not in close_notes})
 
 
 def _file_deferrals(store_dir: Path, log: list[dict], task: int | str,
@@ -3247,11 +3197,9 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             print(_render_triage(latest, [], baseline, scope_footprint(store_dir, log, task)))
             return
         log = load_progress_log(store_dir)
-        unpromotable = _unpromotable(log) if task == CLOSE_SCOPE else []
         if task == CLOSE_SCOPE:
             result = triage_rules.derive_close(**inputs)
-            filed_notes = _file_close_deferrals(store_dir, log, result.pop("to_file"),
-                                                inputs["findings"])
+            filed_notes = _file_close_deferrals(store_dir, log, result.pop("to_file"))
         else:
             result = triage_rules.derive(**inputs)
             texts = {c["id"]: c for c in inputs["file_candidates"]}
@@ -3271,14 +3219,8 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
                         "label": f"triage {entry['kind']} round {entry['round']}",
                         "fix_cycle": fix_cycle}
             _append_progress(store_dir, snapshot)
-        if task == CLOSE_SCOPE and entry["kind"] in triage_rules.FIX_KINDS:
-            # After the snapshot, which must directly follow the entry.
-            _resolve_promoted(store_dir, load_progress_log(store_dir), entry)
         footprint = scope_footprint(store_dir, load_progress_log(store_dir), task)
     print(_render_triage(entry, filed_notes, snapshot, footprint))
-    for nid in unpromotable:
-        print(f"not promoted: {nid} isn't a close finding; fix it through "
-              "`remediating-issues`' Batch Path with the close batch's other fixes")
 
 
 def _step_fix_cycle(coder: Record | None) -> int:
@@ -3375,6 +3317,14 @@ def _render_triage(entry: dict, filed: list[str], baseline: dict | None = None,
                      f"({finding['source']})")
     for cid in entry["root_causes"]:
         lines.append(f"  [{cid}] holistic: root cause")
+    carried = {f["id"]: f for f in entry.get("carried", [])}
+    for fid in entry.get("waiting", []):
+        found = carried.get(fid, {})
+        lines.append(f"  [{fid}] waiting for a ruling: {found.get('rule', '')} "
+                     f"(S{found.get('severity', '?')}, {found.get('source', '')})")
+    for fid in entry.get("unmatched", []):
+        lines.append(f"  [{fid}] ruled, but no close finding has this id: check it against "
+                     "the step that listed it")
     for sid in entry.get("unclear", []):
         lines.append(f"  [{sid}] can't-tell: re-dispatch the intent reviewer with what its "
                      "`needs` names, or ask the user")

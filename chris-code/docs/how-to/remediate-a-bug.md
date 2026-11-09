@@ -18,7 +18,7 @@ Use this when you have a known defect — a GitHub issue, a review finding, or a
 
 4. **Let it close the bug.** Once the fix is built and self-reviewed, the skill runs the bug close in order:
     - `regression-test` — a test for the specific failure mode, proven to fail on the pre-fix code.
-    - `verification-before-completion` — tests and lints, then one [close](../explanation/execution-mechanics.md#the-close): design review, the spec-blind intent re-check (the issue text is the ledger), and the mutation re-check (if you choose it) run together, and `ledger.py triage --task close` routes their findings. A blocking one is fixed in place and re-checked by its gate; the rest is filed for you to decide.
+    - `verification-before-completion` — tests and lints, then one [close](../explanation/execution-mechanics.md#the-close): design review, the spec-blind intent re-check (the issue text is the ledger), and the mutation re-check (if you choose it) run together, and `ledger.py triage --task close` routes their findings. A blocking one is fixed in place and re-checked by its gate; the rest waits for your ruling: fix, file or drop.
     - `finishing-a-development-branch` — merge, PR, keep, or discard.
 
 5. **Confirm the origin is recorded.** A GitHub issue is referenced in the commit and closed; a review finding is marked addressed.
