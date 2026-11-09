@@ -244,6 +244,12 @@ PRECEDENT_RE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
 CODER_MODEL = "sonnet"
 OPUS_CODER_MODEL = "opus"
 OPUS_RULING_PREFIX = f"{RULING_PREFIX} opus coder"
+# The close's mutation-gate answer is a ruling on the close, not on its work.
+MUTATION_RULING_PREFIX = f"{RULING_PREFIX} mutation gate:"
+# A resolution that settles a close finding by filing it for later.
+DEFER_RULING_PREFIX = f"{RULING_PREFIX} defer"
+# A close ruling naming filed follow-ups reopens their findings.
+FOLLOW_UP_ID_RE = re.compile(r"note#follow-up\[[^\]]+\]")
 
 PROGRESS_FILENAME = "progress.jsonl"
 # Every command that appends to or deletes from the store holds an
@@ -1419,11 +1425,11 @@ def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[s
     footprint = sorted({_normalize_path(f) for f in files if f.strip()})
     if not footprint or "." in footprint:
         raise RecordError(f"--files: got {files!r}, expected the paths task {task} will touch")
-    if task == "final":
+    if task in ("final", CLOSE_SCOPE):
         if stage is not None:
-            raise RecordError("the whole-change gate runs in no stage: drop --stage")
+            raise RecordError(f"{_scope_name(task)} runs in no stage: drop --stage")
         with store_lock(store_dir):
-            _append_progress(store_dir, {"type": "stage", "task": "final", "files": footprint,
+            _append_progress(store_dir, {"type": "stage", "task": task, "files": footprint,
                                          "at": _now()})
         return
     if stage is None:
@@ -1639,10 +1645,12 @@ def cmd_note(store_dir: Path, kind: str, text: str, for_task: int | None = None,
 
 def _file_note(store_dir: Path, log: list[dict], kind: str, text: str,
                for_task: int | None = None, owner: int | str | None = None,
-               source: int | str | None = None, rule: str | None = None) -> str:
+               source: int | str | None = None, rule: str | None = None,
+               extra: dict | None = None) -> str:
     """Append a note entry and return its id; the caller holds the lock.
-    `rule` (a follow-up's rule) groups follow-ups in the report and isn't
-    part of the id."""
+    `rule` (a follow-up's rule) groups follow-ups in the report, and
+    `extra` carries a close follow-up's finding fields; neither is part of
+    the id."""
     _check_note_target(log, kind, for_task, owner)
     nid = note_id(kind, text, for_task, owner, source)
     existing = next((n for n in notes_from_log(log) if n["id"] == nid), None)
@@ -1654,6 +1662,7 @@ def _file_note(store_dir: Path, log: list[dict], kind: str, text: str,
     for key, value in (("for", for_task), ("owner", owner), ("from", source), ("rule", rule)):
         if value is not None:
             entry[key] = value
+    entry.update(extra or {})
     entry["at"] = _now()
     _append_progress(store_dir, entry)
     return nid
@@ -2273,6 +2282,8 @@ def _user_settleable_ids(records: list[Record]) -> set[str]:
         role = rec.data["role"]
         if role in FINDING_LIST_FIELD or role == "gate":
             ids |= set(finding_ids(rec, (FINDING_LIST_FIELD.get(role, "findings"),)))
+        if role == "intent-reviewer":
+            ids |= set(_cant_tell_ids([rec]))
         elif role == "coder":
             ids |= {_item_id(rec.stem, "open", e) for e in rec.data.get("open", [])}
             ids |= {cid for cid, text in concern_ids(rec).items()
@@ -2694,6 +2705,9 @@ def task_footprint(log: list[dict], task: int | str) -> set[str] | None:
     """The files a task said it would touch (its latest `stage` entry), or
     the union of every task's at the whole-change gate. None when an
     integer task has no stage entry."""
+    if task == CLOSE_SCOPE:
+        return {f for e in log if e.get("type") == "stage" and e.get("task") == CLOSE_SCOPE
+                for f in e.get("files", [])}
     stages = stage_map(log)
     if task == "final":
         added = [e for e in log if e.get("type") == "stage" and e.get("task") == "final"]
@@ -2937,7 +2951,8 @@ def _finding_inputs(reviewers: list[Record]) -> list[dict]:
                              "severity": entry["severity"], "reach": entry["reach"],
                              "rule": entry["rule"], "sites": entry["sites"],
                              "recurring": bool(sites & flagged["recurring"]),
-                             "introduced": bool(sites & flagged["introduced_by_fix"])})
+                             "introduced": bool(sites & flagged["introduced_by_fix"]),
+                             "not_met": rec.data["role"] == "intent-reviewer"})
     return findings
 
 
@@ -2962,7 +2977,8 @@ def _coder_deferrals(coder: Record | None, rules: dict[str, str]) -> list[dict]:
 
 def _ruled_since_last_entry(log: list[dict], task: int | str) -> bool:
     """A user ruling logged for `task` after its last triage entry. Which
-    model codes the task is no ruling on the work, so it starts no round."""
+    model codes the task, or whether the close runs the mutation gate, is
+    no ruling on the work, so it starts no round."""
     scoped = _scope_log(log, task)
     entries = [i for i, e in enumerate(scoped) if e.get("type") == TRIAGE_ENTRY
                and e.get("task") == task]
@@ -2970,7 +2986,8 @@ def _ruled_since_last_entry(log: list[dict], task: int | str) -> bool:
         return False
     notes = (str(e.get("note", "")).lower() for e in scoped[entries[-1] + 1:]
              if e.get("type") == "progress" and e.get("task") == task)
-    return any(n.startswith(RULING_PREFIX) and not n.startswith(OPUS_RULING_PREFIX) for n in notes)
+    return any(n.startswith(RULING_PREFIX) and not n.startswith(OPUS_RULING_PREFIX)
+               and not n.startswith(MUTATION_RULING_PREFIX) for n in notes)
 
 
 def _user_waived(log: list[dict], scope: str | None = None) -> set[str]:
@@ -3010,6 +3027,9 @@ def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record],
     # Only the reviewer that raised a finding answers a contest of it.
     answers = {a["finding"]: a["verdict"] for rec in found.reviewers
                for a in rec.data.get("contests", []) if a["finding"].startswith(f"{rec.stem}#")}
+    if task == CLOSE_SCOPE:
+        return _close_inputs(log, found.reviewers, coder, findings, root_causes, answers,
+                             waived), found.reviewers, coder
     rules = {f["id"]: f["rule"] for f in findings}
     inputs = {
         "findings": findings, "root_causes": root_causes,
@@ -3023,6 +3043,98 @@ def triage_inputs(store_dir: Path, task: int | str) -> tuple[dict, list[Record],
             for cid, reason in deferred.items()],
     }
     return inputs, found.reviewers, coder
+
+
+def _close_inputs(log: list[dict], reviewers: list[Record], coder: Record | None,
+                  findings: list[dict], root_causes: list[str], answers: dict[str, str],
+                  waived: set[str]) -> dict:
+    """What `triage.derive_close` reads: the gates' findings plus any filed
+    finding a ruling promoted that no gate raises any more, the waivers
+    that defer, and the intent statements still can't-tell."""
+    resolved = resolutions_from_log(log)
+    promoted = _promotions(log)
+    raised = {f["id"] for f in findings}
+    findings = findings + [_promoted_finding(fid, note) for fid, note in promoted.items()
+                           if fid not in raised]
+    coder_data = coder.data if coder else {}
+    return {
+        "findings": findings, "root_causes": root_causes,
+        "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
+        "answers": answers, "waived": waived,
+        "deferred": {i for i in waived if resolved[i].lower().startswith(DEFER_RULING_PREFIX)},
+        "promoted": set(promoted),
+        "unclear": [sid for sid in _cant_tell_ids(reviewers) if sid not in resolved],
+        "prior": triage_entries(log, CLOSE_SCOPE),
+        "ruled": _ruled_since_last_entry(log, CLOSE_SCOPE),
+        "model": coder_data.get("model"),
+    }
+
+
+def _statement_id(stem: str, number: int) -> str:
+    return f"{stem}#statements[{number}]"
+
+
+def _cant_tell_ids(records: list[Record]) -> list[str]:
+    """The intent statements an intent reviewer couldn't judge."""
+    return [_statement_id(r.stem, s["statement"]) for r in records
+            if r.ok and r.data["role"] == "intent-reviewer"
+            for s in r.data.get("statements", []) if s.get("verdict") == "can't-tell"]
+
+
+def _promotions(log: list[dict]) -> dict[str, dict]:
+    """Each close finding a ruling on the close reopened, mapped to the
+    follow-up it was filed as: the ruling names the follow-up's id."""
+    filed = {n["id"]: n for n in notes_from_log(log)
+             if n.get("kind") == "follow-up" and n.get("finding")}
+    promoted = {}
+    for entry in _scope_log(log, CLOSE_SCOPE):
+        note = str(entry.get("note", ""))
+        if entry.get("type") == "progress" and entry.get("task") == CLOSE_SCOPE \
+                and note.lower().startswith(RULING_PREFIX):
+            for nid in FOLLOW_UP_ID_RE.findall(note):
+                if nid in filed:
+                    promoted[filed[nid]["finding"]] = filed[nid]
+    return promoted
+
+
+def _promoted_finding(fid: str, note: dict) -> dict:
+    """A promoted finding its gate no longer raises, rebuilt from its
+    follow-up so the ruling round can still send it."""
+    return {"id": fid, "source": note.get("source", ""), "gate": False,
+            "severity": SERIOUS_SEVERITY, "reach": note.get("reach", "local"),
+            "rule": note.get("rule", ""), "sites": note.get("sites", []),
+            "recurring": False, "introduced": False, "not_met": False}
+
+
+def _file_close_deferrals(store_dir: Path, log: list[dict], to_file: list[dict],
+                          findings: list[dict]) -> list[str]:
+    """File each close finding triage files as a follow-up, carrying the
+    finding, the record that raised it, its report and its reach, so the
+    close batch can show it and a ruling can promote it."""
+    by_id = {f["id"]: f for f in findings}
+    filed = []
+    for item in to_file:
+        finding = by_id[item["id"]]
+        text = f"{finding['source']}: {finding['rule']} ({', '.join(finding['sites'])})"
+        if note_id("follow-up", text, None, None, CLOSE_SCOPE) in {n["id"] for n in notes_from_log(log)}:
+            continue
+        filed.append(_file_note(store_dir, log, "follow-up", text, source=CLOSE_SCOPE,
+                                rule=finding["rule"], extra={
+                                    "finding": finding["id"], "source": finding["source"],
+                                    "report": str(store_dir / f"{finding['source']}-report.md"),
+                                    "reach": finding["reach"], "sites": finding["sites"]}))
+        log = load_progress_log(store_dir)
+    return filed
+
+
+def _resolve_promoted(store_dir: Path, log: list[dict]) -> None:
+    """Close each promoted follow-up still open: its finding is back in the
+    close as a ruling round."""
+    open_ids = {n["id"] for n in open_notes(log)}
+    for note in _promotions(log).values():
+        if note["id"] in open_ids:
+            _append_progress(store_dir, {"type": "resolution", "resolves": note["id"],
+                                         "note": "promoted: reopened as a close ruling round"})
 
 
 def _file_deferrals(store_dir: Path, log: list[dict], task: int | str,
@@ -3074,10 +3186,15 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
             # must not start another round.
             print(_render_triage(latest, [], baseline, scope_footprint(store_dir, log, task)))
             return
-        result = triage_rules.derive(**inputs)
-        texts = {c["id"]: c for c in inputs["file_candidates"]}
         log = load_progress_log(store_dir)
-        filed_notes = _file_deferrals(store_dir, log, task, result.pop("to_file"), texts)
+        if task == CLOSE_SCOPE:
+            result = triage_rules.derive_close(**inputs)
+            filed_notes = _file_close_deferrals(store_dir, log, result.pop("to_file"),
+                                                inputs["findings"])
+        else:
+            result = triage_rules.derive(**inputs)
+            texts = {c["id"]: c for c in inputs["file_candidates"]}
+            filed_notes = _file_deferrals(store_dir, log, task, result.pop("to_file"), texts)
         recheck_records = _recheck_records(result, reviewers)
         entry = {"type": TRIAGE_ENTRY, "task": task, "tree": _tree_or_none(store_dir),
                  **result, "recheck_records": recheck_records, "inputs": digest, "at": _now()}
@@ -3085,6 +3202,8 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         if result["kind"] == "holistic":
             entry["decision"] = f"{scope_prefix(log, task)}-decision-c{fix_cycle}"
         _append_progress(store_dir, entry)
+        if task == CLOSE_SCOPE and entry["kind"] == "ruling":
+            _resolve_promoted(store_dir, load_progress_log(store_dir))
         snapshot = None
         if entry["kind"] in triage_rules.FIX_KINDS and entry["tree"] is not None:
             # The fix's baseline, taken in the same lock so nothing sits
@@ -3166,6 +3285,8 @@ def _recheck_records(result: dict, reviewers: list[Record]) -> list[str]:
         return sorted(r.stem for r in agents)
     if result["recheck"] == "spec":
         return sorted(r.stem for r in agents if r.data["role"] == "spec-reviewer")
+    if result["recheck"] == "intent":
+        return sorted(r.stem for r in agents if r.data["role"] == "intent-reviewer")
     if result["recheck"] == "raising":
         stems = {r.stem for r in agents}
         return sorted({f["source"] for f in result["findings"]
@@ -3189,6 +3310,9 @@ def _render_triage(entry: dict, filed: list[str], baseline: dict | None = None,
                      f"({finding['source']})")
     for cid in entry["root_causes"]:
         lines.append(f"  [{cid}] holistic: root cause")
+    for sid in entry.get("unclear", []):
+        lines.append(f"  [{sid}] can't-tell: re-dispatch the intent reviewer with what its "
+                     "`needs` names, or ask the user")
     if entry.get("decision"):
         lines.append(f"decision doc: {entry['decision']}.json (written before the fix)")
     if entry["recheck_records"]:
@@ -3231,7 +3355,7 @@ def scope_footprint(store_dir: Path, log: list[dict], task: int | str) -> set[st
     footprint, or at `final` every task's plus the files the scope's coders
     changed, since a whole-change fix has no stage entry of its own."""
     footprint = task_footprint(log, task)
-    if task != "final":
+    if task not in ("final", CLOSE_SCOPE):
         return footprint
     coders = _scope_records(store_dir, scope_prefix(log, task)).coders
     changed = {_normalize_path(f) for r in coders for f in r.data.get("changed_files", [])}
@@ -3323,8 +3447,12 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     # A whole-change fix is committed before review-lite re-checks it, so
     # it commits without `ready` or `complete` once the coder has finished
     # the fix triage routed. The scope completes when triage reaches done.
-    final_fix = task == "final" and _round_baseline(log, task) is not None \
+    final_fix = task in ("final", CLOSE_SCOPE) and _round_baseline(log, task) is not None \
         and not _fix_is_open(store_dir, log, task, _round_baseline(log, task))
+    if task == CLOSE_SCOPE and not final_fix:
+        # The close commits only its fixes, and completes when triage does.
+        print("close: no finished close fix to commit; run `triage --task close`")
+        return 1
     blockers = [] if final_fix else ready_blockers(store_dir, task, light)
     if blockers:
         for blocker in blockers:
@@ -3370,7 +3498,7 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
     after = _git(top, "rev-parse", "HEAD").strip()
     print(f"committed {after}")
     if final_fix:
-        print("final: the fix is committed; re-check it, then run `triage --task final`")
+        print(f"{task}: the fix is committed; re-check it, then run `triage --task {task}`")
         return 0
     return _complete(store_dir, task, f"commits {before[:7]}..{after[:7]}", light)
 

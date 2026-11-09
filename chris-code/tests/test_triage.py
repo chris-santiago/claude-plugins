@@ -256,6 +256,10 @@ class TestCloseTiers(unittest.TestCase):
                 f = gate_finding("f", severity, reach, not_met=unmet)
                 self.assertEqual(triage.close_tier(f, set(), set()), expected)
 
+    def test_a_commit_gate_finding_blocks_at_the_close(self):
+        f = {**gate_finding("g", 3, source="close-gate"), "gate": True}
+        self.assertEqual(triage.close_tier(f, set(), set()), "patch")
+
     def test_a_promoted_finding_blocks_whatever_its_severity(self):
         self.assertEqual(triage.close_tier(gate_finding("f", 3), set(), {"f"}), "patch")
 

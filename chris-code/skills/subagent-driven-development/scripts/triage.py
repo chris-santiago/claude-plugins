@@ -147,10 +147,10 @@ BLOCKING_SEVERITY = 4
 
 def close_tier(finding: dict, reach_raised: set[str], promoted: set[str]) -> str:
     """The close's tier for a finding: patch or holistic (by effective
-    reach) when it blocks, which is an intent not-met, an S4+ finding, or
-    one the user promoted; file otherwise."""
-    blocking = (finding.get("not_met") or finding["severity"] >= BLOCKING_SEVERITY
-                or finding["id"] in promoted)
+    reach) when it blocks, which is an intent not-met, an S4+ finding, a
+    failing commit gate, or one the user promoted; file otherwise."""
+    blocking = (finding.get("not_met") or finding.get("gate")
+                or finding["severity"] >= BLOCKING_SEVERITY or finding["id"] in promoted)
     if not blocking:
         return "file"
     contract = finding["reach"] == "contract" or finding["id"] in reach_raised
