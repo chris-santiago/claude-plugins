@@ -93,7 +93,7 @@ __all__ = [
     "get_store_dir", "ensure_store", "validate_record",
     "load_records", "load_progress_log", "resolutions_from_log",
     "compute_open_items", "list_shapes", "render_shapes", "render_store_markdown",
-    "completed_task_ids", "close_rounds", "CLOSE_ROUND_CAP",
+    "completed_task_ids", "close_start",
     "snapshot_tree", "diff_since", "diff_trees", "missing_paths", "submodule_paths",
     "LabelHit", "find_process_labels", "HISTORY_FILENAME", "load_history",
     "check_record", "finding_ids", "find_baseline", "fix_round",
@@ -279,12 +279,6 @@ UNLISTED_CASE_PREFIX = "unlisted case:"
 # Per-cycle history (2026-10-08): records are overwritten each cycle, so a
 # passing `check` appends one summary line per record here. `stats` reads it.
 HISTORY_FILENAME = "history.jsonl"
-
-# Close-gate rounds (2026-10-04): each run of verification-before-
-# completion's review gates is one round. Round 1 is the first close;
-# round 2 re-checks a batched remediation. Findings after the last round
-# escalate to the user — a further round is refused, not counted.
-CLOSE_ROUND_CAP = 2
 
 # Process labels (2026-10-08): the run's own vocabulary leaking into code
 # comments. ANYWHERE patterns are specific enough to flag on any added line;
@@ -1237,19 +1231,14 @@ def store_verdict(store_dir: Path, plan: str | None) -> tuple[str, str]:
         plan_file = None if key is None else (Path(key) if Path(key).is_absolute()
                                               else (repo or Path.cwd()) / key)
     tasks = _plan_tasks(plan_file) if plan_file is not None and plan_file.is_file() else []
-    notes = [store_state.parse_remediation_note(str(e.get("note", ""))) for e in log
-             if e.get("type") == "progress" and e.get("task") == "final"]
-    remediation = next((n for n in reversed(notes) if n is not None), None)
-    if remediation is not None:
-        remediation = {**remediation,
-                       "plan": plan_key(store_dir, remediation["plan"], base=repo)}
+    start = close_start(log)
+    step = latest_triage(log, CLOSE_SCOPE) if start is not None else None
     return store_state.classify(
         has_entries=bool(log), plans=plans, plan=key,
         plan_first_index=next((i for i, e in enumerate(log) if e.get("type") == "plan"
                                and e.get("path") == key), None),
         completed=set(completed_task_ids(log)), plan_tasks=tasks,
-        close_round_indices=[i for i, e in enumerate(log) if e.get("type") == "close_round"],
-        remediation=remediation)
+        close_start_index=start, close_step=step.get("kind") if step else None)
 
 
 def _plan_tasks(plan_file: Path) -> list[int]:
@@ -1259,11 +1248,11 @@ def _plan_tasks(plan_file: Path) -> list[int]:
     return task_brief.plan_task_numbers(plan_file.read_text(encoding="utf-8"))
 
 
-def close_rounds(log: list[dict]) -> int:
-    """How many close-gate rounds have started in this store — a typed
-    count, so the round cap survives compaction instead of living in the
-    orchestrator's memory."""
-    return sum(1 for entry in log if entry.get("type") == "close_round")
+def close_start(log: list[dict]) -> int | None:
+    """The log position of the latest close this release started, or None.
+    Entries from earlier releases carry a `round` and are ignored."""
+    return max((i for i, e in enumerate(log) if e.get("type") == "close_round"
+                and "round" not in e), default=None)
 
 
 def note_id(kind: str, text: str, for_task: int | None = None, owner: int | str | None = None,
@@ -1460,6 +1449,27 @@ def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
                        "agent": agent.strip(), "at": _now()})
 
 
+def _close_section(log: list[dict]) -> list[str]:
+    """The close, once started: its start, its steps, the user's rulings on
+    it and the findings deferred by ruling. Filed follow-ups are in `report`."""
+    start = close_start(log)
+    if start is None:
+        return []
+    begun = log[start]
+    scoped = log[start + 1:]
+    steps = " → ".join(e["kind"] for e in triage_entries(log, CLOSE_SCOPE)) or "(no triage yet)"
+    lines = ["", "## The close", f"- started at `{begun.get('head', '')}`: {begun.get('note', '')}",
+             f"- steps: {steps}"]
+    lines += [f"- ruling: {e.get('note', '')}" for e in scoped if e.get("type") == "progress"
+              and e.get("task") == CLOSE_SCOPE
+              and str(e.get("note", "")).lower().startswith(RULING_PREFIX)]
+    lines += [f"- deferred `{e.get('resolves')}`: {e.get('note', '')}" for e in scoped
+              if e.get("type") == "resolution"
+              and _scope(str(e.get("resolves", "")).split("#")[0]) == CLOSE_SCOPE
+              and str(e.get("note", "")).lower().startswith(DEFER_RULING_PREFIX)]
+    return lines
+
+
 def render_run_state(log: list[dict], records: list[Record]) -> str:
     """Where the run stands, from the store alone: what a resume reads."""
     done = set(completed_task_ids(log))
@@ -1488,6 +1498,8 @@ def render_run_state(log: list[dict], records: list[Record]) -> str:
     lines += ([f"- task {task}: " + (" → ".join(e["kind"] for e in triage_entries(log, task))
                                      or "(no triage yet)") for task in in_flight]
               or ["(no task in flight)"])
+
+    lines += _close_section(log)
 
     lines += ["", "## Parked (for the stage's batched question)"]
     parked = [f"- task {task}: {item}" for task in in_flight for item in _parked_items(log, records, task)]
@@ -4212,7 +4224,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="clear even with open notes (the user confirmed the loss)")
 
     p_run_state = sub.add_parser("run-state", parents=[store_parent],
-                                  help="the store's verdict (fresh, resume, remediation, "
+                                  help="the store's verdict (fresh, resume, closing, "
                                        "finished, foreign, ambiguous) and next action, then "
                                        "where the run stands")
     p_run_state.add_argument("--plan", help="the plan you are running (default: the latest "

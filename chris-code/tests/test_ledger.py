@@ -4484,31 +4484,43 @@ class TestPlansAndVerdict(GitRepoTestCase):
         ledger.cmd_append(self.store, "complete", 1, "commits a..b")
         self.assertEqual(self._state("plans/a.md")[0], "Verdict: ambiguous")
 
-    def test_a_remediation_note_makes_its_plan_a_remediation_run(self):
+    def start_close(self) -> None:
+        ledger.record_plan(self.store, "plans/a.md")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_close_round(self.store, "plans/a.md", "abc1234")
+
+    def test_a_close_in_progress_is_closing_and_run_state_shows_its_rounds_and_rulings(self):
+        self.start_close()
+        for kind in ("patch", "patch", "escalate"):
+            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": kind})
+        ledger.cmd_append(self.store, "progress", "close", "user ruling: ship the rest later")
+        ledger._append_progress(self.store, {"type": "resolution",
+                                             "resolves": "close-intent-reviewer#findings[ab12]",
+                                             "note": "user ruling: defer to the next release"})
+        lines = self._state("plans/a.md")
+        self.assertEqual(lines[0], "Verdict: closing")
+        self.assertIn("escalate", lines[1])
+        text = "\n".join(lines)
+        self.assertIn("## The close", text)
+        self.assertIn("- steps: patch → patch → escalate", text)
+        self.assertIn("- ruling: user ruling: ship the rest later", text)
+        self.assertIn("- deferred `close-intent-reviewer#findings[ab12]`", text)
+
+    def test_a_close_that_reached_done_is_finished(self):
+        self.start_close()
+        ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "done"})
+        self.assertEqual(self._state("plans/a.md")[0], "Verdict: finished")
+
+    def test_a_store_from_the_old_close_is_judged_by_the_new_rules(self):
         ledger.record_plan(self.store, "plans/a.md")
         ledger._append_progress(self.store, {"type": "close_round", "round": 1, "head": "h",
                                              "note": "plans/a.md"})
         ledger.cmd_append(self.store, "progress", "final",
                           "close-gate remediation r1: plan ./plans/b.md, decision d.md, "
                           "intent i.md, front-end none")
-        ledger.record_plan(self.store, "plans/b.md")
-        lines = self._state("plans/b.md")
-        self.assertEqual(lines[0], "Verdict: remediation")
-        self.assertIn("task 3", lines[1])
-        self.assertIn("plans/b.md", self._state("plans/a.md")[1])
-
-    def test_a_remediation_plan_resumes_before_its_first_brief(self):
-        ledger.record_plan(self.store, "plans/a.md")
-        _completable(self.store, 1)
-        ledger.cmd_append(self.store, "complete", 1, "commits a..b")
-        ledger._append_progress(self.store, {"type": "close_round", "round": 1, "head": "h",
-                                             "note": "plans/a.md"})
-        ledger.cmd_append(self.store, "progress", "final",
-                          "close-gate remediation r1: plan plans/b.md, decision d.md, "
-                          "intent i.md, front-end coherent-change")
-        lines = self._state("plans/b.md")
-        self.assertEqual(lines[0], "Verdict: remediation")
-        self.assertIn("task 3", lines[1])
+        lines = self._state("plans/a.md")
+        self.assertEqual(lines[0], "Verdict: resume")
+        self.assertNotIn("## The close", "\n".join(lines))
 
     def test_an_unreadable_plan_never_reads_as_every_task_complete(self):
         ledger.record_plan(self.store, "plans/a.md")
