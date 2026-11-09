@@ -153,14 +153,14 @@ Route the completion close through typed records and `ledger.py triage --task cl
 - [ ] SDD: close rulings on `--task close`, run-notes only for rules coders act on, `final-r2` and close remediation runs removed
 - [ ] lean-plan: the coverage step and the `Spec coverage:` line in the plan format
 - [ ] remediating-issues: drop the close-gate variant; coherent-change and finishing-a-development-branch: drop round-2 references
-- [ ] Verify: `! grep -rEq -- '--expect|final-r2|--task gate|--task ruling|[Cc]lose-gate variant|Requirements Check|close-gate remediation r1' --exclude-dir=scripts chris-code/skills`
+- [ ] Verify: `! /usr/bin/grep -rEq --exclude-dir=scripts -- '--expect|final-r2|--task gate|--task ruling|[Cc]lose-gate variant|Requirements Check|close-gate remediation r1' chris-code/skills`
 
 ### Task 9: Docs, decks and release
 - Consumes: spec §4; skill text from Task 8
 - Cases: n/a — documentation and version metadata
 - [ ] README, `docs/` (reference, explanation, how-to, tutorial), the guide (`docs/slides/chris-code-guide.html`, with `assets/decks/chris-code-guide.html` kept identical), and the decks describe the new close; re-render the Marp decks' HTML
 - [ ] CHANGELOG `## [0.16.0] - <date>` section; bump plugin and marketplace to 0.16.0
-- [ ] Verify: `! grep -rEq -- '--expect|final-r2|--task gate|--task ruling|[Cc]lose-gate variant|Requirements Check|close-gate remediation r1' chris-code/README.md chris-code/docs chris-code/assets && python3 -m unittest discover -s chris-code/tests -q`
+- [ ] Verify: `! /usr/bin/grep -rEq -- '--expect|final-r2|--task gate|--task ruling|[Cc]lose-gate variant|Requirements Check|close-gate remediation r1' chris-code/README.md chris-code/docs chris-code/assets && python3 -m unittest discover -s chris-code/tests -q`
 
 ## 6. Acceptance checks
 

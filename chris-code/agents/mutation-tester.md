@@ -47,7 +47,7 @@ You mutate against committed state, so the gate assumes the branch work is commi
   BASE=$(git merge-base HEAD "<base-branch>")
   git diff "$BASE"..HEAD -- .
   ```
-  Restrict breaks to lines added or modified in `"$BASE"..HEAD`. When the dispatch gives a `Range` (a close round 2 re-check of a remediation), use that range instead of `"$BASE"..HEAD`, so only the remediation's lines are mutated.
+  Restrict breaks to lines added or modified in `"$BASE"..HEAD`. When the dispatch gives a `Range` (a re-check of a close fix), use that range instead of `"$BASE"..HEAD`, so only the fix's lines are mutated.
 - **On-demand:** the path(s) the dispatch designates. Break code throughout the area, not just a diff.
 
 ### Rigor level (closing-review)
@@ -147,7 +147,7 @@ mutation-tester — PASS | CONCERNS | skipped | inconclusive — report: <path>
 - `status`: your verdict, lowercase. `concerns` exactly when `findings` is non-empty.
 - `findings`: one entry per gating finding (covered but survived, gating at its file's level), severity 3 and reach `local`, sited at the line you broke. Advisory and discarded breaks stay in the report only. Triage files these for the user to promote, so a survivor never blocks the close by itself.
 
-On a re-check (the dispatch gives `Range: <fix baseline>..HEAD`), mutate only that range and rewrite both files at the same paths. In on-demand mode, or with no report path, return the report inline and write no record; never invent a path.
+On a re-check (the dispatch gives `Range: <the fix commit>^..HEAD`), mutate only that range and rewrite both files at the same paths. In on-demand mode, or with no report path, return the report inline and write no record; never invent a path.
 
 ## Boundaries
 

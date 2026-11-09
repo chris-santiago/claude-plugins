@@ -117,7 +117,7 @@ Before the spec is written, freeze a small record of what the user actually aske
 - **Frozen:** once approved it changes only by explicit user decision — never edited to match what the spec or the implementation later turned out to be. Drift in the ledger defeats its purpose.
 - **Location:** `.claude/output/intent/YYYY-MM-DD-<topic>-intent.md`.
 
-This is the oracle the `intent-reviewer` reads at the verification gate (`verification-before-completion` Step 5). It deliberately lives outside the spec: it is the one artifact a spec-conformance check cannot quietly redefine.
+This is the oracle the `intent-reviewer` reads at the verification gate (`verification-before-completion` Step 4). It deliberately lives outside the spec: it is the one artifact a spec-conformance check cannot quietly redefine.
 
 ## After the Design
 

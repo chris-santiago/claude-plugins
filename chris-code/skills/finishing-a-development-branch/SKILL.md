@@ -17,9 +17,9 @@ Guide completion of development work by presenting clear options and handling ch
 
 ### Step 1: Verify Completion
 
-**PREREQUISITE:** `chris-code:verification-before-completion` must have passed (tests, lints, full review, requirements check, spec-blind intent re-check, and the mutation re-check when the user chose to run it). If it hasn't been run yet, invoke it now and wait for every step that ran to pass before proceeding.
+**PREREQUISITE:** `chris-code:verification-before-completion` must have passed (tests, lints, full review, spec-blind intent re-check, and the mutation re-check when the user chose to run it), with `ledger.py triage --task close` at `done`. If it hasn't been run yet, invoke it now and wait for its close to finish before proceeding.
 
-A green test suite, a `*-review-lite` commit gate, or the subagent-driven-development whole-change gate do not satisfy this prerequisite. Those are diff-level checks; the verification close adds three gates they never run: the `*-design-reviewer` cohesion review, the `intent-reviewer` spec-blind behavior check, and, when the user chooses it, the `mutation-tester` gate that proves the tests can actually detect a change. If all you have run is tests, lint, and a lite gate, you have not run verification-before-completion. Don't present integration options until its design and intent reviews have passed, and its mutation gate if the user chose to run it, including a re-run over any remediation.
+A green test suite, a `*-review-lite` commit gate, or the subagent-driven-development whole-change gate do not satisfy this prerequisite. Those are diff-level checks; the verification close adds three gates they never run: the `*-design-reviewer` cohesion review, the `intent-reviewer` spec-blind behavior check, and, when the user chooses it, the `mutation-tester` gate that proves the tests can actually detect a change. If all you have run is tests, lint, and a lite gate, you have not run verification-before-completion. Don't present integration options until its close has reached `done`: every blocking finding fixed and re-checked, deferred or ruled by the user.
 
 ### Step 2: Detect Environment
 

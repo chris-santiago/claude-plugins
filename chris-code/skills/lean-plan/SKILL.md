@@ -38,6 +38,8 @@ Every plan MUST use this structure. No other sections. No prose between sections
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use chris-code:subagent-driven-development (recommended) or chris-code:executing-plans to implement this plan task-by-task.
 
+Spec coverage: <spec path> — pass (<report path>)   (when §2 cites a spec; see *Spec Coverage Check*)
+
 ## 1. Objective
 
 One sentence describing the required change.
@@ -120,6 +122,14 @@ After writing, check against the spec:
 
 Fix issues inline, then move on.
 
+## Spec Coverage Check
+
+When the plan cites a spec in §2, an agent checks that the plan carries all of it before any coder runs. Dispatch `chris-code:spec-reviewer` with `Mode: plan coverage`, the spec path, the plan path, and the report path `.claude/output/reviews/<plan file's stem>-coverage.md`. It reads only those two documents and reports `PASS` or `GAPS`: each spec requirement no task carries, and each task doing work the spec doesn't ask for.
+
+- **On `GAPS`,** close each one: add or extend a task for an uncovered requirement, or drop the out-of-spec work. A requirement the plan shouldn't build is the user's call, since cutting it changes the spec. Re-dispatch once; take anything still open to the user.
+- **Then record the result** in the plan's header, the line after the *For agentic workers* note: `Spec coverage: <spec path> — pass (<report path>)`, or, when the user accepted a gap, `Spec coverage: <spec path> — user ruling: <their words, verbatim> (<report path>)`. `task_brief.py --spec` refuses to build a brief from a plan without a valid line for that spec.
+- **A plan with no spec** (a bug remediation, say) skips the check and the line.
+
 ## Execution Handoff
 
 After saving the plan, offer:
@@ -134,9 +144,3 @@ After saving the plan, offer:
 
 - **Subagent-Driven:** REQUIRED SUB-SKILL: `chris-code:subagent-driven-development`
 - **Inline:** REQUIRED SUB-SKILL: `chris-code:executing-plans`
-
-**Close-gate remediation plans** (`chris-code:verification-before-completion`, *The Close Round*) differ in four ways:
-- §2's spec references are the decision doc and the gate report paths.
-- Each task's `Cases:` line comes from the decision doc's correctness table, one row per affected case (`<case> → <its result>`), plus the finding's class where the gate names one. A structural finding (cohesion, module boundaries) usually has no input domain: write `n/a — structural`, or, if the table names the affected sites, list each as a row with its result (`<site> → <result>`).
-- Tasks are numbered after the highest numeric id `ledger.py completed` lists, because they run on the same store as the finished tasks.
-- Execution is subagent-driven only. Skip the offer above, since the close-round count lives in SDD's store.
