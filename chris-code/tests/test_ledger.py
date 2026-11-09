@@ -114,6 +114,12 @@ def _write(store: Path, name: str, data: dict) -> Path:
     return path
 
 
+def _rule(store: Path, fid: str, verb: str = "drop", note: str = "user ruling: waive") -> None:
+    """The user's ruling on a finding, as the `rule` command records it."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        ledger.cmd_rule(store, [fid], verb, note)
+
+
 def _entry_id(stem: str, field_name: str, entry: dict | str) -> str:
     """The real id `open`/`resolve` compute for an entry-level open item —
     content-derived (spec Sec 6, amended 2026-08-27), so tests must
@@ -2629,9 +2635,9 @@ class TestTriageCommand(TriageStoreTestCase):
         self.fixed(cycle=3, report="the second fix")  # it lands, and `other` is still raised
         self.triage()  # rounds spent: escalate
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        ledger.cmd_resolve(self.store, _entry_id("task-3-spec-reviewer", "issues", other),
-                           "user ruling: waive, it's out of scope")
-        ledger.cmd_append(self.store, "progress", 3, "user ruling: fix the None guard")
+        _rule(self.store, _entry_id("task-3-spec-reviewer", "issues", other), "drop",
+              "user ruling: waive, it's out of scope")
+        _rule(self.store, self.spec_id(issue), "fix", "user ruling: fix the None guard")
         self.triage()
         last = self.entries()[-1]
         self.assertEqual(last["kind"], "ruling")
@@ -2641,7 +2647,7 @@ class TestTriageCommand(TriageStoreTestCase):
         issue, other = _finding(), _finding(rule="other rule")
         self.spec(issue, other)
         self.triage()
-        ledger.cmd_resolve(self.store, self.spec_id(other), "user ruling: waive")
+        _rule(self.store, self.spec_id(other))
         self.fixed(contested=[{"finding": self.spec_id(issue), "reason": "wrong", "evidence": "e"}])
         self.spec(issue, contests=[{"finding": self.spec_id(issue), "verdict": "concede",
                                     "reason": "the guard exists"}])
@@ -2831,13 +2837,103 @@ class TestTriageBaseline(TriageStoreTestCase):
         self.assertIn("round: patch", out.getvalue())
 
 
+class TestFindingLog(TriageStoreTestCase):
+    """Every finding is its own run of log entries, so no record rewrite can
+    erase or reset it."""
+
+    def states(self) -> dict[str, str]:
+        return {fid: s["state"] for fid, s in
+                ledger.finding_states(ledger.load_progress_log(self.store), 3).items()}
+
+    def test_triage_logs_each_finding_and_each_state_change(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        fid = self.spec_id(issue)
+        entries = [e for e in ledger.load_progress_log(self.store) if e.get("type") == "finding"]
+        self.assertEqual([(e["id"], e["state"]) for e in entries], [(fid, "fix"), (fid, "sent")])
+        self.assertEqual(entries[0]["data"]["rule"], issue["rule"])
+
+    def test_triage_again_after_a_file_ruling_logs_one_step(self):
+        issue = _finding()
+        for n in (1, 2):
+            ledger._append_progress(self.store, {"type": "triage", "task": 3, "kind": "patch",
+                                                 "round": n, "findings": [], "settled": []})
+        self.spec(issue)
+        self.triage()
+        _rule(self.store, self.spec_id(issue), "file", "user ruling: later")
+        self.triage()
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch", "escalate", "done"])
+
+    def test_an_escalation_prints_each_open_finding_with_its_rule(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        for n in (1, 2):
+            ledger._append_progress(self.store, {"type": "triage", "task": 3, "kind": "patch",
+                                                 "round": n, "findings": [], "settled": []})
+        self.spec(issue)
+        out = self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "escalate")
+        self.assertIn(f"[{fid}] waiting for a ruling: {issue['rule']}", out)
+        self.assertIn("ledger.py rule", out)
+
+    def test_ruling_fix_on_a_filed_finding_resolves_its_follow_up(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        _rule(self.store, fid, "file", "user ruling: later")
+        [note] = [n for n in ledger.open_notes(ledger.load_progress_log(self.store))
+                  if n.get("finding") == fid]
+        _rule(self.store, fid, "fix", "user ruling: no, now")
+        self.assertIn(note["id"], ledger.resolutions_from_log(ledger.load_progress_log(self.store)))
+        self.assertEqual(self.states()[fid], "fix")
+
+    def test_rule_refuses_what_it_cant_rule(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        cases = {"no ruling prefix": ([fid], "drop", "just drop it"),
+                 "unknown id": (["task-3-spec-reviewer#issues[deadbeef]"], "drop", "user ruling: x"),
+                 "sent and fix": ([fid], "fix", "user ruling: fix it")}
+        for label, (ids, verb, note) in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(ledger.RecordError):
+                    ledger.cmd_rule(self.store, ids, verb, note)
+        self.assertEqual(self.states()[fid], "sent")
+
+    def test_a_task_store_from_before_the_finding_log_is_seeded(self):
+        issue, waived = _finding(), _finding(rule="other rule")
+        fid, wid = self.spec_id(issue), self.spec_id(waived)
+        self.spec(issue, waived)
+        ledger._append_progress(self.store, {
+            "type": "triage", "task": 3, "kind": "patch", "round": 1,
+            "findings": [{"id": fid, "tier": "patch", "rule": issue["rule"],
+                          "source": "task-3-spec-reviewer"},
+                         {"id": wid, "tier": "patch", "rule": waived["rule"],
+                          "source": "task-3-spec-reviewer"}],
+            "held": [], "settled": [], "filed": []})
+        ledger._append_progress(self.store, {"type": "resolution", "resolves": wid,
+                                             "note": "user ruling: waive"})
+        self.assertEqual(self.states(), {fid: "sent", wid: "dropped"})
+        self.spec()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self.states(), {fid: "fixed", wid: "dropped"})
+
+
 class TestResolveFindings(TriageStoreTestCase):
     def test_an_open_finding_is_waived_only_by_a_user_ruling(self):
         issue = _finding()
         self.spec(issue)
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_resolve(self.store, self.spec_id(issue), "user ruling: waive")
+        self.assertIn("ledger.py rule", str(ctx.exception))
         with self.assertRaises(ledger.RecordError):
-            ledger.cmd_resolve(self.store, self.spec_id(issue), "not needed")
-        ledger.cmd_resolve(self.store, self.spec_id(issue), "user ruling: waive")
+            _rule(self.store, self.spec_id(issue), "drop", "not needed")
+        _rule(self.store, self.spec_id(issue))
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
@@ -2861,7 +2957,7 @@ class TestContestAnswersAndReopens(TriageStoreTestCase):
 
     def _settle(self, issue: dict) -> None:
         self.spec(issue)
-        ledger.cmd_resolve(self.store, self.spec_id(issue), "user ruling: waive")
+        _rule(self.store, self.spec_id(issue))
         self.triage()
 
     def test_the_same_finding_raised_again_without_reopens_is_refused(self):
@@ -3004,7 +3100,7 @@ class TestFixChecks(TriageStoreTestCase):
         sent = self.review(self.issue, waived,
                            recurring=[{"site": "a.py:1", "why": "same rule as c1"}])
         tree = self.snapshot()
-        ledger.cmd_resolve(self.store, sent[1], "user ruling: land as-is, filed as a follow-up")
+        _rule(self.store, sent[1], "file", "user ruling: land as-is, filed as a follow-up")
         self.edit()
         self.fix(tree, sent[:1], sweeps=[{"findings": sent[:1], "rule": "size must be positive",
                                           "rows": [{"site": "a.py:1", "already_correct": "e"},
@@ -3120,7 +3216,7 @@ class TestFixChecks(TriageStoreTestCase):
         # Triage moved on (done) after routing the round: the fix is stale.
         self.spec(self.issue)
         sent = [self.spec_id(self.issue)]
-        ledger.cmd_resolve(self.store, sent[0], "user ruling: waive")
+        _rule(self.store, sent[0])
         self.triage()
         tree = self.manual_snapshot()
         self.edit()
@@ -3251,7 +3347,7 @@ class TestHolisticFix(TriageStoreTestCase):
         self.write("task-3-decision-c2.json", _decision(
             [fid], task=3, status=status, reviewer_records=["task-3-spec-reviewer"],
             choices=[{**choice, "findings": [fid]}]))
-        ledger.cmd_resolve(self.store, fid, "user ruling: land as-is, filed as a follow-up")
+        _rule(self.store, fid, "file", "user ruling: land as-is, filed as a follow-up")
         return tree
 
     def test_an_escalated_finding_the_user_waives_mid_round_needs_no_contest(self):
@@ -3401,8 +3497,9 @@ class CloseStoreTestCase(GitRepoTestCase):
 
 
 class TestCloseTriage(CloseStoreTestCase):
-    def rule(self, text: str) -> None:
-        ledger.cmd_append(self.store, "progress", "close", f"user ruling: {text}")
+    def rule(self, verb: str, *ids: str) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_rule(self.store, list(ids), verb, "user ruling: as discussed")
 
     def test_blocking_findings_go_to_a_fix_and_the_rest_wait_for_a_ruling(self):
         s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4, rule="no silent drop")
@@ -3429,7 +3526,8 @@ class TestCloseTriage(CloseStoreTestCase):
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "decide")
         s3_id, s1_id = (self.fid("close-python-design-reviewer", f) for f in (s3, s1))
-        self.rule(f"file {s3_id} drop {s1_id}")
+        self.rule("file", s3_id)
+        self.rule("drop", s1_id)
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
         [note] = self.follow_ups()
@@ -3441,7 +3539,7 @@ class TestCloseTriage(CloseStoreTestCase):
         s3 = _finding()
         self.design(s3)
         self.triage()
-        self.rule(f"fix {self.fid('close-python-design-reviewer', s3)} before shipping")
+        self.rule("fix", self.fid("close-python-design-reviewer", s3))
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "ruling")
         tree = _baseline(self.store, "close")
@@ -3542,8 +3640,8 @@ class TestCloseTriage(CloseStoreTestCase):
         self.fix_round_with(s4)
         self.design(s4, contests=[{"finding": fid, "verdict": "hold", "reason": "it doesn't"}])
         self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        self.rule(f"file {fid} for the next release")
+        self.assertEqual(self.entries()[-1]["kind"], "decide")
+        self.rule("file", fid)
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
         self.assertEqual([n["finding"] for n in self.follow_ups()], [fid])
@@ -3556,8 +3654,8 @@ class TestCloseTriage(CloseStoreTestCase):
                                                  "round": n, "findings": [], "settled": []})
         self.design(s4)
         self.triage()
-        self.assertEqual(self.entries()[-1]["kind"], "escalate")
-        self.rule(f"fix {fid}: guard the None case")
+        self.assertEqual(self.entries()[-1]["kind"], "decide")
+        self.rule("fix", fid)
         self.triage()
         last = self.entries()[-1]
         self.assertEqual((last["kind"], [f["id"] for f in last["findings"]]), ("ruling", [fid]))
@@ -3589,11 +3687,12 @@ class TestCloseTriage(CloseStoreTestCase):
         ledger._check_deferrals_outside_footprint(
             path, {**data, "sweeps": [{**sweep, "sites_outside": ["lib/z.py:3"]}]})
 
-    def test_a_ruling_on_an_unknown_id_is_reported(self):
+    def test_a_ruling_on_an_unknown_id_is_refused(self):
         self.design(_finding())
         self.triage()
-        self.rule("fix close-python-design-reviewer#findings[deadbeef]")
-        self.assertIn("no close finding has this id", self.triage())
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.rule("fix", "close-python-design-reviewer#findings[deadbeef]")
+        self.assertIn("no finding of close", str(ctx.exception))
 
     def test_a_close_finding_is_decided_by_a_ruling_not_resolve(self):
         s3 = _finding()
@@ -3602,21 +3701,26 @@ class TestCloseTriage(CloseStoreTestCase):
         with self.assertRaises(ledger.RecordError) as ctx:
             ledger.cmd_resolve(self.store, self.fid("close-python-design-reviewer", s3),
                                "user ruling: waive")
-        self.assertIn("user ruling: fix|file|drop", str(ctx.exception))
+        self.assertIn("ledger.py rule", str(ctx.exception))
 
     def test_a_mutation_gate_ruling_starts_no_round(self):
         self.design(_finding(severity=2))
         self.triage()
-        self.rule("mutation gate: no")
+        ledger.cmd_append(self.store, "progress", "close", "user ruling: mutation gate: no")
         self.triage()
         self.assertEqual([e["kind"] for e in self.entries()], ["decide"])
 
     def test_done_is_final(self):
-        self.design()
+        s1 = _finding(severity=1)
+        fid = self.fid("close-python-design-reviewer", s1)
+        self.design(s1)
         self.triage()
-        self.rule("fix close-python-design-reviewer#findings[deadbeef]")
+        self.rule("drop", fid)
         self.triage()
-        self.assertEqual({e["kind"] for e in self.entries()}, {"done"})
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.rule("fix", fid)
+        self.assertIn("finished", str(ctx.exception))
 
     def test_the_close_is_never_completed_by_append(self):
         with self.assertRaises(ledger.RecordError):
@@ -3758,7 +3862,7 @@ class TestEndToEnd(TriageStoreTestCase):
         self.assertEqual((step["kind"], step["held"]), ("escalate", [api_id]))
         self.assertTrue(any(api_id in b for b in self.blockers()))
 
-        ledger.cmd_resolve(self.store, api_id, "user ruling: waive, the plan's signature stands")
+        _rule(self.store, api_id, "drop", "user ruling: waive, the plan's signature stands")
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
         self.assertEqual(self.blockers(), [])
@@ -3781,7 +3885,7 @@ class TestTriageOutput(TriageStoreTestCase):
         issue, other = _finding(reach="contract"), _finding(rule="other rule")
         self.coder()
         self.spec(issue, other)
-        ledger.cmd_resolve(self.store, self.spec_id(other), "user ruling: waive")
+        _rule(self.store, self.spec_id(other))
         out = self.triage()
         self.assertIn(f"settled: {self.spec_id(other)}", out)
         self.assertIn("decision doc: task-3-decision-c2", out)
@@ -3820,8 +3924,7 @@ class TestTriageOutput(TriageStoreTestCase):
         ledger.cmd_stage(self.store, 4, 1, ["b.py"])
         other = _finding(sites=["b.py:1"])
         self.write("task-4-spec-reviewer.json", _spec_reviewer(task=4, status="issues", issues=[other]))
-        ledger.cmd_resolve(self.store, _entry_id("task-4-spec-reviewer", "issues", other),
-                           "user ruling: waive")
+        _rule(self.store, _entry_id("task-4-spec-reviewer", "issues", other))
         self.spec()
         self.triage()
         self.assertEqual(self.entries()[-1]["settled"], [])
@@ -4586,16 +4689,18 @@ class TestPlansAndVerdict(GitRepoTestCase):
 
     def test_a_close_in_progress_is_closing_and_run_state_shows_its_rounds_and_rulings(self):
         self.start_close()
-        for kind in ("patch", "patch", "escalate"):
-            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": kind,
-                                                 "waiting": ["close-intent-reviewer#findings[ab12]"]})
+        for kind in ("patch", "patch", "decide"):
+            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": kind})
+        ledger._append_progress(self.store, {"type": "finding", "task": "close", "by": "triage",
+                                             "id": "close-intent-reviewer#findings[ab12]",
+                                             "state": "waiting", "data": {"rule": "r"}})
         ledger.cmd_append(self.store, "progress", "close", "user ruling: ship the rest later")
         lines = self._state("plans/a.md")
         self.assertEqual(lines[0], "Verdict: closing")
-        self.assertIn("escalate", lines[1])
+        self.assertIn("decide", lines[1])
         text = "\n".join(lines)
         self.assertIn("## The close", text)
-        self.assertIn("- steps: patch → patch → escalate", text)
+        self.assertIn("- steps: patch → patch → decide", text)
         self.assertIn("- ruling: user ruling: ship the rest later", text)
         self.assertIn("- waiting for a ruling: close-intent-reviewer#findings[ab12]", text)
 
