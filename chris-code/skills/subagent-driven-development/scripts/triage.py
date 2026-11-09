@@ -11,6 +11,8 @@ scope's records and calls three functions here:
   still raised, conceded or held).
 - `step`: the next step from the states, and the state changes it makes
   (findings sent, notes noted, spent findings put to the user).
+- `awaiting`: the records a fix round still waits on for its re-check;
+  ledger.py takes no new step while any is outstanding.
 
 Nothing here reads files, runs git, or imports ledger: ledger.py runs as
 __main__, and a module that imported it would load a second copy with its
@@ -39,8 +41,9 @@ STATES = ("fix", "sent", "held", "waiting", "note", "noted", "filed", "fixed", "
 FINAL_STATES = ("noted", "filed", "fixed", "dropped")
 # Findings no longer anyone's work; a re-check gets them as settled.
 SETTLED_STATES = ("fixed", "dropped", "filed")
-# What a finding entry keeps of a raised finding.
-FINDING_DATA = ("source", "gate", "severity", "reach", "rule", "sites", "not_met")
+# What a finding entry keeps of a raised finding: enough to fix, file or
+# rule it after its record has been rewritten.
+FINDING_DATA = ("source", "gate", "severity", "reach", "rule", "sites", "claim", "not_met")
 
 
 def tier(finding: dict, reach_raised: set[str]) -> str:
@@ -65,17 +68,19 @@ def first_state(finding: dict, close: bool) -> str:
 
 
 def observe(states: dict[str, dict], raised: list[dict], answers: dict[str, str],
-            digests: dict[str, str], close: bool) -> list[dict]:
+            versions: dict[str, str], close: bool) -> list[dict]:
     """The state changes the records make, each {id, state, from} (and
     `data` on a first sighting). `states` maps an id to its current state
     entry ({state, data, seen, ...}); `raised` are the findings the scope's
     records raise now; `answers` the raising reviewers' contest verdicts;
-    `digests` each record's current content digest. A sent finding whose
-    raising record was rewritten since the send (its digest changed) is
-    fixed when gone and fix again when still raised; a concede fixes it and
-    a hold holds it. Records never change an unsent finding, and a final
-    one raised again is ignored (`check` refuses an unchanged re-raise; a
-    `reopens` finding has an id of its own)."""
+    `versions` each record's current version, which changes on every write.
+    Only a re-check changes a finding: its raising record written since
+    the finding was sent or held (its version moved past `seen`), even
+    with the same content. Then a sent finding is fixed when
+    gone, held on a hold and fix again when still raised, and a concede
+    fixes a sent or held one. Records never change any other state, and a
+    final one raised again is ignored (a `reopens` finding has an id of its
+    own)."""
     changes = []
     raised_ids = set()
     for finding in raised:
@@ -87,17 +92,28 @@ def observe(states: dict[str, dict], raised: list[dict], answers: dict[str, str]
                             "data": {k: finding.get(k) for k in FINDING_DATA}})
             continue
         state, verdict = current["state"], answers.get(fid)
-        if state in ("sent", "held") and verdict == "concede":
+        if state not in ("sent", "held") or not _rechecked(current, versions):
+            continue
+        if verdict == "concede":
             changes.append({"id": fid, "state": "fixed", "from": state})
-        elif state == "sent" and verdict == "hold":
-            changes.append({"id": fid, "state": "held", "from": state})
-        elif state == "sent" and digests.get(_source(current)) != current.get("seen"):
-            changes.append({"id": fid, "state": "fix", "from": state})
+        elif state == "sent":
+            changes.append({"id": fid, "state": "held" if verdict == "hold" else "fix",
+                            "from": state})
     for fid, current in states.items():
-        if current["state"] == "sent" and fid not in raised_ids \
-                and digests.get(_source(current)) != current.get("seen"):
+        if current["state"] == "sent" and fid not in raised_ids and _rechecked(current, versions):
             changes.append({"id": fid, "state": "fixed", "from": "sent"})
     return changes
+
+
+def _rechecked(current: dict, versions: dict[str, str]) -> bool:
+    return versions.get(_source(current)) != current.get("seen")
+
+
+def awaiting(awaited: dict[str, str | None], versions: dict[str, str]) -> list[str]:
+    """The records a fix round still waits on: each it named for its
+    re-check (`awaited`, a record's version when the round was sent) that
+    hasn't been written since."""
+    return sorted(stem for stem, seen in awaited.items() if versions.get(stem) == seen)
 
 
 def _source(current: dict) -> str | None:
@@ -105,46 +121,57 @@ def _source(current: dict) -> str | None:
 
 
 def apply(states: dict[str, dict], changes: list[dict]) -> dict[str, dict]:
-    """The states after `changes`, without touching `states`."""
+    """The states after `changes`, without touching `states`. A change is
+    triage's unless it says otherwise (`by`)."""
     after = {fid: dict(entry) for fid, entry in states.items()}
     for change in changes:
         entry = after.setdefault(change["id"], {})
         entry["state"] = change["state"]
+        entry["by"] = change.get("by", "triage")
         if "data" in change:
             entry["data"] = change["data"]
     return after
 
 
 def step(states: dict[str, dict], *, close: bool, prior: list[dict], root_causes: list[str],
-         reach_raised: set[str], unclear: list[str], user_fixed: bool, override: bool,
+         reach_raised: set[str], unclear: list[str], override: bool,
          undelivered_note: bool) -> dict:
     """The scope's next step from its finding states (after `observe`), as
     a triage entry without its type, task and tree, plus `changes`: the
     state changes the step makes (fix findings sent, notes noted, spent
     findings put to the user as waiting). `prior` are the scope's earlier
-    entries; `user_fixed` says the user ruled a finding fix since the last
-    entry; `override` (a task only) says the user overrode an open choice
+    entries; `override` (a task only) says the user overrode an open choice
     since the last entry; `unclear` (the close only) are the intent
-    statements still can't-tell."""
+    statements still can't-tell. A fix finding whose latest entry is the
+    user's was ruled fix: right after the user was asked, or once the
+    scope's rounds are spent, it starts a ruling round, and other fix
+    findings past the cap wait for the user instead."""
     by_state = {s: sorted(fid for fid, e in states.items() if e["state"] == s) for s in STATES}
     steps = [e for e in prior if e.get("kind") != "clarify"]
     last_kind = steps[-1]["kind"] if steps else None
     rounds = sum(1 for e in prior if e.get("kind") in FIX_ROUND_KINDS)
     ask = "decide" if close else "escalate"
     fix, held, waiting = by_state["fix"], by_state["held"], by_state["waiting"]
+    ruled = [fid for fid in fix if states[fid].get("by") == "user"]
     notes = [] if close else by_state["note"]
     changes: list[dict] = []
     open_work = bool(fix or root_causes)
+    spent = rounds >= MAX_FIX_ROUNDS or last_kind == "ruling"
 
     if close and last_kind == "done":
         kind = "done"
     elif close and unclear:
         kind = "clarify"
-    elif last_kind in ("escalate", "decide") and user_fixed and fix:
+    elif ruled and (spent or last_kind == ask):
         kind = "ruling"
+        if spent:
+            rest = [fid for fid in fix if fid not in ruled]
+            changes += [{"id": fid, "state": "waiting", "from": "fix"} for fid in rest]
+            waiting = sorted({*waiting, *rest})
+            fix = ruled
     elif not close and override and last_kind in ("escalate", "done"):
         kind = "ruling"
-    elif open_work and (rounds >= MAX_FIX_ROUNDS or last_kind == "ruling"):
+    elif open_work and spent:
         kind = ask
         changes += [{"id": fid, "state": "waiting", "from": "fix"} for fid in fix]
         waiting = sorted({*waiting, *fix})

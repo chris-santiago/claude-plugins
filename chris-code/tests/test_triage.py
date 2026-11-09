@@ -33,42 +33,40 @@ def finding(fid: str, severity: int = 3, reach: str = "local", *, source: str = 
 
 class Loop:
     """A scope's findings and steps, driven as ledger.py drives triage: each
-    review rewrites the records it names (their digests change), triage
-    observes them, takes the step, and the step's sends record the digest
-    they were sent at."""
+    review rewrites the records it names (their versions change), triage
+    observes them, takes the step, and a sent or held finding records the
+    digest it was sent or held at."""
 
     def __init__(self, close: bool = False):
         self.close = close
         self.states: dict[str, dict] = {}
         self.prior: list[dict] = []
-        self.digests: dict[str, str] = {}
-        self.user_fixed = False
+        self.versions: dict[str, str] = {}
 
     def review(self, *raised: dict, answers=None, rewrote=None, root_causes=(), unclear=(),
                override=False, undelivered_note=False) -> dict:
         sources = rewrote if rewrote is not None else {f["source"] for f in raised} or {SPEC}
         for source in sources:
-            self.digests[source] = self.digests.get(source, "") + "'"
+            self.versions[source] = self.versions.get(source, "") + "'"
         self.observed = triage.observe(self.states, list(raised), dict(answers or {}),
-                                       self.digests, self.close)
+                                       self.versions, self.close)
         self.states = triage.apply(self.states, self.observed)
         entry = triage.step(self.states, close=self.close, prior=self.prior,
                             root_causes=list(root_causes), reach_raised=set(),
-                            unclear=list(unclear), user_fixed=self.user_fixed,
-                            override=override, undelivered_note=undelivered_note)
+                            unclear=list(unclear), override=override,
+                            undelivered_note=undelivered_note)
         changes = entry.pop("changes")
         self.states = triage.apply(self.states, changes)
-        for change in changes:
-            if change["state"] == "sent":
-                self.states[change["id"]]["seen"] = self.digests.get(
+        for change in [*self.observed, *changes]:
+            if change["state"] in ("sent", "held"):
+                self.states[change["id"]]["seen"] = self.versions.get(
                     self.states[change["id"]]["data"]["source"])
         self.prior.append(entry)
-        self.user_fixed = False
         return entry
 
     def rule(self, fid: str, verb: str) -> None:
-        self.states[fid]["state"] = {"fix": "fix", "file": "filed", "drop": "dropped"}[verb]
-        self.user_fixed = self.user_fixed or verb == "fix"
+        self.states[fid].update(state={"fix": "fix", "file": "filed", "drop": "dropped"}[verb],
+                                by="user")
 
     def state(self, fid: str) -> str:
         return self.states[fid]["state"]
@@ -179,6 +177,27 @@ class TestTaskRounds(unittest.TestCase):
         again = loop.review(finding("a"))
         self.assertEqual((again["kind"], again["waiting"]), ("escalate", ["a"]))
 
+    def test_a_fix_ruling_after_a_failed_ruling_round_starts_another(self):
+        loop = Loop()
+        for _ in range(3):
+            loop.review(finding("a"))
+        loop.rule("a", "fix")
+        loop.review(finding("a"), rewrote=set())
+        self.assertEqual(loop.review(finding("a"))["kind"], "escalate")
+        loop.rule("a", "fix")
+        again = loop.review(finding("a"), rewrote=set())
+        self.assertEqual((again["kind"], sent(again)), ("ruling", ["a"]))
+
+    def test_past_the_cap_a_ruled_finding_is_sent_and_the_others_wait(self):
+        loop = Loop()
+        for _ in range(3):
+            loop.review(finding("a"), finding("b"))
+        loop.rule("a", "fix")
+        loop.review(finding("a"), finding("b"), rewrote=set())
+        loop.rule("b", "fix")
+        ruling = loop.review(finding("a"), finding("b"))
+        self.assertEqual((ruling["kind"], sent(ruling), ruling["waiting"]), ("ruling", ["b"], ["a"]))
+
     def test_a_file_or_drop_ruling_settles_without_a_round(self):
         for verb, state in (("file", "filed"), ("drop", "dropped")):
             with self.subTest(verb=verb):
@@ -219,6 +238,14 @@ class TestContests(unittest.TestCase):
         loop = self.contested("hold")
         loop.rule("a", "fix")
         self.assertEqual(sent(loop.review(finding("a"), rewrote=set())), ["a"])
+
+    def test_a_stale_hold_never_re_holds_a_finding_sent_again(self):
+        loop = self.contested("hold")
+        loop.rule("a", "fix")
+        loop.review(finding("a"), answers={"a": "hold"}, rewrote=set())
+        self.assertEqual(loop.state("a"), "sent")
+        loop.review(finding("a"), answers={"a": "hold"}, rewrote=set())
+        self.assertEqual((loop.observed, loop.state("a")), ([], "sent"))
 
     def test_a_held_finding_its_reviewer_later_concedes_is_fixed(self):
         loop = self.contested("hold")
@@ -281,13 +308,21 @@ class TestClose(unittest.TestCase):
             loop.review(a)
         loop.rule("a", "fix")
         self.assertEqual(loop.review(a, rewrote=set(), unclear=["s1"])["kind"], "clarify")
-        loop.user_fixed = True
         self.assertEqual(loop.review(a, rewrote=set())["kind"], "ruling")
 
     def test_a_finished_close_is_final(self):
         loop = Loop(close=True)
         loop.review()
         self.assertEqual(loop.review(finding("a", 4, source=DESIGN))["kind"], "done")
+
+
+class TestAwaiting(unittest.TestCase):
+    def test_a_round_waits_on_each_named_record_not_rewritten_since(self):
+        awaited = {DESIGN: "d1", INTENT: "i1", "close-gate": None}
+        self.assertEqual(triage.awaiting(awaited, {DESIGN: "d2", INTENT: "i1"}),
+                         ["close-gate", INTENT])
+        self.assertEqual(triage.awaiting(awaited, {DESIGN: "d2", INTENT: "i2", "close-gate": "g"}),
+                         [])
 
 
 class TestPurity(unittest.TestCase):

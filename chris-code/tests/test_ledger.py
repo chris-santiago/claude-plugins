@@ -2579,7 +2579,8 @@ class TestTriageCommand(TriageStoreTestCase):
         first = self.triage()
         again = self.triage()
         self.assertEqual(len(self.entries()), 1)
-        self.assertEqual(first, again)
+        self.assertTrue(again.startswith(first), again)
+        self.assertIn("waiting for: the coder's finished fix", again)
 
     def test_a_task_nobody_reviewed_is_refused(self):
         self.coder()
@@ -2632,7 +2633,9 @@ class TestTriageCommand(TriageStoreTestCase):
                                            "reason": "the guard skips None"}])
         self.triage()  # second patch for `other`; issue held
         self.assertEqual(self.entries()[-1]["held"], [self.spec_id(issue)])
-        self.fixed(cycle=3, report="the second fix")  # it lands, and `other` is still raised
+        self.fixed(cycle=3, report="the second fix")
+        self.spec(issue, other, contests=[{"finding": self.spec_id(issue), "verdict": "hold",
+                                           "reason": "the guard skips None"}])  # `other` still raised
         self.triage()  # rounds spent: escalate
         self.assertEqual(self.entries()[-1]["kind"], "escalate")
         _rule(self.store, _entry_id("task-3-spec-reviewer", "issues", other), "drop",
@@ -2692,7 +2695,7 @@ class TestTriageBaseline(TriageStoreTestCase):
     def test_an_unchanged_reprint_shows_the_same_baseline(self):
         self.spec(_finding())
         first = self.triage()
-        self.assertEqual(self.triage(), first)
+        self.assertTrue(self.triage().startswith(first))
         self.assertEqual(len(self.snapshots()), 1)
 
     def test_an_open_fix_is_reprinted_when_the_coder_pauses(self):
@@ -2701,7 +2704,7 @@ class TestTriageBaseline(TriageStoreTestCase):
         tree = self.snapshots()[0]["tree"]
         self.coder(cycle=1, status="needs_context")
         (self.repo / "a.py").write_text("x = 1\npartial = True\n", encoding="utf-8")
-        self.assertEqual(self.triage(), first)
+        self.assertTrue(self.triage().startswith(first))
         self.assertEqual(len(self.entries()), 1)
         self.assertEqual([s["tree"] for s in self.snapshots()], [tree])
 
@@ -2725,11 +2728,10 @@ class TestTriageBaseline(TriageStoreTestCase):
         first = self.triage("final")
         self.write("final-python-review-lite.json",
                    _review_lite(task="final", status="block", findings=[_finding(), _finding(rule="r2")]))
-        self.assertEqual(self.triage("final"), first)
+        self.assertTrue(self.triage("final").startswith(first))
         tree = self.snapshots()[0]["tree"]
         self.write("final-python-coder.json", _coder(task="final", cycle=2, baseline=tree, **_FIX_FIELDS))
-        self.triage("final")
-        self.assertEqual(len([e for e in self.entries() if e["task"] == "final"]), 2)
+        self.assertIn("waiting for: the fix's commit", self.triage("final"))
 
     def checked(self, **fields) -> None:
         ledger.cmd_check(str(self.coder(**fields)))
@@ -2804,6 +2806,8 @@ class TestTriageBaseline(TriageStoreTestCase):
                 if task == 3:
                     self.spec()
                 else:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(ledger.cmd_commit(self.store, "final", "Fix", "true", None), 0)
                     self.write(reviewer, _review_lite(task="final"))
                 self.triage(task)
                 self.assertEqual([e["kind"] for e in self.entries() if e["task"] == task],
@@ -2966,8 +2970,11 @@ class TestContestAnswersAndReopens(TriageStoreTestCase):
             {"finding": self.spec_id(issue), "verdict": "hold", "reason": "r"}])))
 
     def _settle(self, issue: dict) -> None:
+        """Fix `issue` through a patch round and its re-check."""
         self.spec(issue)
-        _rule(self.store, self.spec_id(issue))
+        self.triage()
+        self.fixed()
+        self.spec()
         self.triage()
 
     def test_the_same_finding_raised_again_without_reopens_is_refused(self):
@@ -3412,6 +3419,7 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
             [], task=3, reviewer_records=["task-3-spec-reviewer"], choices=[],
             excluded=[{"finding": self.root_id(), "reason": "moving the guard is its own refactor"}]))
         self.fixed(concerns=[self.root], report="still lists it")
+        self.spec()
         self.triage()
         self.coder(report="dropped it once the decision claimed it")
         self.triage()
@@ -3428,6 +3436,7 @@ class TestUserDecisionsRouteBack(TriageStoreTestCase):
         with self.assertRaises(ledger.RecordError):
             ledger.cmd_resolve(self.store, self.root_id(), "not needed")
         ledger.cmd_resolve(self.store, self.root_id(), "user ruling: leave the guard where it is")
+        self.spec()
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
@@ -3566,6 +3575,7 @@ class TestCloseTriage(CloseStoreTestCase):
     def test_a_waiting_finding_a_narrow_recheck_drops_is_still_decided(self):
         s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4)
         tree = self.fix_round_with(s3, s4)
+        self.commit()
         fid4 = self.fid("close-python-design-reviewer", s4)
         self.design(contests=[{"finding": fid4, "verdict": "concede", "reason": "it holds"}])
         self.triage()
@@ -3648,6 +3658,7 @@ class TestCloseTriage(CloseStoreTestCase):
         s4 = _finding(severity=4)
         fid = self.fid("close-python-design-reviewer", s4)
         self.fix_round_with(s4)
+        self.commit()
         self.design(s4, contests=[{"finding": fid, "verdict": "hold", "reason": "it doesn't"}])
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "decide")
@@ -3682,6 +3693,7 @@ class TestCloseTriage(CloseStoreTestCase):
         _write(self.store, "close-python-coder.json", _coder(
             task="close", cycle=2, baseline=tree, sweeps=[sweep],
             **{**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the sweep"}]}))
+        self.commit()
         self.design()
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
@@ -3740,6 +3752,222 @@ class TestCloseTriage(CloseStoreTestCase):
         ledger.cmd_handle(self.store, "close", "rust-coder", "agent-123")
         text = ledger.render_run_state(ledger.load_progress_log(self.store), [])
         self.assertIn("task close rust-coder: `agent-123`", text)
+
+
+class TestRoundInFlight(TriageStoreTestCase):
+    """A fix round lasts until every record it named has re-checked it:
+    triage run any earlier reprints the round and starts nothing."""
+
+    def states(self) -> dict[str, str]:
+        return {fid: s["state"] for fid, s in
+                ledger.finding_states(ledger.load_progress_log(self.store), 3).items()}
+
+    def test_triage_before_the_recheck_reprints_the_round_and_names_who_owes_it(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        self.fixed(changed_files=["a.py"])
+        out = self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch"])
+        self.assertIn("waiting for: a re-check from task-3-spec-reviewer", out)
+        self.assertEqual(self.states()[fid], "sent")
+        self.spec()
+        self.triage()
+        self.assertEqual((self.entries()[-1]["kind"], self.states()[fid]), ("done", "fixed"))
+
+    def test_a_held_finding_ruled_fix_isnt_held_again_by_the_stale_record(self):
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        self.fixed(contested=[{"finding": fid, "reason": "wrong", "evidence": "a.py:1"}])
+        self.spec(issue, contests=[{"finding": fid, "verdict": "hold", "reason": "no"}])
+        self.triage()
+        _rule(self.store, fid, "fix", "user ruling: fix it anyway")
+        self.triage()
+        self.coder(cycle=3, baseline=_baseline(self.store, 3), changed_files=["a.py"], **_FIX_FIELDS)
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "escalate", "ruling"])
+        self.assertEqual(self.states()[fid], "sent")
+
+    def test_ready_refuses_while_a_finding_awaits_its_recheck(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        _triaged(self.store, 3, kind="done")
+        self.assertTrue(any("awaiting a re-check" in b for b in ledger.ready_blockers(self.store, 3)))
+
+    def test_a_0_15_store_keeps_its_rulings_when_the_user_rules_before_triage(self):
+        waived, held, minor = _finding(), _finding(rule="held rule"), _finding(
+            severity=2, reach="contract", rule="contract nit")
+        wid, hid, mid = (self.spec_id(f) for f in (waived, held, minor))
+        self.spec(waived, held, minor)
+        source = "task-3-spec-reviewer"
+        for n in (1, 2):
+            ledger._append_progress(self.store, {
+                "type": "triage", "task": 3, "kind": "patch", "round": n,
+                "findings": [{"id": wid, "tier": "patch", "rule": "r", "source": source},
+                             {"id": hid, "tier": "patch", "rule": "r", "source": source},
+                             {"id": mid, "tier": "defer", "rule": "r", "source": source}],
+                "held": [], "settled": [], "filed": []})
+        ledger._append_progress(self.store, {"type": "triage", "task": 3, "kind": "escalate",
+                                             "round": 2, "findings": [], "held": [hid],
+                                             "settled": [], "filed": []})
+        ledger._append_progress(self.store, {"type": "resolution", "resolves": wid,
+                                             "note": "user ruling: waive"})
+        _rule(self.store, hid, "drop", "user ruling: drop the held one")
+        self.assertEqual(self.states(), {wid: "dropped", hid: "dropped", mid: "filed"})
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        follow_ups = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                      if n["kind"] == "follow-up"]
+        self.assertEqual(follow_ups, [])
+
+
+class TestCloseRoundInFlight(CloseStoreTestCase):
+    """At the close a fix round lasts until its fix is committed and every
+    gate it named has re-checked it."""
+
+    DESIGN = "close-python-design-reviewer"
+
+    def rule(self, verb: str, *ids: str) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_rule(self.store, list(ids), verb, "user ruling: as discussed")
+
+    def commit(self, test: str = "true") -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, "close", "Fix the close's finding", test, None)
+        return code, out.getvalue()
+
+    def states(self) -> dict[str, str]:
+        return {fid: s["state"] for fid, s in
+                ledger.finding_states(ledger.load_progress_log(self.store), "close").items()}
+
+    def fix(self, cycle: int = 2, files: tuple[str, ...] = ("a.py",), **fields) -> None:
+        for name in files:
+            (self.repo / name).write_text(f"x = {cycle}\n", encoding="utf-8")
+        _write(self.store, "close-python-coder.json", _coder(
+            task="close", cycle=cycle, baseline=_baseline(self.store, "close"),
+            changed_files=list(files), **{**_FIX_FIELDS, **fields}))
+
+    def test_the_close_waits_for_the_fix_commit_then_the_raising_gates_recheck(self):
+        s4 = _finding(severity=4)
+        fid = self.fid(self.DESIGN, s4)
+        self.design(s4)
+        self.triage()
+        self.fix()
+        self.assertIn("waiting for: the fix's commit", self.triage())
+        self.assertEqual(self.commit()[0], 0)
+        self.assertIn(f"waiting for: a re-check from {self.DESIGN}", self.triage())
+        self.assertEqual(([e["kind"] for e in self.entries()], self.states()[fid]), (["patch"], "sent"))
+        self.design()
+        self.triage()
+        self.assertEqual((self.entries()[-1]["kind"], self.states()[fid]), ("done", "fixed"))
+
+    def test_a_failing_test_at_the_fix_commit_is_the_same_attempt_and_every_file_commits(self):
+        (self.repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        self._git("add", "b.py")
+        self._git("commit", "-qm", "b")
+        self.design(_finding(severity=4))
+        self.triage()
+        self.fix(files=("a.py",))
+        self.assertEqual(self.commit("false")[0], 1)
+        out = self.triage()
+        self.assertIn("waiting for: the fix's commit", out)
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch"])
+        self.assertFalse(any(fid.startswith("close-gate") for fid in self.states()))
+        self.fix(files=("b.py",))
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(self._git("show", "--name-only", "--format=", "HEAD").split()),
+                         ["a.py", "b.py"])
+
+    def test_a_round_two_gates_owe_waits_for_both(self):
+        s4, unmet = _finding(severity=4), _finding(severity=2, statement=1)
+        self.design(s4)
+        self.intent([_statement(1, "not-met")], [unmet])
+        self.triage()
+        self.fix()
+        self.commit()
+        self.design()
+        self.assertIn("waiting for: a re-check from close-intent-reviewer", self.triage())
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch"])
+        self.intent([_statement(1)])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_round_that_changed_nothing_still_lands_and_is_rechecked(self):
+        s4 = _finding(severity=4)
+        fid = self.fid(self.DESIGN, s4)
+        self.design(s4)
+        self.triage()
+        self.fix(files=(), contested=[self.contest(fid)])
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.design(contests=[{"finding": fid, "verdict": "concede", "reason": "it holds"}])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_ruled_off_finding_may_be_raised_again_and_stays_ruled(self):
+        n1 = _finding(severity=3, statement=1, rule="ask one")
+        n2 = _finding(severity=3, statement=2, rule="ask two")
+        for n in (1, 2):
+            ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "patch",
+                                                 "round": n, "findings": [], "settled": []})
+        self.intent([_statement(1, "not-met"), _statement(2, "not-met")], [n1, n2])
+        self.triage()
+        id1, id2 = self.fid("close-intent-reviewer", n1), self.fid("close-intent-reviewer", n2)
+        self.rule("drop", id1)
+        self.rule("fix", id2)
+        self.triage()
+        self.fix()
+        self.commit()
+        self.intent([_statement(1, "not-met"), _statement(2)], [n1])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self.states(), {id1: "dropped", id2: "fixed"})
+
+    def test_a_filed_finding_ruled_fix_may_be_raised_by_the_recheck(self):
+        b, c = _finding(rule="b rule"), _finding(rule="c rule")
+        bid, cid = self.fid(self.DESIGN, b), self.fid(self.DESIGN, c)
+        self.design(b, c)
+        self.triage()
+        self.rule("file", bid)
+        self.rule("fix", cid)
+        self.triage()
+        self.rule("fix", bid)
+        self.fix()
+        self.commit()
+        self.design(b)
+        self.triage()
+        last = self.entries()[-1]
+        self.assertEqual((last["kind"], [f["id"] for f in last["findings"]]), ("ruling", [bid]))
+
+    def test_a_waiting_finding_keeps_its_claim_after_a_narrow_recheck(self):
+        s3, s4 = _finding(claim="the cache never evicts"), _finding(severity=4, rule="r4")
+        s3_id = self.fid(self.DESIGN, s3)
+        self.design(s3, s4)
+        self.triage()
+        self.fix()
+        self.commit()
+        self.design()
+        self.triage()
+        self.rule("fix", s3_id)
+        self.triage()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, _baseline(self.store, "close"), "close")
+        self.assertIn("the cache never evicts", out.getvalue())
+
+    def test_a_finished_close_names_only_clearing(self):
+        self.design()
+        self.triage()
+        with self.assertRaises(ledger.RecordError) as ctx:
+            ledger.cmd_close_round(self.store, "again.md", "head")
+        self.assertNotIn("promote", str(ctx.exception))
+        self.assertIn("clear", str(ctx.exception))
 
 
 class TestEndToEnd(TriageStoreTestCase):

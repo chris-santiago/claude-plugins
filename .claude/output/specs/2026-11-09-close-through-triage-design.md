@@ -34,8 +34,8 @@ The completion close (`verification-before-completion`: design reviewers, intent
 | State | Meaning |
 |---|---|
 | `fix` | must be fixed; not yet sent to a coder |
-| `sent` | in a fix round, carrying the round and the raising record's digest at the send |
-| `held` | its reviewer held the coder's contest; the user decides |
+| `sent` | in a fix round, awaiting its re-check; carries the round and the raising record's version at the send |
+| `held` | its reviewer held the coder's contest; the user decides; carries the record's version at the hold |
 | `waiting` | the user decides (a close finding below the blocking line, or any open finding once the fix rounds are spent) |
 | `note` | a task's minor finding, for the coder to fix or skip alongside a round |
 | `noted` | a note sent to a coder (final) |
@@ -43,16 +43,18 @@ The completion close (`verification-before-completion`: design reviewers, intent
 | `fixed` | its reviewer re-checked without raising it, or conceded its contest (final) |
 | `dropped` | the user dropped it |
 
-**First sighting.** The first time triage sees an id, its state comes from the rule of its scope. In a task: S1–S2 local or class is `note`, S1–S2 contract is `filed` (triage files its follow-up), and S3+ is `fix` (routed patch, or holistic at contract reach or a reach the coder raised). At the close: an intent `not-met`, S4–S5 or a failing commit gate is `fix`; everything else is `waiting`. A final finding raised again counts only with `reopens` (as today, `check` refuses an unchanged re-raise), and then starts over at its first-sighting state.
+**First sighting.** The first time triage sees an id, its state comes from the rule of its scope. In a task: S1–S2 local or class is `note`, S1–S2 contract is `filed` (triage files its follow-up), and S3+ is `fix` (routed patch, or holistic at contract reach or a reach the coder raised). At the close: an intent `not-met`, S4–S5 or a failing commit gate is `fix`; everything else is `waiting`. A `fixed` finding raised again unchanged is refused by `check`; the problem coming back is a new finding marked `reopens` (naming a `fixed`, `dropped` or `filed` finding, at a site changed since it settled), which starts at its first-sighting state. A `dropped` or `filed` finding raised again is accepted and stays as ruled.
 
-**Observation.** On each triage, for a `sent` finding: a concede makes it `fixed`, a hold makes it `held`, and a raising record rewritten since the send (its digest changed) makes it `fixed` when the finding is gone and `fix` again when it is still raised. A concede also closes a `held` finding. Unsent findings (`fix`, `held`, `waiting`, `note`) are unaffected by records that don't mention them.
+**Observation.** Only a re-check changes a finding: its raising record written since the finding was sent or held. A record's version is its last write plus its content digest, so a re-check with the same content still counts. Then a `sent` finding is `fixed` when gone, `held` on a hold, `fixed` on a concede, and `fix` again when still raised; a concede also closes a `held` finding. Without a re-check nothing changes, so a stale concede or hold can't act on a finding sent again. Other states (`fix`, `waiting`, `note` and the final ones) are never changed by records.
+
+**The round in flight.** A fix step's round lasts until its coder has finished, at `final` and the close until `commit` has landed its fix, and until every record it named (`awaiting` on its entry: the reviewers it re-dispatches, and the gate for a gate finding) has been written again. Until then triage reprints the step with what it is waiting for and starts nothing, so no step can pass a finding that was never re-checked. `ready` also refuses while any finding is `sent`.
 
 **Rulings.** The user's decisions on findings go through one command, `ledger.py rule <id>... --as fix|file|drop --note "user ruling: ..."`, in both scopes. `fix` makes the finding `fix`; `file` files its follow-up (carrying its id, raising record, report path and rule) and makes it `filed`; `drop` makes it `dropped`. A later ruling replaces an earlier one: ruling `fix` or `drop` on a `filed` finding resolves its follow-up. A finding already `fixed`, or in a completed task or a finished close, can't be ruled. `resolve` refuses a finding id and names `rule`. Open behavior choices and `root cause:` concerns aren't findings: they keep `resolve`, and an override of an open choice stays a progress note.
 
 **The step.** Triage derives the step from the states, the scope's earlier entries, the coder's root causes and (at the close) the can't-tell statements:
 
 1. At the close, an open can't-tell is `clarify` (re-check `intent`, no round, no snapshot), before anything else. A finished close stays `done`.
-2. A `fix` ruling since the last entry, after an `escalate` (task) or `decide` (close), starts a `ruling` round sending the `fix` findings. In a task, an override of an open choice after `done` starts a ruling round re-checked by the spec reviewer, as today.
+2. A finding the user ruled `fix` (its latest entry is the user's) starts a `ruling` round right after an `escalate` (task) or `decide` (close), or once the rounds are spent; past the cap the round sends only the ruled findings, and other `fix` findings become `waiting`. Before the cap, a ruled finding simply joins the next round. In a task, an override of an open choice after `done` starts a ruling round re-checked by the spec reviewer, as today.
 3. Open `fix` findings or root causes start a `patch` or `holistic` round, sending them (and, in a task, the pending notes). After two such rounds, or after a ruling round, they become `waiting` instead, and the step is `escalate` in a task or `decide` at the close.
 4. Otherwise, `held` or `waiting` findings make the step `escalate` (task) or `decide` (close): the user rules each with `rule`.
 5. Otherwise, in a task, pending notes or an undelivered note is `polish`.
@@ -60,9 +62,9 @@ The completion close (`verification-before-completion`: design reviewers, intent
 
 The entry records the step, the sent findings with their tiers (what `check` holds the fix to), the held, waiting and settled ids (`fixed`, `dropped`, `filed`), and the coder deferrals it filed. Coder deferrals (skipped notes, sites outside the fix, excluded root causes) are filed as follow-ups when triage first sees them, in both scopes.
 
-**Stores from 0.15.** A scope with triage entries but no finding entries gets its finding states seeded once from its latest entries (settled ids `fixed`, held `held`, filed `filed`, the last round's sent findings `sent`), then continues under these rules.
+**Stores from 0.15.** A scope with triage entries but no finding entries gets its finding states seeded from its latest entries (settled ids `fixed`, waived ids `dropped`, held `held`, filed `filed`, the last round's sent findings `sent`). The first write to the scope, a `rule` or a triage, persists the seed under the store lock before its own entry, then the scope continues under these rules.
 
-**Fixing at the close.** A fix round's coder writes `close-<coder>.json` (its first close fix is cycle 2, like the first fix at `final`), works from the baseline triage printed, and its fix is committed with `ledger.py commit --task close`, which commits a finished fix without completing anything. Re-check is `raising`: only the gates whose findings were sent re-check, given the round's `Fix baseline` and the settled ids, and they judge the fix diff and its consumers. The close is finished at its `done` entry.
+**Fixing at the close.** A fix round's coder writes `close-<coder>.json` (its first close fix is cycle 2, like the first fix at `final`), works from the baseline triage printed, and its fix is committed with `ledger.py commit --task close`, which commits a finished fix without completing anything. That commit adds the coder's changed files to the scope's footprint in the log, so a file an earlier attempt changed is still gated and committed, and logs the fix as landed. A labels, lint or test failure there goes back to the coder as the same attempt; a fix that changed nothing (every finding contested) lands without a commit. The same holds at `final`. Re-check is `raising`: only the gates whose findings were sent re-check, given the round's `Fix baseline` and the settled ids, and they judge the fix diff and its consumers. The close is finished at its `done` entry.
 
 **Plan coverage check.** As lean-plan's last step, when the plan cites a spec, the `spec-reviewer` runs in plan coverage mode with only the spec and the plan. Its report lists each spec requirement no task covers and each task doing work the spec doesn't ask for, with a verdict `PASS` or `GAPS`. The planner closes each gap (add or extend a task, or the user cuts it from the spec) and re-dispatches once; anything left goes to the user. The plan then carries a `Spec coverage:` line (§6). `task_brief.py --spec <spec>` refuses a plan without a valid line for that spec. A plan with no spec skips the check.
 
@@ -106,15 +108,17 @@ statements: [{"statement": int,          # 1-based index in the intent ledger
 {"type": "finding", "task": <N | "final" | "close">, "id": <finding id>,
  "state": "fix" | "sent" | "held" | "waiting" | "note" | "noted" | "filed" | "fixed" | "dropped",
  "by": "triage" | "user",
- "data": {source, severity, reach, rule, sites, not_met, gate},   # on the id's first entry
- "round": int, "seen": <raising record digest>,                     # on a sent entry
+ "data": {source, severity, reach, rule, sites, claim, not_met, gate},  # on the id's first entry
+ "round": int,                                                        # on a sent entry
+ "seen": <raising record version>,                                    # on a sent or held entry
+ "tree": <work tree>,                                                 # where it settled (fixed, dropped, filed)
  "note": "user ruling: ...",                                        # on a user entry
  "at": <timestamp>}
 ```
 
 **`rule` command.** `ledger.py rule <id>... --as fix|file|drop --note "user ruling: ..." [--store DIR]`: refuses an id with no finding entry, a note not starting `user ruling:`, a `fixed` finding, and a finding of a completed task or a finished close.
 
-**Triage entry.** As before (`kind`, `round`, `recheck`, `findings` sent with tiers, `held`, `settled`, `filed`, `recheck_records`, `inputs`, telemetry), plus `waiting`. New kinds: `clarify` (close: re-check `intent`, no snapshot, no round) and `decide` (close: no re-check, no snapshot, no round).
+**Triage entry.** As before (`kind`, `round`, `recheck`, `findings` sent with tiers, `held`, `settled`, `filed`, `recheck_records`, `inputs`, telemetry), plus `waiting` and, on a fix step, `awaiting` (`{record stem: version at the step}`). A landed final or close fix appends `{"type": "fix_commit", "task", "commit"}`. New kinds: `clarify` (close: re-check `intent`, no snapshot, no round) and `decide` (close: no re-check, no snapshot, no round).
 
 **Paths.** `PATH_SCOPES` becomes `final`, `close`. `--task gate` and `--task ruling` fail with a message naming `--task close`. Records and decisions at the close: `close-<agent>`, `close-decision-c<N>`. `final-r2` naming is removed.
 
@@ -132,6 +136,7 @@ Spec coverage: <spec path> — user ruling: <verbatim> (<report path>)
 ## 7. Invariants and constraints
 
 - Every finding has exactly one current state, its latest finding entry; no record rewrite changes a state except through the observation rules in §4.
+- No step is taken while a fix round is in flight (§4), so no scope reaches `done` with a `sent` finding.
 - The orchestrator writes no finding and assigns no state; triage and the user's `rule` command do.
 - A finding is filed at most once at a time: a `file` ruling or a task's S1–S2 contract tier files it, and a later ruling resolves that follow-up.
 - The per-task loop's routing (tiers, two-round cap, notes, contests, holistic rounds) and `check`'s rules for a fix behave as in 0.15.0; tests that drove the loop through its records keep passing, with waivers moved from `resolve` to `rule`.
@@ -152,6 +157,8 @@ Spec coverage: <spec path> — user ruling: <verbatim> (<report path>)
 - **`close` is its own scope,** separate from `final`, so the whole-change gate's rounds and the close's rounds are counted apart.
 - **Plan coverage before the build,** over a spec reviewer at the close or dropping the check: a missing requirement starts at planning, and the check reads two documents instead of a whole change. It reuses `spec-reviewer`.
 - **Enforcement at `task_brief.py --spec`:** deterministic and already the SDD entry point; inline execution relies on lean-plan's step.
+- **A record's version is its write, not its content,** so an identical re-check (the same finding still raised) still counts; a content digest alone would leave such a round waiting forever.
+- **A failing gate at a final or close fix's commit is the coder's same attempt,** like labels and lint: the re-check can't run before the fix commits, so a new round there would only race the re-check.
 - **Seed 0.15 task stores, don't convert a close:** an in-flight task keeps its waivers and holds; a close restarts cheaply.
 
 ## 9. Acceptance criteria
@@ -163,7 +170,10 @@ Spec coverage: <spec path> — user ruling: <verbatim> (<report path>)
 - Two fix rounds that leave findings open turn them `waiting` (task `escalate`, close `decide`); `rule <id> --as fix` starts a ruling round sending only those; a failed ruling round turns them `waiting` again.
 - A ruling of `file` or `drop` never starts a round; a later ruling replaces an earlier one, and ruling `fix` on a `filed` finding resolves its follow-up.
 - In a task, waivers, held contests, notes and the S1–S2 contract deferral behave as in 0.15.0, with the waiver given by `rule --as drop`.
-- A 0.15 task store with triage entries and no finding entries is seeded, and a waived finding stays waived.
+- A 0.15 task store with triage entries and no finding entries is seeded, and a waived finding stays waived, also when the user's first act on it is a `rule`.
+- Triage run after a fix but before its commit (final, close) or its re-check reprints the round, logs nothing, and names what it waits for; with two gates owed, it waits for both. A stale hold never re-holds a finding the user ruled `fix`.
+- A failing test at a close fix's commit leaves the round open; the coder's next attempt commits every file either attempt changed.
+- A re-check may raise a finding the user dropped or filed (it stays as ruled); a `fix` ruling after a failed ruling round starts another ruling round; a waiting finding's claim reaches the coder after its record was rewritten.
 - `check` refuses each malformed close record listed in §6; `rule` refuses each case listed in §6; `resolve` refuses a finding id.
 - `task_brief.py --spec S` refuses a plan with no `Spec coverage:` line, one naming another spec, and one whose report is missing, and accepts a valid pass line and a valid user-ruling line.
 - A coder's `notes_skipped` naming `note#run-note[...]` or `note#task-note[...]` files nothing; a skipped reviewer note is still filed.

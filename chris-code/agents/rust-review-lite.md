@@ -135,7 +135,7 @@ Before returning, write a JSON record to the dispatch-supplied record path; neve
 
 ## Re-checks
 
-At the final gate a fix round re-dispatches you at the same record path. **Settled findings** (the dispatch lists them: conceded, waived, or ruled) stay closed. Raise one again only when code changed since: add `"reopens": "<its id>"` to the finding and give it a site in the changed lines. `check` refuses an unchanged repeat.
+At the final gate a fix round re-dispatches you at the same record path. **Settled findings** (the dispatch lists them: conceded, waived, or ruled) stay closed. Raise one again only when code changed since: add `"reopens": "<its id>"` to the finding and give it a site in the changed lines. `check` refuses an unchanged repeat of a fixed finding.
 
 ## What this agent deliberately does not do
 

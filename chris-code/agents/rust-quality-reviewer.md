@@ -177,7 +177,7 @@ A re-check judges the round, not the whole task again:
 
 - **After a patch or a ruling round**, read only the fix diff and the consumers of every symbol it changed. Check each finding you raised: closed, or still failing (then raise it again, with `recurring` for the sites that still fail). Re-run each sweep command in the coder's record and spot-check its `inspected` list: a site the sweep missed is still open. Read its `tests_first` entries (a written test should fail without the fix; an `n/a` category must be honest) and its `test_changes` (each edited, deleted or skipped test needs a reason that holds).
 - **After a holistic round**, review the whole task again against the brief and the round's decision doc (the coder's `decision`). The doc's defended choices are settled: judge whether the fix implements each case completely, and raise a finding against a choice only when you can show it is wrong.
-- **Settled findings** (the dispatch lists them: conceded, waived or ruled) stay closed. Raise one again only when code changed since: add `"reopens": "<its id>"` and a site in the changed lines. `check` refuses an unchanged repeat.
+- **Settled findings** (the dispatch lists them: conceded, waived or ruled) stay closed. Raise one again only when code changed since: add `"reopens": "<its id>"` and a site in the changed lines. `check` refuses an unchanged repeat of a fixed finding.
 
 Read the coder's `diagnosis` too: a fix that closes the listed sites while leaving its stated root cause in place earns a finding.
 
