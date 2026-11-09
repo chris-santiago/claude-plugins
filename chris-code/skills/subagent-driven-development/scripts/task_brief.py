@@ -592,6 +592,42 @@ def _split_rows(value: str) -> list[str]:
     return rows
 
 
+# lean-plan records its coverage check in the plan header:
+#   Spec coverage: <spec> — pass (<report>)
+#   Spec coverage: <spec> — user ruling: <verbatim> (<report>)
+SPEC_COVERAGE_RE = re.compile(
+    r"^Spec coverage:\s*(?P<spec>\S+)\s+[—-]\s+(?P<verdict>pass|user ruling:.+?)"
+    r"\s+\((?P<report>[^()]+)\)\s*$", re.MULTILINE)
+
+
+def _plan_relative(value: str, plan_path: Path) -> list[Path]:
+    """Where a path in the plan can point: as written when absolute, else
+    from the current directory (the repo root) or the plan's own folder."""
+    given = Path(value)
+    if given.is_absolute():
+        return [given.resolve()]
+    return [(Path.cwd() / given).resolve(), (plan_path.parent / given).resolve()]
+
+
+def validate_spec_coverage(plan_text: str, plan_path: Path, spec: str) -> None:
+    """A brief built against a spec needs the plan's `Spec coverage:` line
+    for that spec: lean-plan's coverage check passed, or the user accepted
+    its gaps, and the report it names exists."""
+    target = Path(spec).resolve()
+    for match in SPEC_COVERAGE_RE.finditer(plan_text):
+        if target not in _plan_relative(match["spec"], plan_path):
+            continue
+        if not any(p.is_file() for p in _plan_relative(match["report"], plan_path)):
+            raise BriefValidationError(
+                f"Spec coverage: the report {match['report']!r} doesn't exist; re-run "
+                "lean-plan's coverage check and record where its report landed")
+        return
+    raise BriefValidationError(
+        f"the plan has no `Spec coverage: {spec} — pass (<report>)` line: run lean-plan's "
+        "coverage check (spec-reviewer in plan coverage mode) and record its verdict, or "
+        "the user's ruling on its gaps, before building briefs")
+
+
 def validate_verify(task_entry: str, task_n: str) -> None:
     """Raise BriefValidationError unless the entry has a `Verify:` line
     outside a code fence and every such line carries a backticked command:
@@ -715,6 +751,7 @@ def run(request: BriefRequest) -> Path:
 
     if request.spec is not None:
         _require_existing_file(request.spec, "spec file")
+        validate_spec_coverage(plan_text, plan_path, request.spec)
     validate_consumes(task_entry, request.spec)
     validate_cases(task_entry)
     validate_verify(task_entry, request.task_n)

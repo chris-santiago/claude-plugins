@@ -29,6 +29,8 @@ TASK_BRIEF_PY = SCRIPTS_DIR / "task_brief.py"
 
 PLAN_TEXT = """# Fixture Plan
 
+Spec coverage: spec.md — pass (coverage.md)
+
 ## 4. Constraints
 
 - Non-negotiable invariant one.
@@ -87,6 +89,7 @@ class TaskBriefTestCase(unittest.TestCase):
         self.plan_path = self.tmp / "plan.md"
         self.spec_path = self.tmp / "spec.md"
         self.spec_path.write_text(SPEC_TEXT, encoding="utf-8")
+        (self.tmp / "coverage.md").write_text("PASS\n", encoding="utf-8")
 
     def _cd(self, path: Path) -> None:
         """Temporarily chdir for tests that exercise a genuinely relative
@@ -114,6 +117,41 @@ class TaskBriefTestCase(unittest.TestCase):
         )
         base.update(overrides)
         return task_brief.BriefRequest(**base)
+
+
+# --- the plan's Spec coverage: line (lean-plan's coverage check) ---
+
+class TestSpecCoverage(TaskBriefTestCase):
+    PLAIN = PLAN_TEXT.replace("§6 → `{consumed_path}`", "nothing")
+
+    def build(self, coverage_line: str | None) -> Path:
+        plan = self.PLAIN.replace("Spec coverage: spec.md — pass (coverage.md)\n",
+                                  "" if coverage_line is None else coverage_line + "\n")
+        self.plan_path.write_text(plan, encoding="utf-8")
+        return task_brief.run(self._args(spec=str(self.spec_path)))
+
+    def test_a_pass_line_or_a_user_ruling_line_for_the_spec_builds_the_brief(self):
+        for line in ("Spec coverage: spec.md — pass (coverage.md)",
+                     f"Spec coverage: {self.spec_path} — pass ({self.tmp / 'coverage.md'})",
+                     "Spec coverage: spec.md — user ruling: drop the export row (coverage.md)"):
+            with self.subTest(line):
+                self.assertTrue(self.build(line).is_file())
+
+    def test_a_missing_or_wrong_line_is_refused(self):
+        cases = {"no line": None,
+                 "another spec": "Spec coverage: other-spec.md — pass (coverage.md)",
+                 "a missing report": "Spec coverage: spec.md — pass (nowhere.md)",
+                 "no verdict": "Spec coverage: spec.md (coverage.md)"}
+        for label, line in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(task_brief.BriefValidationError) as ctx:
+                    self.build(line)
+                self.assertIn("Spec coverage", str(ctx.exception))
+
+    def test_no_spec_means_no_check(self):
+        self.plan_path.write_text(self.PLAIN.replace(
+            "Spec coverage: spec.md — pass (coverage.md)\n", ""), encoding="utf-8")
+        self.assertTrue(task_brief.run(self._args()).is_file())
 
 
 # --- extract_task_entry (fence-aware "Task N" heading match) ---
