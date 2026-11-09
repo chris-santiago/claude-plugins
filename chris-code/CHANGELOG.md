@@ -8,6 +8,24 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-09
+
+### Changed
+- **The completion close goes through triage.** The close's gates (the design reviewers, the intent reviewer, and the mutation tester when you choose it) now write typed records beside their reports, and `ledger.py triage --task close` decides every step from them, as it does for a task. Before, the orchestrator sorted each close finding as trivial, test-only, separable or non-trivial by its own judgment, and every round's fixes became a new remediation plan and SDD run.
+- **Only an intent not-met or an S4+ finding blocks the close.** A failing commit gate blocks too. Everything else (design findings below S4, mutation survivors, minor intent findings) is filed once as a follow-up carrying its rule, the record that raised it and its report path, and nothing below the line reaches a coder.
+- **Blocking findings are fixed in place.** A coder fixes each from the baseline triage takes (a holistic round first gets one decision doc from the per-task `remediating-issues` variant), `ledger.py commit --task close` commits the fix without completing anything, and only the gate that raised the finding re-checks it, over the fix diff. The mutation tester re-checks only a survivor it raised, over the fix's commit.
+- **Two fix rounds, then you.** After two rounds with blocking work open, the close escalates: a ruling on `--task close` starts a ruling round, and resolving a finding with `user ruling: defer ...` files it as a follow-up instead of dropping it. At the close batch, a filed close finding you mark fix reopens in the close as a ruling round.
+- **An intent statement the reviewer couldn't judge gets a `clarify` step:** the reviewer is re-sent with the access its record names, and no round is spent. You can settle one directly by resolving `close-intent-reviewer#statements[<n>]`.
+- **`close-round --note` starts the close once** and records the HEAD its gates review; it refuses while an earlier close hasn't reached `done`. Its `--expect` round protocol is retired, as are the `gate` and `ruling` path scopes (all close files are `close-<agent>`), the `final-r2` record names and `remediating-issues`' close-gate variant.
+- **`run-state` shows the close.** Its verdicts are now `fresh`, `resume`, `closing`, `finished`, `foreign` and `ambiguous`, and once the close starts it lists the close's steps, your rulings on it and what was deferred.
+- **The close's requirements check moved before the build.** When a plan cites a spec, `lean-plan` has the `spec-reviewer`, in a new plan coverage mode, check that every spec requirement reaches a task and no task goes beyond the spec. The plan records the result in a `Spec coverage:` line, and `task_brief.py --spec` refuses to build a brief without it.
+- **Close rulings stay out of coders' way.** A ruling about the close is logged on `--task close` (the mutation-gate answer included), never as a run-note, since a run-note reaches every coder in flight and holds its task until delivered.
+- The completion gate is renumbered: Step 4 is the intent re-check and Step 5 the mutation re-check.
+
+### Fixed
+- **A coder's skipped run-note or task-note is no longer filed as a follow-up.** Skipping a note that doesn't apply to the code defers nothing, so it no longer adds an empty follow-up to the close batch.
+- The guide's copy under `assets/decks` matches the published guide again.
+
 ## [0.15.0] - 2026-11-06
 
 ### Added

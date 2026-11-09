@@ -215,11 +215,11 @@ Derived from [obra/superpowers](https://github.com/obra/superpowers), redesigned
 <div class="vchev">↓</div>
 <div class="vbar v2">2 · Lints — zero errors / warnings</div>
 <div class="vchev">↓</div>
-<div class="vbar v3">Close round: 3 Design + 4 Reqs + 5 Intent + 6 Mutation (if chosen)</div>
+<div class="vbar v3">Close: 3 Design + 4 Intent + 5 Mutation (if chosen)</div>
 <div class="vchev">↓</div>
-<div class="vbar v4">Triage once · non-trivial → close-gate remediation</div>
+<div class="vbar v4">Triage: not-met / S4+ fixed in place · rest filed</div>
 <div class="vchev">↓</div>
-<div class="vbar v5">Round 2 re-runs what changed · max 2, then you</div>
+<div class="vbar v5">Raising gate re-checks · two fix rounds, then you</div>
 <div class="vchev">↓</div>
 <div class="vdone">✓ may claim done</div>
 </div>

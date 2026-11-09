@@ -237,7 +237,7 @@ Where muscle memory will mislead you. Framed before → after:
 |---|---|---|
 | **writing-plans** | the plan skill: exhaustive, full code per step | slimmed to `lean-plan`; spec → `lean-spec` |
 | **subagent-driven-development** | 2-stage review; parallel discouraged | 3 gates/task (review → scripted triage → commit gate), scope dispatch, staged parallelism |
-| **verification-before-completion** | "what command proves this? run it" | tests → lints, then design review, requirements, spec-blind intent and mutation together as one close round, triaged once (max 2 rounds) |
+| **verification-before-completion** | "what command proves this? run it" | tests → lints, then design review, spec-blind intent and mutation together as one close, routed by triage (blocking findings fixed in place, max 2 fix rounds) |
 | **requesting-code-review** | primary, mandatory path | demoted to ad-hoc; base `HEAD~1` → `merge-base HEAD main` |
 
 ---
@@ -254,7 +254,7 @@ Where muscle memory will mislead you. Framed before → after:
 <div class="arow">2 design-reviewers (<code>python</code> / <code>rust</code>) — senior cohesion at the verification gate</div>
 <div class="arow">2 conformance reviewers — <code>spec-reviewer</code> (promoted from a prompt template) + <code>intent-reviewer</code> (spec-blind, new)</div>
 <div class="arow"><code>bug-hunter</code> — adversarial edge-case tests · <code>claim-checker</code> — settles a cannot-verify item by quoting code</div>
-<div class="arow"><code>mutation-tester</code> — polyglot mutation gate in an isolated worktree (Step 6 / on-demand)</div>
+<div class="arow"><code>mutation-tester</code> — polyglot mutation gate in an isolated worktree (Step 5 / on-demand)</div>
 
 ---
 

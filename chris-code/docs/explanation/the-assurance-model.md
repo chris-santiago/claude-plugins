@@ -4,18 +4,19 @@ chris-code runs a lot of review gates. It's tempting to read a green pipeline as
 
 ## The completion gate, concretely
 
-`verification-before-completion` has six steps. Tests and lints run first, and a failure there is fixed before anything else runs. The four review steps then run together as one close round (below the list):
+`verification-before-completion` has five steps. Tests and lints run first, and a failure there is fixed before anything else runs. The three review steps then run together as one close (below the list):
 
 1. **Tests** — the full suite, zero failures. Not a subset, not "the tests I think are relevant."
 2. **Lints** — the project linter, zero errors or warnings.
 3. **Full review** — the scope-matched `*-design-reviewer` agents, read-only, returning PASS or CONCERNS.
-4. **Requirements** — every spec/plan requirement traced to the code that implements it and a test that verifies it, with nothing implemented that wasn't asked for.
-5. **Intent re-check** — the spec-blind `intent-reviewer` compares the running system to the frozen intent ledger.
-6. **Mutation re-check** — the `mutation-tester` agent, in an isolated worktree, deliberately breaks the changed code and confirms a test fails, reverting each break. It uses no external mutation-testing tool (it edits the code and runs the project's own tests, so it is language-agnostic) and gates when a test executes changed code but doesn't fail when it's broken — a trivial test that proves nothing. Runs when the change includes testable source and you choose to run it. The close asks first, since it can take hours. Each task's quality reviewers already run a smaller **break check**: they break the behavior a sample of the task's new or changed tests claim to check, and raise S3 for any test that still passes.
+4. **Intent re-check** — the spec-blind `intent-reviewer` compares the running system to the frozen intent ledger.
+5. **Mutation re-check** — the `mutation-tester` agent, in an isolated worktree, deliberately breaks the changed code and confirms a test fails, reverting each break. It uses no external mutation-testing tool (it edits the code and runs the project's own tests, so it is language-agnostic) and gates when a test executes changed code but doesn't fail when it's broken — a trivial test that proves nothing. Runs when the change includes testable source and you choose to run it. The close asks first, since it can take hours. Each task's quality reviewers already run a smaller **break check**: they break the behavior a sample of the task's new or changed tests claim to check, and raise S3 for any test that still passes.
 
-Steps 3, 5, and 6 are independent read-only reviews of the same committed HEAD, so they are dispatched together as one **close round**, with the Step 4 trace done alongside, and every finding is triaged once. Trivial findings are fixed inline; the non-trivial set goes through `remediating-issues` as one batch, and a second round re-checks only what that remediation could have changed. The cap is two rounds: whatever non-trivial work survives goes to you. [The close round](execution-mechanics.md#the-close-round) has the details.
+Steps 3, 4, and 5 are independent read-only reviews of the same committed HEAD, so they are dispatched together as one **close**, and `ledger.py triage --task close` routes every finding from their typed records. An intent not-met or an S4+ finding is fixed in place and re-checked by the gate that raised it; everything else is filed for you to decide at the close batch. After two fix rounds, whatever still blocks comes to you. [The close](execution-mechanics.md#the-close) has the details.
 
-A **PASS is not "nothing to do."** A gate can pass while carrying findings, and **PASS-with-findings is not clean**: each finding is verified real (via `receiving-code-review` — neither reflexively obeyed nor dismissed), then in-scope findings are fixed *in this change* and only a genuinely separable, larger improvement is deferred (filed as a follow-up note and listed in the completion report). Shipping an in-scope finding as "TODO: later" defeats the gate. The rest of this page is about *what those six steps do and don't prove*.
+Whether the plan covers the spec is checked earlier, before any code exists: `lean-plan` has the `spec-reviewer` confirm in plan coverage mode that every spec requirement reaches a task, and a brief can't be built against the spec until the plan records the result.
+
+A **PASS is not "nothing to do."** A gate can pass while carrying findings, and **PASS-with-findings is not clean**: findings below the blocking line are filed, not forgotten, and the close batch puts each one to you with a recommendation: in-scope findings should be fixed *in this change*, and only a genuinely separable, larger improvement deferred. Shipping an in-scope finding as "TODO: later" defeats the gate. The rest of this page is about *what those five steps do and don't prove*.
 
 ## More passes raise recall, not residual assurance
 
@@ -25,7 +26,7 @@ The consequence: more passes surface **more** issues (higher recall), but a clea
 
 ## Conformance is not correctness
 
-Every spec-anchored gate answers "does the code match the spec?" None of them asks "is the spec *right*?" A build can pass spec review, design review, and requirements tracing while faithfully implementing a spec that drifted from what you actually asked for.
+Every spec-anchored gate answers "does the code match the spec?" None of them asks "is the spec *right*?" A build can pass spec review, design review, and a spec coverage check while faithfully implementing a spec that drifted from what you actually asked for.
 
 That gap is why chris-code separates **intent** from **conformance**:
 

@@ -167,16 +167,15 @@ chris-code runs many review gates, and is **deliberately honest that green ≠ c
 
 ## The completion gate
 
-`verification-before-completion` runs 1–2, then 3–6 as one **close round** (max two).
+`verification-before-completion` runs 1–2, then 3–5 as one **close**, routed by triage.
 
 1. **Tests** — full suite, zero failures
 2. **Lints** — zero errors or warnings
 3. **Design review** — senior `*-design-reviewer` agents → PASS / CONCERNS
-4. **Requirements** — every spec item traced to code *and* a test
-5. **Intent re-check** — a **spec-blind** `intent-reviewer` compares shipped behavior to your frozen ledger
-6. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change; the close asks before running it, since it can take hours
+4. **Intent re-check** — a **spec-blind** `intent-reviewer` compares shipped behavior to your frozen ledger
+5. **Mutation re-check** — a `mutation-tester` agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change; the close asks before running it, since it can take hours
 
-A **PASS is not "nothing to do":** it can carry findings, and PASS-with-findings is not clean. The one gate that never reads the spec — step 5 — is the one that catches a spec that drifted from the ask.
+A **PASS is not "nothing to do":** it can carry findings, and PASS-with-findings is not clean. The one gate that never reads the spec — step 4 — is the one that catches a spec that drifted from the ask.
 
 ---
 

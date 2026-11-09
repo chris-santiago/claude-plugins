@@ -746,16 +746,15 @@ section.lead h1 {
 }
 ;" data-marpit-pagination-total="19">
 <h2 id="the-completion-gate">The completion gate</h2>
-<p><code>verification-before-completion</code> runs 1–2, then 3–6 as one <strong>close round</strong> (max two).</p>
+<p><code>verification-before-completion</code> runs 1–2, then 3–5 as one <strong>close</strong>, routed by triage.</p>
 <ol>
 <li><strong>Tests</strong> — full suite, zero failures</li>
 <li><strong>Lints</strong> — zero errors or warnings</li>
 <li><strong>Design review</strong> — senior <code>*-design-reviewer</code> agents → PASS / CONCERNS</li>
-<li><strong>Requirements</strong> — every spec item traced to code <em>and</em> a test</li>
 <li><strong>Intent re-check</strong> — a <strong>spec-blind</strong> <code>intent-reviewer</code> compares shipped behavior to your frozen ledger</li>
-<li><strong>Mutation re-check</strong> — a <code>mutation-tester</code> agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change</li>
+<li><strong>Mutation re-check</strong> — a <code>mutation-tester</code> agent mutates the changed lines in an isolated worktree and gates on any test that runs the code but detects no change; the close asks before running it, since it can take hours</li>
 </ol>
-<p>A <strong>PASS is not &quot;nothing to do&quot;:</strong> it can carry findings, and PASS-with-findings is not clean. The one gate that never reads the spec — step 5 — is the one that catches a spec that drifted from the ask.</p>
+<p>A <strong>PASS is not &quot;nothing to do&quot;:</strong> it can carry findings, and PASS-with-findings is not clean. The one gate that never reads the spec — step 4 — is the one that catches a spec that drifted from the ask.</p>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="14" data-paginate="true" data-theme="default" data-style="section {
   font-size: 27px;

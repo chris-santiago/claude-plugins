@@ -56,7 +56,7 @@ The "why" box is the payoff. The ledger lives *outside* the spec on purpose. A s
 **Details not on the slide**
 
 - "Observable acceptance statement" means something you could watch the running system do and judge met-or-not — not an implementation step, not a design decision.
-- This connects directly to slide 13, step 5: the spec-blind intent re-check reads this exact ledger.
+- This connects directly to slide 13, step 4: the spec-blind intent re-check reads this exact ledger.
 
 ---
 
@@ -186,14 +186,14 @@ Define conformance because it's the crux: conformance asks "does the code match 
 
 ## Slide 13 — The completion gate
 
-Make the previous slide concrete: here is the actual gate that runs before anything is called done. Steps 1 and 2 run first and are fixed in place, because they're deterministic and gate everything after them. Then steps 3, 5, and 6 are dispatched together, with step 4 done alongside, as one *close round*: wait for every verdict, triage every finding once, fix the trivial ones inline, and route the non-trivial set as one batch through close-gate remediation (a decision doc, a lean plan, then subagent-driven execution). Round 2 re-runs only what that remediation could have changed, and anything non-trivial still open after round 2 goes to you; there is no round 3. Tests: full suite, zero failures. Lints: zero warnings. Design review: the senior read-only reviewers return PASS or CONCERNS. Requirements: every spec item traced to both the code that implements it and a test that verifies it. Step five, the one that matters most: a spec-blind intent-reviewer compares the shipped behavior to the frozen ledger from slide 4. And step six, when the change includes testable source: a mutation-tester deliberately breaks the changed code in an isolated worktree — no external tool, just an edit plus the project's own tests — and gates on any test that runs the code but doesn't fail when it's broken.
+Make the previous slide concrete: here is the actual gate that runs before anything is called done. Steps 1 and 2 run first and are fixed in place, because they're deterministic and gate everything after them. Then steps 3, 4, and 5 are dispatched together as one *close*: wait for every verdict, then let the ledger's triage route every finding from the gates' typed records, exactly as it does for a task. An intent not-met or a serious (S4+) finding is fixed in place and re-checked by the gate that raised it; everything else is filed for the user to decide; after two fix rounds, anything still blocking goes to you. Tests: full suite, zero failures. Lints: zero warnings. Design review: the senior read-only reviewers return PASS or CONCERNS. Step four, the one that matters most: a spec-blind intent-reviewer compares the shipped behavior to the frozen ledger from slide 4. And step five, when the change includes testable source: a mutation-tester deliberately breaks the changed code in an isolated worktree — no external tool, just an edit plus the project's own tests — and gates on any test that runs the code but doesn't fail when it's broken.
 
-Stress two things. First, a PASS is not "nothing to do" — a gate can pass while carrying findings, and PASS-with-findings is not clean; the findings get triaged and the in-scope ones fixed now. Second, step 5 is the only gate that never reads the spec, which is precisely what lets it catch a spec that drifted from the ask — the failure every spec-anchored gate structurally cannot see.
+Stress two things. First, a PASS is not "nothing to do" — a gate can pass while carrying findings, and PASS-with-findings is not clean; the findings get triaged and the in-scope ones fixed now. Second, step 4 is the only gate that never reads the spec, which is precisely what lets it catch a spec that drifted from the ask — the failure every spec-anchored gate structurally cannot see.
 
 **Details not on the slide**
 
-- Steps 1–4 are conformance-flavored; steps 5 and 6 are the decorrelated axes — the spec-blind intent re-check from the previous slide, and the mutation probe (which breaks the code and runs the real tests) — made operational.
-- "Traced to code *and* a test" (step 4) is stricter than it sounds: an untested requirement fails the gate even if the code is present.
+- Steps 1–3 are conformance-flavored; steps 4 and 5 are the decorrelated axes — the spec-blind intent re-check from the previous slide, and the mutation probe (which breaks the code and runs the real tests) — made operational.
+- Whether the plan covers the spec is checked before the build, not here: `lean-plan` has the spec reviewer confirm every requirement reaches a task, and briefs can't be built until it has.
 
 ---
 

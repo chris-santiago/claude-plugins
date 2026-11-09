@@ -484,16 +484,15 @@
 
     <div class="two" style="margin-bottom:34px">
       <div class="usecard">
-        <h4>The completion gate — 1–2 first, then one close round</h4>
+        <h4>The completion gate — 1–2 first, then one close</h4>
         <div class="bands" style="gap:8px">
           <div class="band amber" style="padding:11px 14px"><span class="num">1</span><div><h4>Tests</h4><p>full suite, zero failures.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">2</span><div><h4>Lints</h4><p>project linter, zero warnings.</p></div></div>
           <div class="band amber" style="padding:11px 14px"><span class="num">3</span><div><h4>Design review</h4><p>senior <span class="mono">*-design-reviewer</span> agents → PASS / CONCERNS.</p></div></div>
-          <div class="band amber" style="padding:11px 14px"><span class="num">4</span><div><h4>Requirements</h4><p>every spec item traced to code <em>and</em> a test.</p></div></div>
-          <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
-          <div class="band amber" style="padding:11px 14px"><span class="num">6</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">4</span><div><h4>Intent re-check</h4><p>a <strong>spec-blind</strong> reviewer compares shipped behavior to the frozen ledger.</p></div></div>
+          <div class="band amber" style="padding:11px 14px"><span class="num">5</span><div><h4>Mutation re-check</h4><p><span class="mono">mutation-tester</span> mutates changed lines in an isolated worktree; gates any test that runs the code but detects no change. Runs only if you choose it, since it can take hours.</p></div></div>
         </div>
-        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 5, and 6 dispatch <b>together</b> (step 4 alongside) and every finding is <b>triaged once</b>: trivial ones are fixed inline; the non-trivial set goes as one batch through close-gate remediation (decision doc → <span class="mono">lean-plan</span> → SDD). Before a round, open questions go to you and owed doc disclosures land. Round 2 re-runs only what that could have changed; anything non-trivial still open after it escalates to you. The completion report is built from the run's store (<span class="mono">ledger.py report</span>), not memory.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:14px 0 0">Steps 3, 4, and 5 dispatch <b>together</b>, each writing a typed record, and <span class="mono">ledger.py triage --task close</span> routes every finding as it does for a task: an intent not-met or an S4+ finding is <b>fixed in place</b> and re-checked by the gate that raised it; everything else is filed for you to decide. Before the close, open questions go to you and owed doc disclosures land. After two fix rounds, anything still blocking comes to you: rule another fix or defer the rest. The completion report is built from the run's store (<span class="mono">ledger.py report</span>), not memory.</p>
       </div>
       <div class="usecard">
         <h4>Why more passes ≠ more proof</h4>
@@ -505,7 +504,7 @@
           <span class="chip assure">a real failing test</span>
           <span class="chip assure">your own read</span>
         </div>
-        <p style="font-size:14.5px; color:#37424f; margin:16px 0 0"><strong>Conformance</strong> asks “does the code match the spec?” — which is not correctness. A build can conform perfectly to a spec that drifted from your ask. Step 5 is the only gate that never reads the spec, which is exactly why it catches that drift.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:16px 0 0"><strong>Conformance</strong> asks “does the code match the spec?” — which is not correctness. A build can conform perfectly to a spec that drifted from your ask. Step 4 is the only gate that never reads the spec, which is exactly why it catches that drift.</p>
       </div>
     </div>
     <div class="quote amber">A PASS that carries findings is not clean. Green raises recall; it doesn't prove absence.</div>
@@ -602,7 +601,7 @@
       <div class="arole"><div class="r-top"><h3>Design reviewers</h3><span class="tag assure">assure · 2</span></div><p>Senior read-only cohesion / API review at the final gate.</p><div class="chips"><span class="chip assure">python-design-reviewer</span><span class="chip assure">rust-design-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
-      <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate when you choose it, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
       <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles a spec reviewer's cannot-verify item by quoting the code; never judges, never writes.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
     </div>
   </div>
@@ -728,7 +727,7 @@
         <tbody>
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
           <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → scripted triage → commit gate), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
-          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Tests → Lints first, then Design review, Requirements, spec-blind intent re-check, and mutation re-check together as one close round, triaged once (two rounds max).</td></tr>
+          <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Tests → Lints first, then Design review, spec-blind intent re-check, and mutation re-check together as one close, routed by triage: blocking findings fixed in place, two fix rounds max.</td></tr>
           <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
         </tbody>
       </table>
@@ -778,7 +777,7 @@
           <li><b>Start with intent.</b> Describe what you want, or run <code>/brainstorming</code>. It won't code until a design exists and you've approved it — and it freezes your intent ledger.</li>
           <li><b>Watch the spec and plan appear.</b> <code>lean-spec</code> writes contracts; <code>lean-plan</code> writes the thin what/where handoff.</li>
           <li><b>Let execution dispatch the work.</b> A scoped coder per task, each passing spec + quality review, a scripted triage and a commit gate.</li>
-          <li><b>Verify before “done.”</b> After tests and lints, one close round runs design review, a spec-blind intent re-check against your ledger, and a mutation re-check (proving your tests detect a change) together, then triages their findings once. Open questions and owed disclosures settle first, and the completion report comes from the run's store.</li>
+          <li><b>Verify before “done.”</b> After tests and lints, one close runs design review, a spec-blind intent re-check against your ledger, and, if you choose it, a mutation re-check (proving your tests detect a change) together, then the ledger's triage fixes what blocks in place and files the rest for you. Open questions and owed disclosures settle first, and the completion report comes from the run's store.</li>
           <li><b>Finish the branch.</b> Merge, open a PR, keep, or discard. The run's open follow-ups are reported before the store and worktree are cleaned up.</li>
         </ol>
       </div>
