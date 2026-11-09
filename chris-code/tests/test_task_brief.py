@@ -133,7 +133,9 @@ class TestSpecCoverage(TaskBriefTestCase):
     def test_a_pass_line_or_a_user_ruling_line_for_the_spec_builds_the_brief(self):
         for line in ("Spec coverage: spec.md — pass (coverage.md)",
                      f"Spec coverage: {self.spec_path} — pass ({self.tmp / 'coverage.md'})",
-                     "Spec coverage: spec.md — user ruling: drop the export row (coverage.md)"):
+                     "Spec coverage: spec.md — user ruling: drop the export row (coverage.md)",
+                     "Spec coverage: `spec.md` – PASS (`coverage.md`)",
+                     "Spec coverage: spec.md - User ruling: keep it (coverage.md)"):
             with self.subTest(line):
                 self.assertTrue(self.build(line).is_file())
 
@@ -147,6 +149,11 @@ class TestSpecCoverage(TaskBriefTestCase):
                 with self.assertRaises(task_brief.BriefValidationError) as ctx:
                     self.build(line)
                 self.assertIn("Spec coverage", str(ctx.exception))
+
+    def test_a_line_that_doesnt_parse_is_named_as_one(self):
+        with self.assertRaises(task_brief.BriefValidationError) as ctx:
+            self.build("Spec coverage: spec.md looked fine")
+        self.assertIn("line doesn't record a check", str(ctx.exception))
 
     def test_no_spec_means_no_check(self):
         self.plan_path.write_text(self.PLAIN.replace(

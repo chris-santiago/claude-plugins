@@ -237,12 +237,13 @@ def not_met(fid: str, severity: int = 2, reach: str = "local") -> dict:
 
 def derive_close(findings=(), *, prior=(), root_causes=(), reach_raised=(), answers=None,
                  waived=(), deferred=(), promoted=(), unclear=(), ruled=False,
-                 model: str | None = "sonnet") -> dict:
+                 model: str | None = "sonnet", file_candidates=()) -> dict:
     return triage.derive_close(findings=list(findings), root_causes=list(root_causes),
                                reach_raised=set(reach_raised), answers=dict(answers or {}),
                                waived=set(waived), deferred=set(deferred),
                                promoted=set(promoted), unclear=list(unclear),
-                               prior=list(prior), ruled=ruled, model=model)
+                               prior=list(prior), ruled=ruled, model=model,
+                               file_candidates=list(file_candidates))
 
 
 class TestCloseTiers(unittest.TestCase):
@@ -277,6 +278,7 @@ class TestCloseSteps(unittest.TestCase):
         sent = {f["id"] for f in entry["findings"] if f["tier"] == "patch"}
         self.assertEqual(sent, {"n", "d4"})
         self.assertEqual(sorted(c["id"] for c in entry["to_file"]), ["d3", "m"])
+        self.assertEqual({f["tier"] for f in entry["findings"]}, {"patch"})
 
     def test_a_contract_s4_starts_a_holistic_round_rechecked_by_its_raisers(self):
         entry = derive_close([gate_finding("c", 4, "contract")])
@@ -347,6 +349,31 @@ class TestCloseSteps(unittest.TestCase):
         a = gate_finding("a", 4)
         entry = derive_close([a], prior=[step("patch", [(a, "patch")])], answers={"a": "hold"})
         self.assertEqual((entry["kind"], entry["held"]), ("escalate", ["a"]))
+
+    def test_a_clarify_step_never_hides_a_failed_ruling_round(self):
+        a = gate_finding("a", 4)
+        prior = [step("ruling", [(a, "patch")]), step("clarify")]
+        self.assertEqual(derive_close([a], prior=prior)["kind"], "escalate")
+
+    def test_a_promoted_finding_deferred_is_filed_once_more(self):
+        s3 = gate_finding("s3", 3)
+        prior = [step("done", filed=["s3"]), step("ruling", [(s3, "patch")]),
+                 step("escalate")]
+        entry = derive_close([s3], prior=prior, promoted={"s3"}, waived={"s3"},
+                             deferred={"s3"})
+        self.assertEqual((entry["kind"], entry["to_file"]),
+                         ("done", [{"id": "s3", "rule": "rule of s3", "deferred": True}]))
+        again = derive_close([s3], prior=[*prior, step("done", filed=entry["filed"],
+                                                        deferred_filed=entry["deferred_filed"])],
+                             promoted={"s3"}, waived={"s3"}, deferred={"s3"})
+        self.assertEqual(again["to_file"], [])
+
+    def test_the_close_coders_own_deferrals_are_filed_once(self):
+        skip = {"id": "close-python-coder#sites_outside[aa]", "rule": "naming"}
+        first = derive_close(file_candidates=[skip])
+        self.assertEqual(first["to_file"], [skip])
+        self.assertEqual(derive_close(prior=[step("done", filed=first["filed"])],
+                                      file_candidates=[skip])["to_file"], [])
 
     def test_a_root_cause_starts_a_holistic_round(self):
         self.assertEqual(derive_close(root_causes=["close-python-coder#concerns[aa]"])["kind"],

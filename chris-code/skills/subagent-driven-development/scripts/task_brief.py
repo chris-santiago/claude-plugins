@@ -596,8 +596,9 @@ def _split_rows(value: str) -> list[str]:
 #   Spec coverage: <spec> — pass (<report>)
 #   Spec coverage: <spec> — user ruling: <verbatim> (<report>)
 SPEC_COVERAGE_RE = re.compile(
-    r"^Spec coverage:\s*(?P<spec>\S+)\s+[—-]\s+(?P<verdict>pass|user ruling:.+?)"
-    r"\s+\((?P<report>[^()]+)\)\s*$", re.MULTILINE)
+    r"^Spec coverage:\s*`?(?P<spec>[^\s`]+)`?\s+[—–-]\s+(?P<verdict>pass|user ruling:.+?)"
+    r"\s+\(`?(?P<report>[^()`]+)`?\)\s*$", re.MULTILINE | re.IGNORECASE)
+SPEC_COVERAGE_LINE_RE = re.compile(r"^Spec coverage:", re.MULTILINE | re.IGNORECASE)
 
 
 def _plan_relative(value: str, plan_path: Path) -> list[Path]:
@@ -622,6 +623,10 @@ def validate_spec_coverage(plan_text: str, plan_path: Path, spec: str) -> None:
                 f"Spec coverage: the report {match['report']!r} doesn't exist; re-run "
                 "lean-plan's coverage check and record where its report landed")
         return
+    if SPEC_COVERAGE_LINE_RE.search(plan_text):
+        raise BriefValidationError(
+            f"the plan's Spec coverage: line doesn't record a check of {spec}; write it as "
+            f"`Spec coverage: {spec} — pass (<report>)` or `... — user ruling: <ruling> (<report>)`")
     raise BriefValidationError(
         f"the plan has no `Spec coverage: {spec} — pass (<report>)` line: run lean-plan's "
         "coverage check (spec-reviewer in plan coverage mode) and record its verdict, or "

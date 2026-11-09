@@ -1039,10 +1039,12 @@ class TestCloseStart(LedgerTestCase):
         self.assertIn("triage --task close", str(ctx.exception))
         self.assertEqual(ledger.load_progress_log(self.store), before)
 
-    def test_a_close_that_reached_done_lets_a_new_one_start(self):
+    def test_a_finished_close_refuses_another_start_in_the_same_store(self):
         self.start()
         ledger._append_progress(self.store, {"type": "triage", "task": "close", "kind": "done"})
-        self.assertEqual(self.start(head="bbb2222"), "bbb2222")
+        with self.assertRaises(ledger.RecordError) as ctx:
+            self.start(head="bbb2222")
+        self.assertIn("clear", str(ctx.exception))
 
     def test_legacy_round_entries_never_block_a_new_close(self):
         for n in (1, 2):
@@ -3537,6 +3539,99 @@ class TestCloseTriage(CloseStoreTestCase):
         self.assertEqual([f["id"] for f in last["findings"] if f["tier"] == "patch"],
                          [self.fid("close-python-design-reviewer", s3)])
         self.assertIn(note["id"], ledger.resolutions_from_log(ledger.load_progress_log(self.store)))
+
+    def test_a_coder_fixing_only_the_blocking_finding_passes_and_its_round_omits_the_filed(self):
+        s3, s4 = _finding(rule="one owner per rule"), _finding(severity=4, rule="no silent drop")
+        self.design(s3, s4)
+        self.intent([_statement(1)])
+        self.triage()
+        tree = _baseline(self.store, "close")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, tree, "close")
+        self.assertIn(self.fid("close-python-design-reviewer", s4), out.getvalue())
+        self.assertNotIn(self.fid("close-python-design-reviewer", s3), out.getvalue())
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
+        self.coder(cycle=2, baseline=tree, changed_files=["a.py"],
+                   contested=[self.contest(self.fid("close-python-design-reviewer", s4))], **mapped)
+
+    def promote_filed(self, finding: dict) -> dict:
+        """File `finding` at a first triage, then promote its follow-up."""
+        self.design(finding)
+        self.intent([_statement(1)])
+        self.triage()
+        [note] = self.follow_ups()
+        ledger.cmd_append(self.store, "progress", "close", f"user ruling: fix {note['id']} now")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "ruling")
+        return note
+
+    def test_a_promotion_round_commits_and_closes_once_its_gate_stops_raising_it(self):
+        self.promote_filed(_finding())
+        self.assertIsNotNone(ledger._round_baseline(ledger.load_progress_log(self.store), "close"))
+        tree = _baseline(self.store, "close")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        _write(self.store, "close-python-coder.json", _coder(
+            task="close", cycle=2, baseline=tree, changed_files=["a.py"], **_FIX_FIELDS))
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.design()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_deferring_a_promoted_finding_files_it_again(self):
+        s3 = _finding()
+        fid = self.fid("close-python-design-reviewer", s3)
+        self.promote_filed(s3)
+        tree = _baseline(self.store, "close")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        mapped = {**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the contest"}]}
+        self.coder(cycle=2, baseline=tree, changed_files=["a.py"], contested=[self.contest(fid)],
+                   **mapped)
+        self.design(s3, contests=[{"finding": fid, "verdict": "hold", "reason": "it doesn't"}])
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "escalate")
+        ledger.cmd_resolve(self.store, fid, "user ruling: defer to the next release")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        still_open = [n for n in ledger.open_notes(ledger.load_progress_log(self.store))
+                      if n.get("finding") == fid]
+        self.assertEqual(len(still_open), 1)
+        self.assertTrue(still_open[0]["text"].startswith("deferred by ruling:"))
+
+    def test_the_close_coders_outside_sites_are_filed(self):
+        s4 = _finding(severity=4)
+        fid = self.fid("close-python-design-reviewer", s4)
+        self.design(s4)
+        self.triage()
+        tree = _baseline(self.store, "close")
+        sweep = {"findings": [fid], "rule": s4["rule"], "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                 "searched": {"command": "rg size", "result": "2 matches"},
+                 "sites_outside": ["lib/z.py:3"]}
+        _write(self.store, "close-python-coder.json", _coder(
+            task="close", cycle=2, baseline=tree, sweeps=[sweep],
+            **{**_FIX_FIELDS, "hunk_map": [{"site": "a.py:1", "implements": "the sweep"}]}))
+        self.triage()
+        self.assertTrue(any("lib/z.py:3" in n["text"] for n in self.follow_ups()))
+
+    def test_naming_a_task_follow_up_promotes_nothing_and_says_so(self):
+        self.design(_finding(severity=2))
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_note(self.store, "follow-up", "a task's follow-up", source=3)
+        nid = next(n["id"] for n in self.follow_ups() if n.get("from") == 3)
+        ledger.cmd_append(self.store, "progress", "close", f"user ruling: fix {nid}")
+        self.assertIn(f"not promoted: {nid}", self.triage())
+
+    def test_the_close_is_never_completed_by_append(self):
+        with self.assertRaises(ledger.RecordError):
+            ledger.cmd_append(self.store, "complete", "close", "done")
+
+    def test_run_state_lists_the_closes_agent_handles(self):
+        ledger.cmd_handle(self.store, "close", "rust-coder", "agent-123")
+        text = ledger.render_run_state(ledger.load_progress_log(self.store), [])
+        self.assertIn("task close rust-coder: `agent-123`", text)
 
     def test_a_mutation_gate_ruling_starts_no_round(self):
         self.design(_finding(severity=2))

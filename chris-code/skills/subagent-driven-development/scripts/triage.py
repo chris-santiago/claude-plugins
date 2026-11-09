@@ -160,7 +160,7 @@ def close_tier(finding: dict, reach_raised: set[str], promoted: set[str]) -> str
 def derive_close(*, findings: list[dict], root_causes: list[str], reach_raised: set[str],
                  answers: dict[str, str], waived: set[str], deferred: set[str],
                  promoted: set[str], unclear: list[str], prior: list[dict], ruled: bool,
-                 model: str | None) -> dict:
+                 model: str | None, file_candidates: list[dict]) -> dict:
     """The close's next step, as a triage entry (without its type, task and
     tree). Only blocking findings are ever sent to a coder; everything else
     is filed once. `findings` are the close gates' raised findings, each as
@@ -168,9 +168,13 @@ def derive_close(*, findings: list[dict], root_causes: list[str], reach_raised: 
     `deferred` are the waived ids whose ruling defers them, filed rather
     than dropped. `promoted` are filed findings a user ruling reopened.
     `unclear` are the intent statements still `can't-tell`: they are
-    clarified before any fix round, so a late not-met joins it."""
+    clarified before any fix round, so a late not-met joins it, and a
+    clarify step never stands in for the step before it. Filed findings
+    are recorded in `filed` only, never in the entry's sent findings.
+    `file_candidates` are the close coder's own deferrals, as for `derive`."""
     settled = _settled(prior, waived, answers)
-    last_kind = prior[-1]["kind"] if prior else None
+    steps = [e for e in prior if e.get("kind") != "clarify"]
+    last_kind = steps[-1]["kind"] if steps else None
     live = [f for f in findings if f["id"] not in settled]
     tiers = {f["id"]: close_tier(f, reach_raised, promoted) for f in live}
     blocking = [f for f in live if tiers[f["id"]] in ("patch", "holistic")]
@@ -200,9 +204,15 @@ def derive_close(*, findings: list[dict], root_causes: list[str], reach_raised: 
     sent = blocking if kind in ("patch", "holistic", "ruling", "escalate") else []
     sent_ids = {f["id"] for f in sent}
     already_filed = _filed(prior)
-    to_file = [{"id": f["id"], "rule": f["rule"]} for f in findings
-               if f["id"] not in already_filed and f["id"] not in promoted
-               and ((f["id"] in tiers and tiers[f["id"]] == "file") or f["id"] in deferred)]
+    # A deferral is filed once even when the finding was filed before it
+    # was promoted, since the promotion closed that first follow-up.
+    deferred_filed = {i for e in prior for i in e.get("deferred_filed", [])}
+    to_file = [{"id": f["id"], "rule": f["rule"]} for f in live
+               if tiers[f["id"]] == "file" and f["id"] not in already_filed]
+    deferred_now = [{"id": f["id"], "rule": f["rule"], "deferred": True} for f in findings
+                    if f["id"] in deferred and f["id"] not in deferred_filed
+                    and (f["id"] not in already_filed or f["id"] in promoted)]
+    to_file += deferred_now + [c for c in file_candidates if c["id"] not in already_filed]
     newly_filed = {c["id"] for c in to_file}
     survived = sum(1 for f in blocking if f.get("recurring"))
     previous_count = len(prior[-1].get("findings", [])) if prior else 0
@@ -212,12 +222,13 @@ def derive_close(*, findings: list[dict], root_causes: list[str], reach_raised: 
         "recheck": {"clarify": "intent"}.get(kind, "raising" if kind in FIX_KINDS else "none"),
         "findings": [{"id": f["id"], "tier": tiers[f["id"]], "rule": f["rule"],
                       "source": f["source"]} for f in live
-                     if f["id"] in sent_ids | newly_filed or tiers[f["id"]] == "held"],
+                     if f["id"] in sent_ids or tiers[f["id"]] == "held"],
         "root_causes": list(root_causes) if kind in ("holistic", "ruling", "escalate") else [],
         "unclear": list(unclear) if kind == "clarify" else [],
         "held": sorted(held),
         "settled": sorted(settled),
         "filed": sorted(already_filed | newly_filed),
+        "deferred_filed": sorted(deferred_filed | {c["id"] for c in deferred_now}),
         "to_file": to_file,
         "model": model,
         "closed": max(previous_count - survived, 0) if prior else 0,
