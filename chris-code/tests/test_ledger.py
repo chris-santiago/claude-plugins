@@ -3872,6 +3872,42 @@ class TestRoundEnds(TriageStoreTestCase):
         self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch"])
 
 
+class TestDiscard(TriageStoreTestCase):
+    """A task round the user ruled off goes back to its own baseline, never
+    past it: the task's earlier work stays."""
+
+    def discard(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_discard(self.store, 3)
+
+    def test_a_ruled_off_round_restores_the_tasks_files_to_its_baseline(self):
+        (self.repo / "a.py").write_text("x = 1\nfirst = True\n", encoding="utf-8")
+        (self.repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "b.py"])
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        (self.repo / "a.py").write_text("x = 1\nfirst = True\nbroken = True\n", encoding="utf-8")
+        (self.repo / "c.py").write_text("new = 1\n", encoding="utf-8")
+        self.fixed(status="blocked")
+        _rule(self.store, self.spec_id(issue), "drop", "user ruling: drop it")
+        self.assertIn("ledger.py discard --task 3", self.triage())
+        self.discard()
+        self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 1\nfirst = True\n")
+        self.assertEqual((self.repo / "b.py").read_text(encoding="utf-8"), "y = 1\n")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_a_blocked_polish_round_ends_when_its_notes_are_dropped(self):
+        note = _finding(severity=1, rule="a name")
+        self.spec(note)
+        self.assertIn("polish", self.triage())
+        self.coder(cycle=2, status="blocked", baseline=_baseline(self.store, 3))
+        _rule(self.store, self.spec_id(note), "drop", "user ruling: leave the name")
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+
 class TestCloseRoundInFlight(CloseStoreTestCase):
     """At the close a fix round lasts until its fix is committed and every
     gate it named has re-checked it."""
@@ -4018,19 +4054,47 @@ class TestCloseRoundInFlight(CloseStoreTestCase):
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
 
-    def test_a_fix_whose_gate_keeps_failing_ends_on_the_users_ruling_and_a_revert(self):
+    def discard(self) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_discard(self.store, "close")
+        return out.getvalue()
+
+    def test_a_fix_whose_gate_keeps_failing_ends_on_the_users_ruling_and_a_discard(self):
         s4 = _finding(severity=4)
         fid = self.fid(self.DESIGN, s4)
         self.design(s4)
         self.triage()
+        before = (self.repo / "a.py").read_text(encoding="utf-8")
         self.fix()
         self.assertEqual(self.commit("false")[0], 1)
         self.rule("file", fid)
-        self._git("checkout", "--", "a.py")
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(ledger.cmd_gate(self.store, "close", "true", None), 0)
+        self.assertIn("ledger.py discard --task close", self.triage())
+        self.discard()
+        self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), before)
+        self.assertFalse((self.store / "close-gate.json").exists())
         self.triage()
-        self.assertEqual((self.entries()[-1]["kind"], self.states()[fid]), ("done", "filed"))
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "done"])
+        self.assertEqual(self.states()[fid], "filed")
+
+    def test_a_blocked_fix_with_changes_is_discarded_before_the_close_goes_on(self):
+        s4 = _finding(severity=4)
+        self.design(s4)
+        self.triage()
+        self.fix(status="blocked")
+        self.rule("drop", self.fid(self.DESIGN, s4))
+        self.assertIn("ledger.py discard --task close", self.triage())
+        self.discard()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(self._git("status", "--porcelain", "--", "a.py").strip(), "")
+
+    def test_discard_refuses_a_round_with_work_left(self):
+        self.design(_finding(severity=4))
+        self.triage()
+        self.fix()
+        with self.assertRaises(ledger.RecordError):
+            self.discard()
 
     def test_a_finished_close_names_only_clearing(self):
         self.design()

@@ -37,6 +37,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py findings <decision-path> [--store DIR]
        python3 ledger.py diff-since <tree> [<path>...]   (takes no --store)
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
+       python3 ledger.py rule <id>... --as fix|file|drop --note "user ruling: ..." [--store DIR]
+       python3 ledger.py discard --task N|final|close [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -250,6 +252,8 @@ MUTATION_RULING_PREFIX = f"{RULING_PREFIX} mutation gate:"
 FINDING_ENTRY = "finding"
 # `commit` landed a final or close fix: its round's re-checks come next.
 FIX_COMMIT_ENTRY = "fix_commit"
+# `discard` put a ruled-off round's files back to the round's baseline.
+DISCARD_ENTRY = "discard"
 
 PROGRESS_FILENAME = "progress.jsonl"
 # Every command that appends to or deletes from the store holds an
@@ -1163,6 +1167,9 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
         elif entry.get("type") == "stage" and entry.get("task") in ("final", CLOSE_SCOPE):
             lines.append(f"- {_scope_name(entry.get('task'))}'s footprint adds: "
                           f"{', '.join(entry.get('files', []))}")
+        elif entry.get("type") == DISCARD_ENTRY:
+            lines.append(f"- {_scope_name(entry.get('task'))} discarded its ruled-off round's "
+                          f"changes to `{entry.get('tree')}`: {', '.join(entry.get('files', []))}")
         elif entry.get("type") == FIX_COMMIT_ENTRY:
             lines.append(f"- {_scope_name(entry.get('task'))} fix landed at "
                           f"`{str(entry.get('commit', ''))[:7]}`")
@@ -3106,7 +3113,9 @@ def _persist_seed(store_dir: Path, log: list[dict], task: int | str) -> list[dic
     if not seeded_states:
         return log
     at = (latest_triage(log, task) or {}).get("at")
-    since = datetime.fromisoformat(at).timestamp() * 1e9 if at else None
+    # `at` is in whole seconds: a record written within that second came
+    # before the entry or with it, never after a re-check.
+    since = (datetime.fromisoformat(at).timestamp() + 1) * 1e9 if at else None
     unchecked = {r.stem: _record_version(store_dir, r)
                  for r in _scope_records(store_dir, scope_prefix(log, task)).reviewers
                  if since is not None
@@ -3482,13 +3491,13 @@ def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict
     once it is over: the coder's finished fix, at `final` and the close the
     fix's commit (the gate on it is the coder's same attempt), then a
     re-check of each finding it sent and from each other record it named.
-    A round whose every sent finding the user has filed or dropped is over:
-    the user took that work out of it (a blocked coder, a fix that can't
-    pass its gate)."""
+    A round the user ruled off (`_round_ruled_off`) waits only for its
+    unlanded changes to be discarded."""
     if latest is None or latest.get("kind") not in triage_rules.FIX_KINDS:
         return []
-    sent = [f["id"] for f in latest.get("findings", []) if f.get("tier") != "note"]
-    if sent and all(states.get(fid, {}).get("state") in ("filed", "dropped") for fid in sent):
+    if _round_ruled_off(latest, states):
+        if _unlanded_changes(store_dir, log, task):
+            return [f"the ruled-off round's changes discarded (`ledger.py discard --task {task}`)"]
         return []
     baseline = _round_baseline(log, task)
     if baseline is not None and _fix_is_open(store_dir, log, task, baseline):
@@ -3499,6 +3508,71 @@ def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict
              *triage_rules.awaiting(latest.get("awaiting", {}), versions)}
     return [f"a new `gate` run ({stem})" if _is_gate_stem(stem) else f"a re-check from {stem}"
             for stem in sorted(stems)]
+
+
+def _round_ruled_off(latest: dict, states: dict[str, dict]) -> bool:
+    """The user filed or dropped every finding the round sent (its notes,
+    for a polish round that sent nothing else): the exit from a fix that
+    can't land, a blocked coder or a gate it can't pass."""
+    findings = latest.get("findings", [])
+    sent = [f["id"] for f in findings if f.get("tier") != "note"] or [f["id"] for f in findings]
+    return bool(sent) and all(states.get(fid, {}).get("state") in ("filed", "dropped")
+                              for fid in sent)
+
+
+def _round_paths(store_dir: Path, log: list[dict], task: int | str) -> list[str]:
+    """The files the scope's latest round could have changed: its footprint
+    and what its coder says it changed."""
+    coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
+    changed = {_normalize_path(f) for f in (coder.data.get("changed_files", []) if coder else [])
+               if _non_empty_str(f)}
+    return sorted((scope_footprint(store_dir, log, task) or set()) | changed)
+
+
+def _unlanded_changes(store_dir: Path, log: list[dict], task: int | str) -> list[str]:
+    """The files the latest round changed since its baseline and never
+    landed in a commit (a landed final or close fix is kept)."""
+    baseline = _round_baseline(log, task)
+    top = _store_repo(store_dir)
+    if baseline is None or top is None or (task in PATH_SCOPES and _fix_landed(log, task)):
+        return []
+    paths = _round_paths(store_dir, log, task)
+    return sorted(changed_lines(diff_since(top, baseline["tree"], paths))) if paths else []
+
+
+def cmd_discard(store_dir: Path, task: int | str) -> None:
+    """Put the files of a round the user ruled off back to the round's
+    baseline, and drop the scope's gate record, which judged the discarded
+    work. Only that round, never earlier work: the baseline holds every
+    change before the round."""
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        latest = latest_triage(log, task)
+        if latest is None or latest.get("kind") not in triage_rules.FIX_KINDS \
+                or not _round_ruled_off(latest, finding_states(log, task)):
+            raise RecordError(f"{_scope_name(task)}'s latest round still has work: only a round "
+                              "whose every sent finding the user filed or dropped is discarded")
+        changed = _unlanded_changes(store_dir, log, task)
+        if not changed:
+            raise RecordError(f"{_scope_name(task)}'s ruled-off round left no unlanded change "
+                              "to discard")
+        top, tree = _store_repo(store_dir), _round_baseline(log, task)["tree"]
+        staged = _staged_scope(top, changed)
+        if staged:
+            _git(top, "reset", "-q", "--", *staged)
+        for name in changed:
+            blob = _blob(top, tree, name)
+            target = top / name
+            if blob is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(subprocess.run(["git", "cat-file", "blob", blob], cwd=top,
+                                                  capture_output=True, check=True).stdout)
+        _gate_path(store_dir, log, task).unlink(missing_ok=True)
+        _append_progress(store_dir, {"type": DISCARD_ENTRY, "task": task, "tree": tree,
+                                     "files": changed, "at": _now()})
+    print(f"{_scope_name(task)}: restored {', '.join(changed)} to the round's baseline; run "
+          f"`triage --task {task}`")
 
 
 def _fix_landed(log: list[dict], task: int | str) -> bool:
@@ -4526,6 +4600,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_rule.add_argument("--as", dest="verb", required=True, choices=list(RULE_STATES))
     p_rule.add_argument("--note", required=True, help="\"user ruling: <their words>\"")
 
+    p_discard = sub.add_parser("discard", parents=[store_parent],
+                                help="put a ruled-off round's unlanded changes back to the "
+                                     "round's baseline")
+    p_discard.add_argument("--task", required=True, type=_task_arg)
+
     p_resolve = sub.add_parser("resolve", parents=[store_parent],
                                 help="record a resolution for an open item")
     p_resolve.add_argument("id")
@@ -4650,6 +4729,8 @@ def main() -> None:
             cmd_close_round(store_dir, args.note, _git_head())
         elif args.command == "rule":
             cmd_rule(store_dir, args.ids, args.verb, args.note)
+        elif args.command == "discard":
+            cmd_discard(store_dir, args.task)
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":
