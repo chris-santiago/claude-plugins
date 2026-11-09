@@ -2601,6 +2601,19 @@ class TestTriageCommand(TriageStoreTestCase):
         kinds = sorted((n["kind"], n.get("for")) for n in notes)
         self.assertEqual(kinds, [("follow-up", None), ("follow-up", None), ("task-note", 5)])
 
+    def test_a_skipped_store_note_is_not_filed_but_a_skipped_review_note_is(self):
+        note = _finding(severity=1, rule="name says what it holds")
+        self.spec(note)
+        self.coder(notes_skipped=[
+            {"finding": "note#run-note[bce45494]", "reason": "governs the close, not this code"},
+            {"finding": "note#task-note[0a1b2c3d]", "reason": "already done in task 2"},
+            {"finding": self.spec_id(note), "reason": "renaming breaks callers"}])
+        self.triage()
+        texts = [n["text"] for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                 if n["kind"] == "follow-up"]
+        self.assertEqual(len(texts), 1)
+        self.assertIn(self.spec_id(note), texts[0])
+
     def test_a_held_contest_parks_and_a_ruling_then_rules_the_rest(self):
         issue, other = _finding(sites=["a.py:1"]), _finding(sites=["a.py:1"], rule="other rule")
         self.spec(issue, other)

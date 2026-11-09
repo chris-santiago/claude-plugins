@@ -2970,11 +2970,14 @@ def _finding_inputs(reviewers: list[Record]) -> list[dict]:
 
 def _coder_deferrals(coder: Record | None, rules: dict[str, str]) -> list[dict]:
     """A coder's skipped notes and outside sites, each with an id, the rule
-    it falls under, and the follow-up text to file."""
+    it falls under, and the follow-up text to file. A skipped store note (a
+    run-note or task-note that didn't apply to this code) defers nothing."""
     if coder is None:
         return []
     out = []
     for entry in coder.data.get("notes_skipped", []):
+        if str(entry.get("finding", "")).startswith(NOTE_ID_PREFIX):
+            continue
         out.append({"id": _item_id(coder.stem, "notes_skipped", entry),
                     "rule": rules.get(entry["finding"], entry["reason"]),
                     "text": f"skipped note {entry['finding']}: {entry['reason']}"})
