@@ -229,7 +229,7 @@ Before returning, write a JSON record to the record path the dispatch supplies, 
 - `schema`: the contract version, always `2`.
 - `agent`: this agent's registered name, `pytorch-coder`.
 - `role`: always `coder`.
-- `task`: the task number from the brief.
+- `task`: the task number from the brief, or `final` or `close` when the dispatch names that scope (a whole-change or close fix has no brief).
 - `status`: lowercase in the record (`done | done_with_concerns | needs_context | blocked`) and uppercase in your return summary (`DONE`, ...). `open` matches only the lowercase form.
 - `changed_files`: every file you touched; empty only if you touched none.
 - `tests`: the command you ran, whether it passed, and a one-line summary. If you ran none, write `{"command": "", "passed": false, "summary": "no tests run"}`: `passed: false` alone reads as a failure, so the summary must say no tests ran.

@@ -147,7 +147,7 @@ mutation-tester — PASS | CONCERNS | skipped | inconclusive — report: <path>
 - `status`: your verdict, lowercase. `concerns` exactly when `findings` is non-empty.
 - `findings`: one entry per gating finding (covered but survived, gating at its file's level), severity 3 and reach `local`, sited at the line you broke. Advisory and discarded breaks stay in the report only. Triage files these for the user to promote, so a survivor never blocks the close by itself.
 
-On a re-check (the dispatch gives `Range: <the fix commit>^..HEAD`), mutate only that range and rewrite both files at the same paths. In on-demand mode, or with no report path, return the report inline and write no record; never invent a path.
+On a re-check of a promoted survivor, the dispatch gives `Range: <the fix commit>^..HEAD` and `Re-break: <sites>`: break each re-break site again the way you broke it before (your prior report says how), mutate the range too, and rewrite both files at the same paths. A re-broken site whose break the tests now catch is closed. In on-demand mode, or with no report path, return the report inline and write no record; never invent a path.
 
 ## Boundaries
 

@@ -24,7 +24,7 @@ The completion close (`verification-before-completion`: design reviewers, intent
 
 ## 4. System behavior
 
-**Starting the close.** After tests, lints and the whole-change gate, `ledger.py close-round --note "<work being closed>"` starts a close: it records the HEAD under review and refuses while the close owns an open question, disclosure or unrun task-note (as today), or while an earlier close this release started in the store has not reached `done` (a legacy entry, which carries a `round` field, never blocks). The mutation-gate question is asked before the dispatch, as in 0.15.0, and its answer is logged on `--task close`.
+**Starting the close.** After tests, lints and the whole-change gate, `ledger.py close-round --note "<work being closed>"` starts a close: it records the HEAD under review and refuses while the close owns an open question, disclosure or unrun task-note (as today), or when the store already holds a close this release started: an unfinished one resumes at triage, and a finished one reopens only by a promotion, so a new close needs a cleared store (a legacy entry, which carries a `round` field, never blocks). Added after review: two closes in one store would mix their records. The mutation-gate question is asked before the dispatch, as in 0.15.0, and its answer is logged on `--task close`.
 
 **Dispatch.** Every applicable gate goes out in one message: each matching `*-design-reviewer`, `intent-reviewer`, and `mutation-tester` when the user chose it. Each writes its prose report and a typed record (§6), and runs `ledger.py check` on the record. The orchestrator never fixes or sorts while a gate is out.
 
