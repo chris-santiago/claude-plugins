@@ -1504,6 +1504,15 @@ class TestHandoff(LedgerTestCase):
         _write(self.store, "task-1-rust-coder.json", _coder(agent="rust-coder", status="done_with_concerns"))
         self.assertEqual(self.open_ids(), [])
 
+    def test_a_handoff_in_a_later_round_waits_for_that_rounds_finish(self):
+        # The coder of record's done from an earlier round doesn't finish
+        # the round the first coder just handed off.
+        _write(self.store, "task-1-python-coder.json", _handoff(cycle=3))
+        _write(self.store, "task-1-rust-coder.json", _coder(agent="rust-coder", cycle=2, **_FIX_FIELDS))
+        self.assertEqual(self.open_ids(), ["task-1-python-coder#status"])
+        _write(self.store, "task-1-rust-coder.json", _coder(agent="rust-coder", cycle=3, **_FIX_FIELDS))
+        self.assertEqual(self.open_ids(), [])
+
     def test_another_tasks_coder_does_not_settle_a_handoff(self):
         _write(self.store, "task-1-python-coder.json", _handoff())
         _write(self.store, "task-2-rust-coder.json", _coder(agent="rust-coder", task=2))
@@ -3330,7 +3339,7 @@ class TestFixChecks(TriageStoreTestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_baseline(self.store, tree, 3)
-        for expected in ("round: patch", "recheck: raising", sent[0]):
+        for expected in ("round: patch", "cycle: 2", "recheck: raising", sent[0]):
             self.assertIn(expected, out.getvalue())
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_snapshot(self.store, 3, "pre-fix c3", "tree-b")
@@ -4536,6 +4545,14 @@ class TestGate(TriageStoreTestCase):
         self.stage_fix(f"x = 1\n{line}\n")
         self.assertEqual(self.gate()[0], 0)
 
+    def test_a_label_the_first_of_two_coders_excused_passes(self):
+        line = "y = 2  # fixed per the decision doc"
+        self.write("task-3-python-coder.json",
+                   _handoff(task=3, concerns=[f"label false positive: a.py: {line}"]))
+        self.write("task-3-rust-coder.json", _coder(task=3, agent="rust-coder"))
+        self.stage_fix(f"x = 1\n{line}\n")
+        self.assertEqual(self.gate()[0], 0)
+
     def test_a_failing_lint_fails_without_a_finding(self):
         self.stage_fix()
         code, record = self.gate(lint="false")
@@ -4999,6 +5016,77 @@ class TestHandoffInTheLoop(TriageStoreTestCase):
         self.spec()
         self.assertIn(_entry_id("task-3-python-coder", "concerns", concern),
                       ledger.triage_inputs(self.store, 3)["root_causes"])
+
+    def test_a_root_cause_a_decision_claimed_stops_counting(self):
+        # The first coder may never be dispatched again to drop a root cause
+        # the coder of record went on to fix, so a decision's fix choice
+        # claiming it settles it, as excluding it does.
+        concern = "root cause: b.py:1 the parser drops the key"
+        self.partner(concerns=[concern])
+        self.finisher()
+        self.spec()
+        cid = _entry_id("task-3-python-coder", "concerns", concern)
+        self.write("task-3-decision-c2.json", _decision([cid], task=3,
+                                                        reviewer_records=["task-3-spec-reviewer"]))
+        self.assertEqual(ledger.triage_inputs(self.store, 3)["root_causes"], [])
+
+    def test_the_first_coders_deferrals_are_filed(self):
+        skipped = {"finding": "task-3-spec-reviewer#issues[deadbeef]", "reason": "callers use the name"}
+        self.partner(notes_skipped=[skipped])
+        self.finisher()
+        self.spec()
+        ids = [c["id"] for c in ledger.triage_inputs(self.store, 3)["file_candidates"]]
+        self.assertIn(_entry_id("task-3-python-coder", "notes_skipped", skipped), ids)
+
+    def test_a_fix_rounds_handoff_leaves_ready_to_the_round(self):
+        # A handoff inside a fix round is the round's to wait on (triage
+        # holds it until its fix lands, and a round the user rules off ends
+        # without one), so `ready` blocks only on a first attempt's handoff.
+        self.partner(cycle=2)
+        self.finisher(status="blocked", cycle=2)
+        self.spec()
+        self.triage()
+        self.assertFalse(any("handoff" in b for b in ledger.ready_blockers(self.store, 3)))
+        self.assertIn("task-3-python-coder#status",
+                      [i.id for i in ledger.compute_open_items(ledger.load_records(self.store), set())])
+
+    def test_a_handoff_may_not_contest_or_raise_reach(self):
+        # The coder of record answers for the round; the first coder's
+        # disagreements go in its report for that coder.
+        for field_name in ("contested", "reach_raised"):
+            with self.subTest(field=field_name):
+                with self.assertRaisesRegex(ledger.RecordError, field_name):
+                    ledger.validate_record(_handoff(**{field_name: [
+                        {"finding": "f", "reason": "wrong", "evidence": "e"}]}))
+
+    def round_baseline(self) -> str:
+        """Review with one finding and triage it, so the round's snapshot is taken."""
+        self.spec(_finding())
+        self.triage()
+        return _baseline(self.store, 3)
+
+    def test_both_coders_write_the_rounds_cycle(self):
+        # The cycles are the round's, not each record's prior + 1: a coder
+        # of record a round ahead of the first coder (it fixed a round alone)
+        # sets the next round's cycle, and a record behind it would leave the
+        # round waiting for a cycle no coder writes.
+        self.partner()
+        self.finisher(cycle=2, **_FIX_FIELDS)
+        tree = self.round_baseline()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_baseline(self.store, tree, 3)
+        self.assertIn("cycle: 3", out.getvalue())
+        with self.assertRaisesRegex(ledger.RecordError, "cycle 3"):
+            ledger.cmd_check(str(self.partner(cycle=2, baseline=tree)))
+        ledger.cmd_check(str(self.partner(cycle=3, baseline=tree)))
+
+    def test_a_handed_off_fix_names_its_baseline(self):
+        self.partner()
+        self.finisher()
+        self.round_baseline()
+        with self.assertRaisesRegex(ledger.RecordError, "baseline"):
+            ledger.cmd_check(str(self.partner(cycle=2)))
 
     def test_a_file_the_first_coder_changed_outside_the_footprint_stops_the_commit(self):
         self.partner(changed_files=["tests/test_b.py"])

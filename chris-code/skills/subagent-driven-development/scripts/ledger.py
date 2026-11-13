@@ -468,6 +468,10 @@ def validate_record(data: object) -> None:
                                                 or data["handed_to"] == data["agent"]):
             raise RecordError(f"handed_to: got {data.get('handed_to')!r}, expected the agent "
                               "name of the coder that finishes the task")
+        for field_name in ("contested", "reach_raised"):
+            if data["status"] == CODER_HANDOFF and data.get(field_name):
+                raise RecordError(f"{field_name}: a handed_off record carries none; the coder of "
+                                  "record answers for the round, so put it in your report for it")
         # Only a coder reporting a finished fix owes the fix-mode fields: one
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
@@ -989,13 +993,13 @@ def unfinished_handoffs(records: list[Record]) -> list[OpenItem]:
     """A coder that handed off its share of a task, while the coder it named
     hasn't finished that task: the task's code isn't done yet."""
     coders = [r for r in records if r.ok and r.data["role"] == "coder"]
-    finished = {(_scope(r.stem), r.data["agent"]) for r in coders
+    finished = {(_scope(r.stem), r.data["agent"]): r.data["cycle"] for r in coders
                 if r.data["status"] in DIAGNOSIS_STATUSES}
     return [OpenItem(id=f"{r.stem}#status", kind="status",
                      summary=f"coder status: handed_off to {r.data['handed_to']}, which hasn't "
-                             "finished the task", source=r.stem)
+                             f"finished cycle {r.data['cycle']}", source=r.stem)
             for r in coders if r.data["status"] == CODER_HANDOFF
-            and (_scope(r.stem), r.data["handed_to"]) not in finished]
+            and finished.get((_scope(r.stem), r.data["handed_to"]), 0) < r.data["cycle"]]
 
 
 def _open_items_for_record(rec: Record) -> list[OpenItem]:
@@ -1855,7 +1859,11 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
         unanswered = [i for i in _open_choices(found.coders) if i not in _user_waived(log)]
         if unanswered:
             blockers.append(f"open behavior choices awaiting the user: {', '.join(unanswered)}")
-    handoffs = [f"{i.source}: {i.summary}" for i in unfinished_handoffs(found.coders)]
+    # A fix round's handoff is the round's to wait on: triage holds it until
+    # the fix lands, and a round the user rules off ends without one.
+    first_attempts = {r.stem for r in found.coders if r.data["cycle"] == 1}
+    handoffs = [f"{i.source}: {i.summary}" for i in unfinished_handoffs(found.coders)
+                if i.source in first_attempts]
     if handoffs:
         blockers.append(f"a handoff awaits its coder of record: {'; '.join(handoffs)}")
     if isinstance(task, int):
@@ -2281,6 +2289,9 @@ def cmd_baseline(store_dir: Path, tree: str, task: int | str) -> None:
     entry = fix_round(log, tree, task)
     states = finding_states(log, task)
     print(f"round: {entry['kind']}")
+    cycle = find_baseline(log, tree, task).get("fix_cycle")
+    if cycle is not None:
+        print(f"cycle: {cycle}")
     print(f"recheck: {entry['recheck']}")
     if entry.get("decision"):
         print(f"decision: {store_dir / (entry['decision'] + '.json')}")
@@ -2893,8 +2904,10 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
     mix in the earlier fix. A fix resumed after needs_context or blocked
     keeps its cycle, so its baseline is still its own. A round that changed
     no code leaves the next snapshot the same tree, so a tree is reusable
-    once per snapshot taken of it."""
-    if data["cycle"] < 2 or data["status"] not in DIAGNOSIS_STATUSES:
+    once per snapshot taken of it. A handed-off share of a fix counts too.
+    Its cycle is the round's, which triage recorded on the snapshot: a
+    record behind it leaves the round waiting for a cycle no coder writes."""
+    if data["cycle"] < 2 or data["status"] not in WORKED_STATUSES:
         return
     baseline = data.get("baseline")
     if not _non_empty_str(baseline):
@@ -2903,7 +2916,10 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
     if not _is_store(path.parent):
         return
     log = load_progress_log(path.parent)
-    find_baseline(log, baseline, data["task"])
+    due = find_baseline(log, baseline, data["task"]).get("fix_cycle")
+    if isinstance(due, int) and data["cycle"] < due:
+        raise RecordError(f"{path}: cycle {data['cycle']}, but this round's fix is cycle {due} "
+                          f"(`ledger.py baseline` prints it): write cycle {due}")
     snapshots = sum(1 for e in log if e.get("type") == "snapshot"
                     and e.get("tree") == baseline and e.get("task") == data["task"])
     reused = sorted(e["cycle"] for e in load_history(path.parent)
@@ -3043,9 +3059,10 @@ def latest_triage(log: list[dict], task: int | str) -> dict | None:
 
 
 def _coder_of_record(coders: list[Record]) -> Record | None:
-    """The coder that answers for the scope's latest attempt: its latest
-    record, passing over a coder that handed its share to another once that
-    other has written."""
+    """The coder that answers for the scope: the latest record of a coder
+    that didn't hand off its share, or the latest record when every coder
+    did. Mid-round, before the coder of record writes, that is its record
+    from the round before, which triage reads only once the round ends."""
     finishing = [r for r in coders if r.data["status"] != CODER_HANDOFF]
     return max(finishing or coders, key=lambda r: (r.data.get("cycle", 0), r.stem), default=None)
 
@@ -3126,6 +3143,14 @@ def _deferred_root_causes(decisions: list[Record], scope: str) -> dict[str, str]
     to the reason: deferred, so filed once and no longer open work."""
     return {e["finding"]: e["reason"] for d in decisions if _scope(d.stem) == scope
             for e in d.data["excluded"] if f"#{CONCERN_FIELD}[" in e["finding"]}
+
+
+def _claimed_root_causes(decisions: list[Record], scope: str) -> set[str]:
+    """Coder `root cause:` concerns a decision of the scope chose to fix:
+    its round implements them, so they are no longer open work even on a
+    record no coder rewrites (a first coder that handed off)."""
+    return {f for d in decisions if _scope(d.stem) == scope for c in d.data["choices"]
+            if c["kind"] == "fix" for f in c["findings"] if f"#{CONCERN_FIELD}[" in f}
 
 
 def finding_entries(log: list[dict], task: int | str) -> list[dict]:
@@ -3241,9 +3266,9 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     raised = _finding_inputs(found.reviewers)
     waived = _user_waived(log, scope)
     deferred = _deferred_root_causes(found.decisions, scope)
+    settled = deferred.keys() | _claimed_root_causes(found.decisions, scope) | waived
     root_causes = [cid for rec in found.coders for cid, text in concern_ids(rec).items()
-                   if text.lower().startswith(ROOT_CAUSE_PREFIX)
-                   and cid not in deferred and cid not in waived]
+                   if text.lower().startswith(ROOT_CAUSE_PREFIX) and cid not in settled]
     rules = {f["id"]: f["rule"] for f in raised}
     entries = triage_entries(log, task)
     close = task == CLOSE_SCOPE
