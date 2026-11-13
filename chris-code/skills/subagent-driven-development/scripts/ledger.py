@@ -115,7 +115,7 @@ SCHEMA_1_MESSAGE = ("schema: got 1, expected 2. This record was written by an ea
 ENVELOPE_FIELDS = ("schema", "agent", "role", "task")
 
 STATUS_ENUMS = {
-    "coder": {"done", "done_with_concerns", "needs_context", "blocked"},
+    "coder": {"done", "done_with_concerns", "needs_context", "blocked", "handed_off"},
     "spec-reviewer": {"compliant", "issues"},
     "quality-reviewer": {"approved", "issues"},
     "review-lite": {"clean", "block", "escalate"},
@@ -133,6 +133,9 @@ STATUS_ENUMS = {
 # at the STATUS_ENUMS[role] lookup below.
 VALID_ROLES = frozenset(STATUS_ENUMS)
 CODER_OPEN_STATUSES = {"blocked", "needs_context"}
+# The first of a two-language task's coders finished its share and named the
+# task's coder of record in `handed_to`: open until that coder finishes.
+CODER_HANDOFF = "handed_off"
 REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate", "fail"}
 REVIEWER_ROLES = VALID_ROLES - {"coder", "decision"}
 # Roles whose records carry a validated `cycle`.
@@ -186,7 +189,9 @@ CONTEST_VERDICTS = ("concede", "hold")
 # `diagnosis` is required — the fix must state its cause, not just patch
 # sites. Keys are the slots reviewers verify the fix against.
 DIAGNOSIS_KEYS = ("root_cause", "end_state", "resolves_cluster")
-DIAGNOSIS_STATUSES = STATUS_ENUMS["coder"] - CODER_OPEN_STATUSES  # done, done_with_concerns
+DIAGNOSIS_STATUSES = STATUS_ENUMS["coder"] - CODER_OPEN_STATUSES - {CODER_HANDOFF}  # done, done_with_concerns
+# A coder that changed code: one that finished, or handed off its share.
+WORKED_STATUSES = DIAGNOSIS_STATUSES | {CODER_HANDOFF}
 
 # Fix-mode fields (2026-10-06), required alongside `diagnosis`: a fix maps
 # every hunk to the finding or decision-doc choice it implements, and
@@ -459,6 +464,10 @@ def validate_record(data: object) -> None:
         if "baseline" in data and not _non_empty_str(data["baseline"]):
             raise RecordError(f"baseline: got {data['baseline']!r}, expected the "
                               "`Fix baseline:` tree from the dispatch")
+        if data["status"] == CODER_HANDOFF and (not _non_empty_str(data.get("handed_to"))
+                                                or data["handed_to"] == data["agent"]):
+            raise RecordError(f"handed_to: got {data.get('handed_to')!r}, expected the agent "
+                              "name of the coder that finishes the task")
         # Only a coder reporting a finished fix owes the fix-mode fields: one
         # that stopped mid-fix (blocked / needs_context) has fixed nothing yet.
         if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
@@ -971,8 +980,22 @@ def compute_open_items(
     can't silently mix records from one store with resolutions from
     another — callers compute and pass both from the same store_dir."""
     items = [item for rec in records for item in _open_items_for_record(rec)]
+    items += unfinished_handoffs(records)
     return [item for item in items
             if item.kind not in RESOLVABLE_KINDS or item.id not in resolved_ids]
+
+
+def unfinished_handoffs(records: list[Record]) -> list[OpenItem]:
+    """A coder that handed off its share of a task, while the coder it named
+    hasn't finished that task: the task's code isn't done yet."""
+    coders = [r for r in records if r.ok and r.data["role"] == "coder"]
+    finished = {(_scope(r.stem), r.data["agent"]) for r in coders
+                if r.data["status"] in DIAGNOSIS_STATUSES}
+    return [OpenItem(id=f"{r.stem}#status", kind="status",
+                     summary=f"coder status: handed_off to {r.data['handed_to']}, which hasn't "
+                             "finished the task", source=r.stem)
+            for r in coders if r.data["status"] == CODER_HANDOFF
+            and (_scope(r.stem), r.data["handed_to"]) not in finished]
 
 
 def _open_items_for_record(rec: Record) -> list[OpenItem]:
@@ -1087,18 +1110,20 @@ def _build_open_items(rec: Record) -> list[OpenItem]:
 
 
 def list_shapes(records: list[Record]) -> list[Shape]:
-    """new_shared_symbols entries across well-formed coder records. Never
-    included in `open` — shapes are advisory, not work items. records is
-    required (not defaulted) so it's always sourced from an explicit
-    store_dir, same as load_records and compute_open_items."""
-    shapes = []
-    for rec in records:
-        if not rec.ok or rec.data.get("role") != "coder":
-            continue
+    """new_shared_symbols entries across well-formed coder records, one per
+    symbol and path, credited to the earliest task that declared it: a later
+    record listing it again adds nothing. Never included in `open` — shapes
+    are advisory, not work items. records is required (not defaulted) so
+    it's always sourced from an explicit store_dir, same as load_records and
+    compute_open_items."""
+    coders = sorted((r for r in records if r.ok and r.data.get("role") == "coder"),
+                    key=lambda r: (_task_sort_key(r.data["task"]), r.stem))
+    shapes: dict[tuple[str, str], Shape] = {}
+    for rec in coders:
         for entry in rec.data.get("new_shared_symbols", []):
-            shapes.append(Shape(entry.get("symbol", ""), entry.get("path", ""),
-                                 entry.get("why", ""), rec.stem))
-    return shapes
+            key = (entry.get("symbol", ""), entry.get("path", ""))
+            shapes.setdefault(key, Shape(*key, entry.get("why", ""), rec.stem))
+    return list(shapes.values())
 
 
 def render_shapes(shapes: list[Shape]) -> str:
@@ -1624,14 +1649,17 @@ def _parked_items(log: list[dict], records: list[Record], task: int) -> list[str
         items.append(f"held: {', '.join(held)}")
     coders = [r for r in records if r.ok and r.data["role"] == "coder"
               and _scope(r.stem) == f"task-{task}"]
-    coder = _latest_coder(coders)
-    if coder is not None:
-        waived = _user_waived(log)
-        for choice in coder.data.get("open", []):
-            cid = _item_id(coder.stem, "open", choice)
-            if cid not in waived:
-                items.append(f"open choice [{cid}] {choice['question']} → {choice['choice']}")
+    waived = _user_waived(log)
+    for cid, choice in _open_choices(coders).items():
+        if cid not in waived:
+            items.append(f"open choice [{cid}] {choice['question']} → {choice['choice']}")
     return items
+
+
+def _open_choices(coders: list[Record]) -> dict[str, dict]:
+    """Every behavior choice the scope's coders left open, by id."""
+    return {_item_id(r.stem, "open", choice): choice for r in coders
+            for choice in r.data.get("open") or []}
 
 
 def cmd_run_state(store_dir: Path, plan: str | None = None) -> None:
@@ -1824,12 +1852,12 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
         sent = sorted(fid for fid, s in states.items() if s.get("state") == "sent")
         if sent:
             blockers.append(f"findings awaiting a re-check: {', '.join(sent)}")
-        coder = _latest_coder(found.coders)
-        unanswered = [_item_id(coder.stem, "open", e) for e in coder.data.get("open", [])
-                      ] if coder else []
-        unanswered = [i for i in unanswered if i not in _user_waived(log)]
+        unanswered = [i for i in _open_choices(found.coders) if i not in _user_waived(log)]
         if unanswered:
             blockers.append(f"open behavior choices awaiting the user: {', '.join(unanswered)}")
+    handoffs = [f"{i.source}: {i.summary}" for i in unfinished_handoffs(found.coders)]
+    if handoffs:
+        blockers.append(f"a handoff awaits its coder of record: {'; '.join(handoffs)}")
     if isinstance(task, int):
         undelivered = [n["id"] for n in undelivered_notes(log, task)]
         owned = [n["id"] for n in owned_open_notes(log, task)]
@@ -2512,6 +2540,7 @@ def check_record(path: Path) -> dict:
     elif data["role"] == "coder":
         _check_coder_model(path, data)
         _check_fix_baseline(path, data)
+        _check_shapes_listed_once(path, data)
         if _is_store(path.parent):
             _check_deferrals_outside_footprint(path, data)
             repo = _store_repo(path.parent)
@@ -2886,6 +2915,19 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
                           "`snapshot` (return needs_context naming it)")
 
 
+def _check_shapes_listed_once(path: Path, data: dict) -> None:
+    """Each shared symbol appears once in a coder's record: every copy
+    lands in every later task's brief."""
+    seen: set[tuple] = set()
+    for entry in data.get("new_shared_symbols", []):
+        key = (entry.get("symbol"), entry.get("path"))
+        if key in seen:
+            raise RecordError(f"{path}: new_shared_symbols lists `{key[0]}` ({key[1]}) more than "
+                              "once; list each helper you hoisted once, and on a fix carry "
+                              "your earlier entries over without repeating them")
+        seen.add(key)
+
+
 def _check_coder_model(path: Path, data: dict) -> None:
     """A coder that did work ran on sonnet, or on opus under the user's
     ruling for its task. One that stopped (needs_context, blocked) changed
@@ -2894,7 +2936,7 @@ def _check_coder_model(path: Path, data: dict) -> None:
         raise RecordError(f"{path}: missing required field(s): model (the model family "
                           "your system prompt names, lowercase)")
     family = _model_family(data["model"])
-    if (data["status"] not in DIAGNOSIS_STATUSES or family == CODER_MODEL
+    if (data["status"] not in WORKED_STATUSES or family == CODER_MODEL
             or data.get("agent") == INLINE_EXECUTOR_AGENT):
         return
     if family == OPUS_CODER_MODEL and _opus_ruling_logged(load_progress_log(path.parent), data["task"]):
@@ -3000,8 +3042,18 @@ def latest_triage(log: list[dict], task: int | str) -> dict | None:
     return entries[-1] if entries else None
 
 
-def _latest_coder(coders: list[Record]) -> Record | None:
-    return max(coders, key=lambda r: (r.data.get("cycle", 0), r.stem), default=None)
+def _coder_of_record(coders: list[Record]) -> Record | None:
+    """The coder that answers for the scope's latest attempt: its latest
+    record, passing over a coder that handed its share to another once that
+    other has written."""
+    finishing = [r for r in coders if r.data["status"] != CODER_HANDOFF]
+    return max(finishing or coders, key=lambda r: (r.data.get("cycle", 0), r.stem), default=None)
+
+
+def _coder_entries(coders: list[Record], field_name: str) -> list:
+    """`field_name`'s entries across every coder record of a scope: when two
+    coders share a task, its files, choices and concerns are both of theirs."""
+    return [entry for r in coders for entry in r.data.get(field_name) or []]
 
 
 def _finding_inputs(reviewers: list[Record]) -> list[dict]:
@@ -3184,12 +3236,12 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     if not found.reviewers:
         raise RecordError(f"task {task!r} has no reviewer record yet; triage reads the "
                           "review, so dispatch the reviewers first")
-    coder = _latest_coder(found.coders)
+    coder = _coder_of_record(found.coders)
     coder_data = coder.data if coder else {}
     raised = _finding_inputs(found.reviewers)
     waived = _user_waived(log, scope)
     deferred = _deferred_root_causes(found.decisions, scope)
-    root_causes = [cid for cid, text in (concern_ids(coder).items() if coder else [])
+    root_causes = [cid for rec in found.coders for cid, text in concern_ids(rec).items()
                    if text.lower().startswith(ROOT_CAUSE_PREFIX)
                    and cid not in deferred and cid not in waived]
     rules = {f["id"]: f["rule"] for f in raised}
@@ -3210,7 +3262,7 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
         "undelivered_note": isinstance(task, int) and bool(undelivered_notes(log, task)),
         "prior": entries,
         "model": coder_data.get("model"),
-        "file_candidates": _coder_deferrals(coder, rules) + [
+        "file_candidates": [c for rec in found.coders for c in _coder_deferrals(rec, rules)] + [
             {"id": cid, "rule": reason, "text": f"deferred root cause {cid}: {reason}"}
             for cid, reason in deferred.items()],
     }
@@ -3522,11 +3574,13 @@ def _round_ruled_off(latest: dict, states: dict[str, dict]) -> bool:
 
 def _round_paths(store_dir: Path, log: list[dict], task: int | str) -> list[str]:
     """The files the scope's latest round could have changed: its footprint
-    and what its coder says it changed."""
-    coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
-    changed = {_normalize_path(f) for f in (coder.data.get("changed_files", []) if coder else [])
-               if _non_empty_str(f)}
+    and what its coders say they changed."""
+    changed = _coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
     return sorted((scope_footprint(store_dir, log, task) or set()) | changed)
+
+
+def _coder_changed_files(coders: list[Record]) -> set[str]:
+    return {_normalize_path(f) for f in _coder_entries(coders, "changed_files") if _non_empty_str(f)}
 
 
 def _unlanded_changes(store_dir: Path, log: list[dict], task: int | str) -> list[str]:
@@ -3762,10 +3816,9 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
         # At `final` and the close with nothing staged (every fix committed,
         # or one reverted), the gate still runs the suite, over HEAD.
         tree = _git(top, "write-tree").strip()
-        coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
+        coders = _scope_records(store_dir, scope_prefix(log, task)).coders
         hits = _excused_label_hits(find_process_labels(diff_trees(top, "HEAD", tree, staged)),
-                                   coder.data.get(CONCERN_FIELD, []) if coder else []) \
-            if staged else []
+                                   _coder_entries(coders, CONCERN_FIELD)) if staged else []
     commands = [{"kind": "labels", "command": "ledger.py labels (staged)",
                  "passed": not hits,
                  "excerpt": "\n".join(f"{h.path}:{h.line}: {h.label}: {h.text}"
@@ -3870,9 +3923,7 @@ def _log_fix_files(store_dir: Path, task: int | str) -> list[dict]:
     the coder's record is rewritten. Returns the log as it now stands."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
-        coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
-        changed = {_normalize_path(f) for f in (coder.data.get("changed_files", [])
-                                                if coder else []) if _non_empty_str(f)}
+        changed = _coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
         new = sorted(changed - (task_footprint(log, task) or set()))
         if new:
             _append_progress(store_dir, {"type": "stage", "task": task, "files": new,
@@ -3911,15 +3962,14 @@ def _complete(store_dir: Path, task: int | str, note: str, light: bool) -> int:
 
 def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | str,
                                   footprint: set[str]) -> None:
-    """A task's coder changed only files its footprint lists: a file outside
+    """A task's coders changed only files its footprint lists: a file outside
     it would be left out of the gate and the commit."""
     if not isinstance(task, int):
         return
-    coder = _latest_coder(_scope_records(store_dir, scope_prefix(log, task)).coders)
-    outside = sorted({_normalize_path(f) for f in (coder.data.get("changed_files", [])
-                                                   if coder else [])} - footprint)
+    outside = sorted(_coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
+                     - footprint)
     if outside:
-        raise RecordError(f"task {task}'s coder changed {', '.join(outside)}, outside its "
+        raise RecordError(f"task {task}'s coders changed {', '.join(outside)}, outside its "
                           "recorded footprint: re-issue `ledger.py stage` with those files")
 
 
@@ -3994,7 +4044,7 @@ def _check_contest_answers(path: Path, data: dict) -> None:
     """A re-checking reviewer answers every contest the coder raised against
     one of its findings, so a finding closes only after it read the evidence."""
     scope = _scope(path.stem)
-    coder = _latest_coder(_scope_records(path.parent, scope).coders) if scope else None
+    coder = _coder_of_record(_scope_records(path.parent, scope).coders) if scope else None
     if coder is None:
         return
     sent = {c["finding"] for c in coder.data.get("contested", [])

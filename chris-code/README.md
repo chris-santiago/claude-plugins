@@ -124,7 +124,7 @@ These four are the ones where muscle memory will mislead you. Framed as before â
 
 | Agents | Role |
 |---|---|
-| `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
+| `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task (per language when it spans two), most-specific wins by scope + dependencies. |
 | `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Quality review, dispatched alongside the spec reviewer: each language a task touches gets the reviewer paired with its coder. Each break-checks a sample of the task's new or changed tests in a throwaway copy. |
 | `python-review-lite`, `rust-review-lite` | Whole-change idiom/lint gate (also usable standalone pre-commit) returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
@@ -295,7 +295,7 @@ flowchart TB
 
 ### Coding Agents (exclusive â€” most specific wins)
 
-One coder per task. Dispatched by `subagent-driven-development` (`executing-plans` runs tasks inline). When multiple match the same extension, `scope.require_dependencies` picks the most specific (e.g., `pytorch-coder` over `python-coder` when the project depends on torch).
+One coder per task. Dispatched by `subagent-driven-development` (`executing-plans` runs tasks inline). When multiple match the same extension, `scope.require_dependencies` picks the most specific (e.g., `pytorch-coder` over `python-coder` when the project depends on torch). A task whose files span two languages gets one coder per language: the first does its share (usually the tests) and hands off to the coder of record, which finishes the task.
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|

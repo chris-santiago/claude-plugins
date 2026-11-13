@@ -854,6 +854,28 @@ class TestShapes(LedgerTestCase):
         kinds = [i.kind for i in ledger.compute_open_items(records, resolved_ids=set())]
         self.assertEqual(kinds, ["malformed"])
 
+    def test_a_symbol_declared_again_lists_once_under_its_first_task(self):
+        # A later task re-listing a helper it reused, and a coder of record
+        # re-listing its partner's, add nothing: the brief carries one line
+        # per symbol and path, credited to the earliest task (task 2 before
+        # task 10, though "task-10" sorts first by file name).
+        shared = {"symbol": "foo", "path": "a.py", "why": "shared"}
+        _write(self.store, "task-10-python-coder.json", _coder(
+            task=10, new_shared_symbols=[dict(shared, why="reused")]))
+        _write(self.store, "task-2-python-coder.json", _coder(task=2, new_shared_symbols=[shared]))
+        _write(self.store, "task-2-rust-coder.json", _coder(
+            task=2, agent="rust-coder", new_shared_symbols=[shared]))
+        shapes = ledger.list_shapes(ledger.load_records(self.store))
+        self.assertEqual([(s.symbol, s.why, s.source) for s in shapes],
+                         [("foo", "shared", "task-2-python-coder")])
+
+    def test_the_same_symbol_at_another_path_is_another_shape(self):
+        _write(self.store, "task-1-python-coder.json", _coder(new_shared_symbols=[
+            {"symbol": "foo", "path": "a.py", "why": "one"},
+            {"symbol": "foo", "path": "b.py", "why": "another"}]))
+        shapes = ledger.list_shapes(ledger.load_records(self.store))
+        self.assertEqual([s.path for s in shapes], ["a.py", "b.py"])
+
     def test_render_shapes_empty_placeholder(self):
         self.assertEqual(ledger.render_shapes([]), "(none recorded yet)")
 
@@ -1311,6 +1333,15 @@ class TestCmdCheck(LedgerTestCase):
         path = _write(self.store, "task-1-python-coder.json", _coder())
         ledger.cmd_check(str(path))  # no raise
 
+    def test_check_refuses_a_shared_symbol_listed_twice(self):
+        entry = {"symbol": "foo", "path": "a.py", "why": "shared"}
+        path = _write(self.store, "task-1-python-coder.json",
+                      _coder(new_shared_symbols=[entry, dict(entry, why="again")]))
+        with self.assertRaisesRegex(ledger.RecordError, "foo"):
+            ledger.cmd_check(str(path))
+        # A check-time refusal, so an earlier run's repeats still load.
+        self.assertTrue(ledger.load_records(self.store)[0].ok)
+
     def test_invalid_record_raises_naming_field_value_and_allowed_set(self):
         # spec Sec 6: check's error names the offending field, the
         # offending value, and the allowed set — not just the field.
@@ -1438,6 +1469,58 @@ class TestCoderModel(LedgerTestCase):
 
 
 # --- get_store_dir ---
+
+def _handoff(**overrides) -> dict:
+    """A first coder's record handing its task to the coder of record."""
+    return _coder(**{"status": "handed_off", "handed_to": "rust-coder", **overrides})
+
+
+class TestHandoff(LedgerTestCase):
+    """A task whose files span two languages gets a coder per language: the
+    first hands off to the coder of record, which finishes the task."""
+
+    def open_ids(self) -> list[str]:
+        return sorted(i.id for i in ledger.compute_open_items(ledger.load_records(self.store), set()))
+
+    def test_a_handoff_names_another_coder(self):
+        ledger.validate_record(_handoff())
+        missing = _handoff()
+        del missing["handed_to"]
+        for data in (missing, _handoff(handed_to=""), _handoff(handed_to="python-coder")):
+            with self.subTest(handed_to=data.get("handed_to")):
+                with self.assertRaisesRegex(ledger.RecordError, "handed_to"):
+                    ledger.validate_record(data)
+
+    def test_a_handoff_owes_no_fix_fields(self):
+        # The coder of record answers for the round, so the first coder's
+        # share of a fix carries no diagnosis or hunk map of its own.
+        ledger.validate_record(_handoff(cycle=2))
+
+    def test_a_handoff_is_open_until_its_coder_of_record_finishes(self):
+        _write(self.store, "task-1-python-coder.json", _handoff())
+        self.assertEqual(self.open_ids(), ["task-1-python-coder#status"])
+        _write(self.store, "task-1-rust-coder.json", _coder(agent="rust-coder", status="needs_context"))
+        self.assertEqual(self.open_ids(), ["task-1-python-coder#status", "task-1-rust-coder#status"])
+        _write(self.store, "task-1-rust-coder.json", _coder(agent="rust-coder", status="done_with_concerns"))
+        self.assertEqual(self.open_ids(), [])
+
+    def test_another_tasks_coder_does_not_settle_a_handoff(self):
+        _write(self.store, "task-1-python-coder.json", _handoff())
+        _write(self.store, "task-2-rust-coder.json", _coder(agent="rust-coder", task=2))
+        self.assertEqual(self.open_ids(), ["task-1-python-coder#status"])
+
+    def test_a_handoff_did_work_so_its_model_is_checked(self):
+        path = _write(self.store, "task-1-python-coder.json", _handoff(model="haiku"))
+        with self.assertRaisesRegex(ledger.RecordError, "sonnet"):
+            ledger.cmd_check(str(path))
+
+    def test_the_coder_of_record_is_the_one_that_did_not_hand_off(self):
+        partner = ledger.Record("task-1-python-coder", True, data=_handoff(cycle=3))
+        finisher = ledger.Record("task-1-rust-coder", True, data=_coder(agent="rust-coder", cycle=2))
+        self.assertIs(ledger._coder_of_record([partner, finisher]), finisher)
+        self.assertIs(ledger._coder_of_record([partner]), partner)
+        self.assertIsNone(ledger._coder_of_record([]))
+
 
 class TestGetStoreDir(unittest.TestCase):
     def test_override_bypasses_git(self):
@@ -4880,6 +4963,49 @@ class TestCommit(TriageStoreTestCase):
         with self.assertRaises(ledger.RecordError):
             with contextlib.redirect_stdout(io.StringIO()):
                 ledger.cmd_commit(self.store, 3, "  ", "true", None)
+
+
+class TestHandoffInTheLoop(TriageStoreTestCase):
+    """Both coders' records count for the task: the first coder's choices,
+    root causes and files, and the coder of record's finish."""
+
+    def partner(self, **fields) -> Path:
+        return self.write("task-3-python-coder.json", _handoff(task=3, **fields))
+
+    def finisher(self, **fields) -> Path:
+        return self.write("task-3-rust-coder.json", _coder(task=3, agent="rust-coder", **fields))
+
+    def test_ready_waits_for_the_coder_of_record(self):
+        self.partner()
+        self.spec()
+        self.triage()
+        self.assertTrue(any("rust-coder" in b for b in ledger.ready_blockers(self.store, 3)))
+        self.finisher()
+        self.assertEqual(ledger.ready_blockers(self.store, 3), [])
+
+    def test_the_first_coders_open_choice_blocks_ready(self):
+        choice = {"question": "a null key?", "choice": "drop the row", "precedent": "a.py:1"}
+        self.partner(open=[choice])
+        self.finisher()
+        self.spec()
+        self.triage()
+        blockers = " ".join(ledger.ready_blockers(self.store, 3))
+        self.assertIn(_entry_id("task-3-python-coder", "open", choice), blockers)
+
+    def test_triage_reads_the_first_coders_root_cause(self):
+        concern = "root cause: b.py:1 the parser drops the key"
+        self.partner(concerns=[concern])
+        self.finisher()
+        self.spec()
+        self.assertIn(_entry_id("task-3-python-coder", "concerns", concern),
+                      ledger.triage_inputs(self.store, 3)["root_causes"])
+
+    def test_a_file_the_first_coder_changed_outside_the_footprint_stops_the_commit(self):
+        self.partner(changed_files=["tests/test_b.py"])
+        self.finisher(changed_files=["a.py"])
+        with self.assertRaisesRegex(ledger.RecordError, "tests/test_b.py"):
+            ledger._check_coder_inside_footprint(self.store, ledger.load_progress_log(self.store), 3,
+                                                 {"a.py"})
 
 
 class TestReady(TriageStoreTestCase):

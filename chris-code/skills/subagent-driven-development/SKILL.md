@@ -55,6 +55,7 @@ flowchart TB
     coder --> status
     status -->|"needs_context / blocked"| answer
     answer --> coder
+    status -->|"handed_off: the coder of record next"| coder
     status -->|"done / done_with_concerns"| reviews
     reviews --> triage
     triage --> step
@@ -88,7 +89,7 @@ flowchart TB
 
 ## Agent Selection
 
-### Coder Agents (exclusive — one coder per task)
+### Coder Agents (exclusive — one coder per task, or per language)
 
 Dispatch the most specific `*-coder` for the task's file types:
 
@@ -96,7 +97,11 @@ Dispatch the most specific `*-coder` for the task's file types:
 2. When several match, the most specific `scope.require_dependencies` wins (`pytorch-coder` over `python-coder` when the project depends on torch). Tiebreaker: code that subclasses `nn.Module`, manipulates `torch.Tensor` shapes or devices, or implements a training-pipeline component (loss, callback, optimizer, scheduler, metric) goes to `pytorch-coder`; non-torch code (CLI, data I/O, config utils) goes to `python-coder`.
 3. With no specific match, fall back to a general-purpose agent.
 
-One coder writes the task's code, and it is self-contained (domain-specific and general language patterns). The only exception is an escalated consumer in another language during a fix (*Route an escalated consumer*), where that language's coder changes only the consumer.
+One coder writes the task's code, and it is self-contained (domain-specific and general language patterns). There are two exceptions. An escalated consumer in another language during a fix (*Route an escalated consumer*) gets that language's coder, which changes only the consumer. A task whose files span two languages (a Rust engine change and the Python tests that pin it, say) gets one coder per language, each picked by the steps above:
+- **The coder of record** is the one for the language where the task's behavior lives. It runs last, finishes the task with the brief's `Verify:` command, and answers for every attempt: on a fix, its record maps every hunk of the round, the first coder's included.
+- **The first coder** runs before it, with a `Hand off to: <coder of record>` line in its dispatch. It does its language's share, usually the tests that fail until the change lands, and returns HANDED_OFF. The coder of record's dispatch adds the first coder's report path.
+- **A fix that touches both languages** runs in the same order, both coders working from the round's `Fix baseline`, each sent back at its own record path. A fix that touches one language goes to that language's coder alone, with no `Hand off to:` line, and it finishes the round itself.
+- **Until the coder of record finishes,** `open` lists the handoff and `ready` blocks on it. Both records count for the task: each coder's `open` choices, `concerns` and changed files.
 
 ### Review Agents (paired with the coder)
 
@@ -144,14 +149,14 @@ STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)
 - **Cross-task notes.** The other thing a coder can't recover is cross-task context. File it as a task-note for the task that needs it (*Run Notes*), and the brief carries it. Write pointers and decisions, never dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict ruling (`finding §5 governs the extent→band call`), a code entry point (the landing symbol, plus any new wire-key value), or a shared-shape pointer. Point at the entry and let the coder trace the chain. Keep it to a few lines; more means the requirement belongs in the spec, or the conflict belonged in pre-flight.
 - **Reviewer inputs.** Spec and quality reviewers get the brief path, the coder's report path, the changed-file list, the verbatim Constraints, their own record and report paths (`path --task N --agent <reviewer>`, with `--kind report` for the report), the coder's record path and the scripts path, and read the changed files themselves. Each writes its verdict to its report path and returns one line: triage reads the record, so the verdict's prose never enters your context. A re-check adds the round's kind, the `Fix baseline` and `Task files` lines triage printed (for `ledger.py diff-since`), and the settled finding ids from the last triage entry's `settled`. The coder's contests, decision doc and sweeps are in its record. Never paste diffs.
 - **Review-lite inputs.** `*-review-lite` agents run only at the whole-change gate. They get the review-package path, the verbatim Constraints, the task (`"final"`), the record path and the scripts path, with no brief, report or file list. A re-check adds the coder's record path and the scope's settled ids.
-- **Committing is yours; coders never stage or commit.** When triage prints `done`, run `python3 "$SDD_SCRIPTS/ledger.py" commit --task N --message "<message>" --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`. It stops, touching nothing, at any blocker `ready` lists (a held finding, an open behavior choice, an undelivered note, an open `cannot_verify`, a malformed record, and at `final` an open escalation), or at a coder file outside the task's recorded footprint (re-issue `stage`). Otherwise it stages exactly the footprint, gates it (labels, lint, then the test), commits only those files with your message, and appends `complete`. At `final`, `--test` is the project's full test suite. A labels or lint failure goes back to the coder as the same attempt; a failing test is a gate finding, so run `triage` again.
+- **Committing is yours; coders never stage or commit.** When triage prints `done`, run `python3 "$SDD_SCRIPTS/ledger.py" commit --task N --message "<message>" --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`. It stops, touching nothing, at any blocker `ready` lists (a held finding, an open behavior choice, an undelivered note, an open `cannot_verify`, a handoff whose coder of record hasn't finished, a malformed record, and at `final` an open escalation), or at a coder file outside the task's recorded footprint (re-issue `stage`). Otherwise it stages exactly the footprint, gates it (labels, lint, then the test), commits only those files with your message, and appends `complete`. At `final`, `--test` is the project's full test suite. A labels or lint failure goes back to the coder as the same attempt; a failing test is a gate finding, so run `triage` again.
 - **Never** paste task text, prior-task summaries or diffs into a dispatch or your own context. A fresh subagent needs its brief, the interfaces it touches and the constraints, nothing else.
 
 ## Cross-Task Pattern Ledger
 
 You are the only actor who sees the task sequence: coders stay inside their task, and reviewers see one diff. Coders declare `new_shared_symbols` and `duplication_pending` in their records, and `ledger.py shapes` derives the shared-shapes list from them. Acting on it is yours: an untracked repeated shape lands as N verbatim copies that pass every per-task gate.
 
-- **Shapes carry automatically:** every brief includes the shared-shapes section. When a later task in the same family needs the pointer called out more directly, file a task-note: "the composite dispatch lives at `<symbol>`; call it, don't re-inline."
+- **Shapes carry automatically:** every brief includes the shared-shapes section, one line per helper, credited to the task that declared it first. When a later task in the same family needs the pointer called out more directly, file a task-note: "the composite dispatch lives at `<symbol>`; call it, don't re-inline."
 - **A `duplication_pending` entry** (in `ledger.py open`, or on the coder's record): assign the hoist to the next task whose footprint covers the owning file, or append a small hoist task if none does. Don't let it ride to the whole-change gate, where the copies are committed and the fix is rework across N commits. Once the hoist lands, run `python3 "$SDD_SCRIPTS/ledger.py" resolve <id> --note "..." --store "$STORE"`. Ids are content digests (`task-1-python-coder#duplication_pending[a1b2c3d4]`): copy them from `open`, never construct them, and expect a rewritten entry to get a new id.
 - **`shapes` is incomplete while `open` lists a `#malformed` record.** A record that fails to parse or validate is skipped, with its `new_shared_symbols` and `duplication_pending`, until its agent fixes it with `ledger.py check`.
 - **Unlisted cases feed forward.** A coder that handles a case its `Cases:` line didn't list reports it in `concerns` as `unlisted case: ...`. That is a planning gap, not a concern about the task. When a later task covers the same kind of rule (the same parameter shape, or the same validation elsewhere), file the case as a task-note for it. `ledger.py report` lists every unlisted case, beside the follow-ups, for the completion report (`verification-before-completion`, *After Verification Passes*). Never edit the plan mid-run: this is how its gaps surface.
@@ -248,6 +253,8 @@ Conversation memory doesn't survive compaction, and a controller that loses its 
 **A root cause outside the brief:** reported as a `concerns` entry `root cause: <path> <evidence>` when the task's change exposes or depends on code its brief doesn't cover. Don't send the coder to fix it, and don't ask the user yet: `triage` routes it to a holistic round, whose research agent decides, with evidence, whether this task fixes it. A decision that lists it in `excluded` defers it: `triage` files it as a follow-up with the reason and stops counting it. One the task can't wait for goes to the stage batch, where the user can waive it. Each fix can expose the next root cause, and each takes one of the task's two rounds, so a task that keeps growing reaches the stage batch with its history.
 
 **Open behavior choices:** behavior the brief left undefined, or a contract change the plan didn't specify, isn't a stop. The coder follows the nearest precedent and records it in `open`, and `ready` parks the task until the user accepts or overrides each in the stage batch.
+
+**HANDED_OFF:** the first of a two-language task's coders finished its share (*Coder Agents*). Dispatch the coder of record it names; the reviews wait for that coder's DONE.
 
 **NEEDS_CONTEXT:** provide the missing context and re-dispatch.
 
