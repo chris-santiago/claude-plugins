@@ -71,14 +71,14 @@ A fix also carries the round's evidence, each field optional and empty when unus
 
 ---
 
-## Quality review agents (additive — all matching fire)
+## Quality review agents (paired with the coder)
 
-Dispatched per task **alongside** the spec reviewer; the orchestrator triages both verdicts once. Both rate a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. Each also runs a **break check**: in a throwaway copy of the task's working state (`ledger.py scratch`), it breaks the behavior a sample of the task's new or changed tests claim to check (3, 5 or 8 tests by rigor level, one break each) and raises S3 for any test that still passes. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
+Dispatched per task **alongside** the spec reviewer, one per coder that worked the task: `python-coder`'s code gets `python-quality-reviewer`, `pytorch-coder`'s gets `pytorch-quality-reviewer` alone, and `rust-coder`'s gets `rust-quality-reviewer`. The orchestrator triages every verdict once. the orchestrator triages both verdicts once. Both rate a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. Each also runs a **break check**: in a throwaway copy of the task's working state (`ledger.py scratch`), it breaks the behavior a sample of the task's new or changed tests claim to check (3, 5 or 8 tests by rigor level, one break each) and raises S3 for any test that still passes. In a PyTorch project a `.py` file gets both `python-quality-reviewer` and `pytorch-quality-reviewer`; if they conflict, the more specific one wins.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
 | `python-quality-reviewer` | opus | `.py`, `.ipynb` | General Python principle adherence + bug detection |
-| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` (torch, lightning) | Lightning conventions + silent training bugs + reproducibility |
+| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` (torch, lightning) | Lightning conventions + silent training bugs + reproducibility, plus general Python principle adherence + bug detection |
 | `rust-quality-reviewer` | opus | `.rs` | Rust principle adherence + bug detection |
 
 They verify the coder actually followed the principles it claims to internalize, catch bugs the coder missed, and validate test quality. They also check the project's CLAUDE.md constraints and public sentinel returns, the two checks a per-task review-lite pass used to carry. On a re-check they re-run recorded sweep commands, spot-check `inspected` lists, and judge tests-first `n/a` reasons and flagged test changes. They may search a changed symbol's consumers to tag reach. Their verdict is **APPROVED** or **REVISE** (with a specific fix list). The PyTorch reviewer additionally flags any change to loss computation, gradient flow, or the data pipeline, even when the code is correct, so the orchestrator can confirm it was intentional.

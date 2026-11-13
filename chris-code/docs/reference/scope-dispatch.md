@@ -7,7 +7,7 @@ Agents and review skills match by `scope.extensions` and `scope.require_dependen
 | Role | Dispatch | Example (PyTorch project, `.py` files) |
 |------|----------|----------------------------------------|
 | `*-coder` | **Exclusive** — most specific wins | `pytorch-coder` (not `python-coder`) |
-| `*-quality-reviewer` | **Additive** — all matching fire | `python-quality-reviewer` + `pytorch-quality-reviewer` |
+| `*-quality-reviewer` | **Paired** — the reviewer of each coder that worked the task | `pytorch-quality-reviewer` (for `pytorch-coder`) |
 | `*-review-lite` | **Additive** — all matching fire | `python-review-lite` |
 | `*-design-reviewer` | **Additive** — all matching fire | `python-design-reviewer` + `rust-design-reviewer` |
 | `*-review` skills (standalone) | **Additive** — all matching fire | `python-review` + `rust-review` |
@@ -15,7 +15,7 @@ Agents and review skills match by `scope.extensions` and `scope.require_dependen
 | `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 5), in an isolated worktree |
 | `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to resolve a spec reviewer's `cannot_verify` item |
 
-**Exclusive** means exactly one agent does the work — the most specific match. **Additive** means every agent matching the file extensions fires on the same diff; if findings conflict, the more specific agent's guidance wins. **Explicit** agents aren't matched by file type at all — the skills dispatch them by name. `mutation-tester` is explicit because it breaks code and runs the project's own tests, which needs no language-specific tooling; it fires once whenever the change includes testable source.
+**Exclusive** means exactly one agent does the work — the most specific match. **Paired** means each coder's code is reviewed by the quality reviewer of the same name (`python-coder` → `python-quality-reviewer`), which checks that coder's whole contract, general language patterns included; a task with a Rust and a Python coder gets both reviewers. **Additive** means every agent matching the file extensions fires on the same diff; if findings conflict, the more specific agent's guidance wins. **Explicit** agents aren't matched by file type at all — the skills dispatch them by name. `mutation-tester` is explicit because it breaks code and runs the project's own tests, which needs no language-specific tooling; it fires once whenever the change includes testable source.
 
 ## Model selection
 

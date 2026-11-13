@@ -53,7 +53,7 @@ chris-code adopts **"contracts stay, choreography goes."** A spec records only t
 
 **The why.** superpowers is skills-only. Its coding and review happen inline or through generic subagents steered by prompt-template files (`implementer-prompt.md`, `code-reviewer.md`). That works, but every dispatch is hand-rolled.
 
-chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project; all matching `*-quality-reviewer`s fire additively. You describe the task; the routing is mechanical.
+chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right one fires automatically based on file extension and project dependencies: `pytorch-coder` wins over `python-coder` in a torch project, and each coder's code gets its own `*-quality-reviewer`. You describe the task; the routing is mechanical.
 
 ### 3. Review is a uniform, multi-stage gate
 
@@ -125,7 +125,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | Agents | Role |
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task, most-specific wins by scope + dependencies. |
-| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Additive quality review, dispatched alongside the spec reviewer; all matching fire. Each break-checks a sample of the task's new or changed tests in a throwaway copy. |
+| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Quality review, dispatched alongside the spec reviewer: each coder's code gets the reviewer of the same name. Each break-checks a sample of the task's new or changed tests in a throwaway copy. |
 | `python-review-lite`, `rust-review-lite` | Whole-change idiom/lint gate (also usable standalone pre-commit) returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
@@ -303,17 +303,17 @@ One coder per task. Dispatched by `subagent-driven-development` (`executing-plan
 | `pytorch-coder` | sonnet | `.py`, `.ipynb` | torch, lightning | PyTorch/Lightning implementation with Lightning-first conventions + general Python patterns |
 | `rust-coder` | sonnet | `.rs` | — | Rust implementation with review principles |
 
-### Quality Review Agents (additive — all matching fire)
+### Quality Review Agents (paired with the coder)
 
 Dispatched per task alongside the spec reviewer; both verdicts are triaged once. All agents matching the file extensions fire on the same diff.
 
 | Agent | Model | Scope | Dependencies | Role |
 |-------|-------|-------|-------------|------|
 | `python-quality-reviewer` | opus | `.py`, `.ipynb` | — | General Python principle adherence + bug detection |
-| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` | torch, lightning | Lightning conventions + silent training bugs + reproducibility |
+| `pytorch-quality-reviewer` | opus | `.py`, `.ipynb` | torch, lightning | Lightning conventions + silent training bugs + reproducibility, plus general Python principle adherence + bug detection |
 | `rust-quality-reviewer` | opus | `.rs` | — | Rust principle adherence + bug detection |
 
-In a PyTorch project, `.py` files get **both** `python-quality-reviewer` and `pytorch-quality-reviewer`. If findings conflict, pytorch takes precedence.
+Each coder's code gets the reviewer of the same name, so a `pytorch-coder` task gets `pytorch-quality-reviewer` alone, which checks general Python as well as Lightning. A task with a Rust and a Python coder gets both of their reviewers.
 
 ### Review-Lite Agents (additive — all matching fire)
 
@@ -375,7 +375,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | Role | Dispatch | Example (PyTorch project, .py files) |
 |------|----------|--------------------------------------|
 | `*-coder` | **Exclusive** — most specific wins | `pytorch-coder` (not `python-coder`) |
-| `*-quality-reviewer` | **Additive** — all matching fire | `python-quality-reviewer` + `pytorch-quality-reviewer` |
+| `*-quality-reviewer` | **Paired** — the reviewer of each coder that worked the task | `pytorch-quality-reviewer` (for `pytorch-coder`) |
 | `*-review-lite` | **Additive** — all matching fire | `python-review-lite` |
 | `*-design-reviewer` | **Additive** — all matching fire | `python-design-reviewer` + `rust-design-reviewer` |
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |

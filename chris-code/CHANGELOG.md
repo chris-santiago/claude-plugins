@@ -8,6 +8,12 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-12
+
+### Changed
+- **Each coder's code gets the quality reviewer of the same name, and no other.** `pytorch-coder`'s task gets `pytorch-quality-reviewer` alone, the same way `rust-coder`'s gets `rust-quality-reviewer`. Before, every reviewer matching the file extensions fired, so a PyTorch task got both the Python and the PyTorch reviewer on the same diff. The PyTorch reviewer now also checks the general Python principles, S3+ patterns, bugs and test quality that `pytorch-coder` shares with `python-coder`, under a new *General Python* axis and verdict section. A task whose coders span languages still gets each coder's reviewer, and the review-lite gates still fire by extension.
+- **`lean-plan` merges small tasks.** Every task costs a coder and a full review sequence at execution, so a task too small to earn that (a guard, a message, one function, a row or two of `Cases:`) joins a neighbor that shares its files or theme and its coder. The merged task carries both tasks' `Cases:` rows and the higher `Rigor:` line. A small task stays on its own only when it needs its own commit.
+
 ## [0.16.0] - 2026-11-09
 
 ### Changed
