@@ -4,7 +4,7 @@ chris-code ships 15 dedicated agents — the layer superpowers doesn't have. The
 
 ## Typed records
 
-Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents, and the close's gates (the design reviewers, `intent-reviewer`, `mutation-tester`) — writes its JSON record to a dispatch-supplied path, never one it computes itself. The orchestrator takes every such path from `ledger.py path` (see [Ledger commands](ledger.md)). Records are keyed by scope and by the agent's registered name rather than its role, so additive same-role agents (e.g. the Python and Rust quality reviewers on one task) never collide, whole-change gate records carry `"task": "final"`, and the close's records `"task": "close"`. The dispatch-supplied path defines record identity; an agent never works it out on its own. Each role's payload contract is documented under its own section, below.
+Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents, and the close's gates (the design reviewers, `intent-reviewer`, `mutation-tester`) — writes its JSON record to a dispatch-supplied path, never one it computes itself. The orchestrator takes every such path from `ledger.py path` (see [Ledger commands](ledger.md)). Records are keyed by scope and by the agent's registered name rather than its role, so same-role agents (e.g. the Python and Rust quality reviewers on one task) never collide, whole-change gate records carry `"task": "final"`, and the close's records `"task": "close"`. The dispatch-supplied path defines record identity; an agent never works it out on its own. Each role's payload contract is documented under its own section, below.
 
 ## Shared review disciplines
 
@@ -74,6 +74,7 @@ A fix also carries the round's evidence, each field optional and empty when unus
 ## Quality review agents (paired with the coder)
 
 Dispatched per task **alongside** the spec reviewer, one for each language the task touches: the reviewer paired with the coder the orchestrator picks for those files (`python-coder` → `python-quality-reviewer`, `pytorch-coder` → `pytorch-quality-reviewer`, `rust-coder` → `rust-quality-reviewer`). So a PyTorch task gets `pytorch-quality-reviewer` alone, and a task touching Rust and Python gets one of each. The orchestrator triages every verdict once. Each rates a missing case by the brief's `Rigor:` level (`rigor.md`): below `heavy`, an esoteric case is S1-S2 and never starts a fix round, while a test that can't fail is S3 at every level. Each also runs a **break check**: in a throwaway copy of the task's working state (`ledger.py scratch`), it breaks the behavior a sample of the task's new or changed tests claim to check (3, 5 or 8 tests by rigor level, one break each) and raises S3 for any test that still passes.
+
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
 | `python-quality-reviewer` | opus | `.py`, `.ipynb` | General Python principle adherence + bug detection |
