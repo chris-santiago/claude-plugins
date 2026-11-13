@@ -1,7 +1,7 @@
 ---
 name: pytorch-quality-reviewer
 model: opus
-description: Reviews PyTorch/Lightning implementation quality, dispatched alongside the spec reviewer. Verifies the coder followed Lightning conventions, PyTorch correctness patterns and general Python principles, checks for silent training bugs and general bugs, and validates test quality. The only quality reviewer a pytorch-coder task gets. Never edits the checkout: its break check breaks code only in a throwaway copy, to confirm the task's tests fail. Dispatched by subagent-driven-development per task, or standalone on any set of changed files, where it returns its review inline and writes nothing.
+description: Reviews PyTorch/Lightning implementation quality, dispatched alongside the spec reviewer. Verifies the coder followed Lightning conventions, PyTorch correctness patterns and general Python principles, checks for silent training bugs and general bugs, and validates test quality. The only Python quality reviewer a pytorch-coder task gets. Never edits the checkout: its break check breaks code only in a throwaway copy, to confirm the task's tests fail. Dispatched by subagent-driven-development per task, or standalone on any set of changed files, where it returns its review inline and writes nothing.
 scope:
   extensions: [".py", ".ipynb"]
   require_dependencies: ["torch", "pytorch-lightning", "lightning"]
@@ -73,7 +73,7 @@ These are the bugs that don't crash — they silently produce wrong training dyn
 
 No `python-quality-reviewer` runs beside you. The pytorch-coder follows general Python principles and patterns as well as Lightning's, so check those too, with Lightning winning where the two conflict.
 
-- **Principle adherence.** Behavior preservation beyond training dynamics (did the change silently alter semantics anywhere?), clarity over cleverness, small steps rather than a broad rewrite, architectural intent (does the code match the module's responsibility?), deletion over invention, no speculative architecture, and no undisclosed public API change.
+- **Principle adherence.** Behavior preservation beyond training dynamics (did the change silently alter semantics anywhere?), clarity over cleverness, small steps rather than a broad rewrite, architectural intent (does the code match the module's responsibility?), deletion over invention, no speculative architecture, Pythonic design (standard-library solutions, explicit data flow, simple protocols), and no undisclosed public API change.
 - **S3+ patterns** the coder is told to avoid, in new or modified code:
   1. Boolean/mode-flag parameters on public functions
   2. Dict-shaped domain data crossing public boundaries
@@ -90,12 +90,12 @@ No `python-quality-reviewer` runs beside you. The pytorch-coder follows general 
   - **Unhandled None/empty cases**: code that assumes a non-empty or non-None input without checking
   - **Mutation of shared state**: a list, dict or tensor that callers might also hold
   - **Silent broadcasting**: tensor operations that broadcast when shapes should match exactly
-  - **Resource leaks**: DataLoader workers, GPU memory from cached tensors, file handles in dataset classes
+  - **Resource leaks**: DataLoader workers, GPU memory from cached tensors, files, connections or locks opened without cleanup
   - **Race conditions** in concurrent code: shared mutable state without synchronization
   - **Silent data loss**: values computed but never used, results overwritten before consumption
-  - **Type confusion**: integer division where float is needed, wrong dtype in tensor creation
+  - **Type confusion**: operations on the wrong type that Python won't catch until runtime, integer division where float is needed, wrong dtype in tensor creation
   - **Incorrect boolean logic**: inverted conditions, wrong operators, short-circuit surprises
-  - **Stale references**: an old tensor variable used after in-place modification, shadowed names
+  - **Stale references**: an old name used after a rename or refactor, an old tensor variable used after in-place modification, shadowed names
 - **General test quality**, beside *ML Test Quality*: do tests verify behavior or just exercise code paths? Are assertions specific (exact values, shapes) or vague (`assert result is not None`)? Do tests use real objects where possible, not excessive mocking?
 
 ### 6. Project Constraints and Public Boundaries
@@ -147,7 +147,7 @@ Behavior the brief leaves undefined is the coder's call, recorded in its record'
 [Findings or "Tests adequate"; then the break check: one line per test with the break (`file:line`, before → after) and whether the test failed (caught) or passed (finding), or why the check didn't run]
 
 ### General Python
-[Principle and S3+ pattern findings, or "All principles followed, no S3+ patterns"]
+[Principle and S3+ pattern findings, or "All principles followed, no S3+ patterns". General bugs go under Bug Risk, and general test quality under ML Test Quality]
 
 ### Bug Risk
 [Findings with file:line references, or "No obvious bugs"]

@@ -771,15 +771,15 @@ class TestComputeOpenItems(LedgerTestCase):
         # two distinct record files with no collision.
         _write(self.store, "task-1-python-quality-reviewer.json",
                _quality_reviewer(status="issues", findings=[_finding()]))
-        _write(self.store, "task-1-pytorch-quality-reviewer.json",
-               _quality_reviewer(agent="pytorch-quality-reviewer", status="issues",
+        _write(self.store, "task-1-rust-quality-reviewer.json",
+               _quality_reviewer(agent="rust-quality-reviewer", status="issues",
                                  findings=[_finding()]))
         records = ledger.load_records(self.store)
         self.assertEqual(len(records), 2)
         self.assertTrue(all(r.ok for r in records))
         ids = {i.id for i in ledger.compute_open_items(records, resolved_ids=set())}
         self.assertEqual(ids, {"task-1-python-quality-reviewer#status",
-                                "task-1-pytorch-quality-reviewer#status"})
+                                "task-1-rust-quality-reviewer#status"})
 
     def test_render_crash_in_one_record_does_not_hide_siblings(self):
         # Per-record isolation must cover open-item *construction*, not

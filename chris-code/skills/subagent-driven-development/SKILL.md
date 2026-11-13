@@ -98,9 +98,9 @@ Dispatch the most specific `*-coder` for the task's file types:
 
 One coder writes the task's code, and it is self-contained (domain-specific and general language patterns). The only exception is an escalated consumer in another language during a fix (*Route an escalated consumer*), where that language's coder changes only the consumer.
 
-### Review Agents (matched to the coder)
+### Review Agents (paired with the coder)
 
-Each coder's code gets the quality reviewer of the same name: `python-coder` → `python-quality-reviewer`, `pytorch-coder` → `pytorch-quality-reviewer`, `rust-coder` → `rust-quality-reviewer`. The pairs share their principles and patterns, so one reviewer covers the coder's whole contract: a PyTorch task gets only the PyTorch reviewer, which checks general Python too. A task whose coders span languages (an escalated consumer, say) gets each coder's reviewer. A `general-purpose` implementer gets the reviewer of the coder the selection above would have picked. The whole-change gate is different: every `*-review-lite` agent matching the changed extensions fires there.
+Each coder has a quality reviewer of the same name, which checks that coder's principles and patterns: `python-coder` → `python-quality-reviewer`, `pytorch-coder` → `pytorch-quality-reviewer`, `rust-coder` → `rust-quality-reviewer`. **For each language a task's files touch, dispatch the reviewer paired with the coder the selection above picks for those files.** So a PyTorch task gets `pytorch-quality-reviewer` alone (it checks general Python too), and a task touching Rust and Python (a binding, an escalated consumer) gets one reviewer per language, whoever wrote each file. A language no coder matches gets no quality reviewer, only the spec review. The same rule picks the review checklist a fix carries. The whole-change gate is different: every `*-review-lite` agent matching the changed extensions fires there.
 
 ### Model Selection
 
@@ -194,7 +194,7 @@ Copy the plan's Constraints section verbatim (exact values, formats, and stated 
   - **escalate:** park the task (*Park, then ask once per stage*). Its open findings wait as `waiting` (or `held`, a contest the reviewer kept) until the user rules them.
   - **done:** `ledger.py commit`.
 - **Re-check exactly the `recheck` set, at the reviewers' same record paths.** `raising` is the reviewers whose S3+ findings the round sent (the entry's `recheck_records`), over the fix diff and its consumers. `all` is every reviewer, over the whole task. `spec` (an override's ruling round) is the spec reviewer alone. `gate` means run `gate` again (it stages the task's files itself), then `triage`. `none` (a polish) means nobody. A gate finding is never re-dispatched. A reviewer whose findings weren't sent would re-read approved code into fresh nits, the churn this loop exists to stop. Every re-check gets the round's kind and the settled ids. A reviewer the coder contested answers each contest (`concede` or `hold`) in its record, and `check` refuses a re-check that leaves one unanswered.
-- **Attach the review checklist to a patch, holistic or ruling fix:** the contract of each quality reviewer the task dispatched, at `$SDD_SCRIPTS/../../../agents/<name>-quality-reviewer.md` expanded to absolute. A polish skips it.
+- **Attach the review checklist to a patch, holistic or ruling fix:** the contract of the quality reviewer paired with the coder for each language the fix touches (*Review Agents*), at `$SDD_SCRIPTS/../../../agents/<name>-quality-reviewer.md` expanded to absolute, whether or not a quality reviewer runs in that scope (`final` dispatches none). A polish skips it.
 - **Route an escalated consumer.** A coder whose fix breaks a consumer it can't change (another language) returns `done_with_concerns` naming it. Dispatch that language's coder for the consumer as part of this task's fix, with the parent task's brief, the concern naming the consumer, the fix baseline, the task's file list with the consumer's file added (re-issue `stage` with it), the scripts path, and its own record and report paths from `path`, starting at cycle 1. Add its quality reviewer to the re-check set and tell every re-checking reviewer which files it changed. A public-API change is a contract change: the coder records `reach_raised`, and the next triage routes it.
 - **Send the fix to the original coder when you can.** If the agent that implemented the task is reachable, continue it with `SendMessage`: it keeps the reasoning and invariants it built, and losing them is how a cold fixer breaks approved code. Record every coder's id at dispatch (`ledger.py handle --task N --role <agent-name> --agent <id> --store "$STORE"`) so `run-state` names it after a compaction; an id works only in the session that created it. Otherwise dispatch fresh at the same record path.
 - **Fix dispatches re-point at the same record path.** The coder reads its prior record there and derives `cycle` as prior + 1. From cycle 2 its record carries a `diagnosis`, a `hunk_map` and `consumers_checked`, plus the round's evidence (sweep rows mapped to hunks, tests first, contests, skipped notes, decision rows), all enforced by `check`.
@@ -275,7 +275,7 @@ Then it's the same loop with `--task final`: `triage --task final` routes lite's
 
 - `./implementer-prompt.md`: the implementer dispatch when no `*-coder` agent matches. The dispatch carries paths only; the agent reads the coders' protocol from that file's *Protocol* section.
 
-The spec reviewer (language-agnostic, read-only apart from its own record and report) and the `*-quality-reviewer` agents are registered agents that carry their own mandates, so they need no template: dispatch the spec reviewer per task and each coder's own quality reviewer (*Review Agents*). Every dispatch uses file handoffs: brief, report, record and scripts paths plus verbatim Constraints, never pasted task text or diffs.
+The spec reviewer (language-agnostic, read-only apart from its own record and report) and the `*-quality-reviewer` agents are registered agents that carry their own mandates, so they need no template: dispatch the spec reviewer per task and the quality reviewers paired with the coder (*Review Agents*). Every dispatch uses file handoffs: brief, report, record and scripts paths plus verbatim Constraints, never pasted task text or diffs.
 
 ## Example Workflow
 
@@ -352,7 +352,7 @@ Breaking any rule above is a red flag. These are the ones a long run's pressure 
 **Agents:**
 - **`*-coder` agents**: specialized implementers, dispatched by file type
 - **`spec-reviewer`**: spec-compliance review per task, language-agnostic
-- **`*-quality-reviewer` agents**: design quality, bug detection, and a break check of a sample of the task's new or changed tests, one per coder, matched by name
+- **`*-quality-reviewer` agents**: design quality, bug detection, and a break check of a sample of the task's new or changed tests, one per language the task touches, paired with the coder
 - **`*-review-lite` agents**: the whole-change gate (idiom and lint across commits), dispatched by file type
 
 **Subagents use:** **chris-code:test-driven-development** for each task.
