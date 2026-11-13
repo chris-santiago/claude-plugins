@@ -5050,6 +5050,24 @@ class TestHandoffInTheLoop(TriageStoreTestCase):
         _rule(self.store, self.spec_id(issue))
         self.assertIn(cid, ledger.triage_inputs(self.store, 3)["root_causes"])
 
+    def test_a_landed_rounds_claim_holds_when_its_leftover_findings_are_dropped(self):
+        # The fix landed, so ruling off what its re-check still raises
+        # doesn't undo the claim: only a fix that never finished, or one the
+        # user discarded, leaves a root cause open again.
+        concern = "root cause: b.py:1 the parser drops the key"
+        self.partner(concerns=[concern])
+        self.finisher()
+        issue = _finding()
+        self.spec(issue)
+        cid = _entry_id("task-3-python-coder", "concerns", concern)
+        self.triage()
+        decision = self.entries()[-1]["decision"]
+        self.write(f"{decision}.json", _decision([cid, self.spec_id(issue)], task=3,
+                                                 reviewer_records=["task-3-spec-reviewer"]))
+        self.finisher(cycle=2, baseline=_baseline(self.store, 3), **_FIX_FIELDS)
+        _rule(self.store, self.spec_id(issue))
+        self.assertEqual(ledger.triage_inputs(self.store, 3)["root_causes"], [])
+
     def test_a_first_attempts_handoff_stays_finished_after_a_ruled_off_round(self):
         # The coder of record finished the first attempt, then blocked in a
         # round the user ruled off: its history still shows the finish.

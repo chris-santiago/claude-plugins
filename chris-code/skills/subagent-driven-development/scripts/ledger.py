@@ -3152,15 +3152,30 @@ def _deferred_root_causes(decisions: list[Record], scope: str) -> dict[str, str]
             for e in d.data["excluded"] if f"#{CONCERN_FIELD}[" in e["finding"]}
 
 
-def _claimed_root_causes(decisions: list[Record], scope: str, ruled_off: set[str]) -> set[str]:
+def _claimed_root_causes(decisions: list[Record], scope: str, unlanded: set[str]) -> set[str]:
     """Coder `root cause:` concerns a decision of the scope chose to fix:
     its round implements them, so they are no longer open work even on a
     record no coder rewrites (a first coder that handed off). A decision
-    whose round the user ruled off (`ruled_off`, by stem) implemented
-    nothing, so it claims nothing."""
-    return {f for d in decisions if _scope(d.stem) == scope and d.stem not in ruled_off
+    whose round left no change (`unlanded`, by stem) claims nothing."""
+    return {f for d in decisions if _scope(d.stem) == scope and d.stem not in unlanded
             for c in d.data["choices"] if c["kind"] == "fix"
             for f in c["findings"] if f"#{CONCERN_FIELD}[" in f}
+
+
+def _unlanded_decisions(store_dir: Path, log: list[dict], task: int | str,
+                        coders: list[Record]) -> set[str]:
+    """The scope's decisions whose round left no change: no coder finished
+    a fix from the round's baseline (yet, or ever, when the user ruled the
+    round off), or the user discarded what it changed."""
+    scope = scope_prefix(log, task)
+    states = [r.data for r in coders] + [e for e in load_history(store_dir)
+                                         if e.get("role") == "coder"
+                                         and _scope(str(e.get("record"))) == scope]
+    finished = {s.get("baseline") for s in states if s.get("status") in DIAGNOSIS_STATUSES}
+    discarded = {e.get("tree") for e in log if e.get("type") == DISCARD_ENTRY
+                 and e.get("task") == task}
+    return {e["decision"] for e in triage_entries(log, task) if e.get("decision")
+            and (e.get("tree") not in finished or e.get("tree") in discarded)}
 
 
 def finding_entries(log: list[dict], task: int | str) -> list[dict]:
@@ -3277,9 +3292,8 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     waived = _user_waived(log, scope)
     deferred = _deferred_root_causes(found.decisions, scope)
     states = finding_states(log, task)
-    ruled_off = {e["decision"] for e in triage_entries(log, task)
-                 if e.get("decision") and _round_ruled_off(e, states)}
-    settled = deferred.keys() | _claimed_root_causes(found.decisions, scope, ruled_off) | waived
+    unlanded = _unlanded_decisions(store_dir, log, task, found.coders)
+    settled = deferred.keys() | _claimed_root_causes(found.decisions, scope, unlanded) | waived
     root_causes = [cid for rec in found.coders for cid, text in concern_ids(rec).items()
                    if text.lower().startswith(ROOT_CAUSE_PREFIX) and cid not in settled]
     rules = {f["id"]: f["rule"] for f in raised}
