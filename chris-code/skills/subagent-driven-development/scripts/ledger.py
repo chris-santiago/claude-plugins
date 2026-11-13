@@ -989,17 +989,23 @@ def compute_open_items(
             if item.kind not in RESOLVABLE_KINDS or item.id not in resolved_ids]
 
 
-def unfinished_handoffs(records: list[Record]) -> list[OpenItem]:
+def unfinished_handoffs(records: list[Record], history: list[dict] | None = None) -> list[OpenItem]:
     """A coder that handed off its share of a task, while the coder it named
-    hasn't finished that task: the task's code isn't done yet."""
+    hasn't finished that cycle: the task's code isn't done yet. The check
+    `history` counts too, since a record that finished a cycle and later
+    paused (in a round the user may have ruled off) no longer shows it."""
     coders = [r for r in records if r.ok and r.data["role"] == "coder"]
-    finished = {(_scope(r.stem), r.data["agent"]): r.data["cycle"] for r in coders
-                if r.data["status"] in DIAGNOSIS_STATUSES}
+    finished: dict[str, int] = {}
+    for stem, status, cycle in [(r.stem, r.data["status"], r.data["cycle"]) for r in coders] + [
+            (str(e.get("record")), e.get("status"), e.get("cycle")) for e in history or []
+            if e.get("role") == "coder"]:
+        if status in DIAGNOSIS_STATUSES and isinstance(cycle, int):
+            finished[stem] = max(cycle, finished.get(stem, 0))
     return [OpenItem(id=f"{r.stem}#status", kind="status",
                      summary=f"coder status: handed_off to {r.data['handed_to']}, which hasn't "
                              f"finished cycle {r.data['cycle']}", source=r.stem)
             for r in coders if r.data["status"] == CODER_HANDOFF
-            and finished.get((_scope(r.stem), r.data["handed_to"]), 0) < r.data["cycle"]]
+            and finished.get(f"{_scope(r.stem)}-{r.data['handed_to']}", 0) < r.data["cycle"]]
 
 
 def _open_items_for_record(rec: Record) -> list[OpenItem]:
@@ -1862,7 +1868,8 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
     # A fix round's handoff is the round's to wait on: triage holds it until
     # the fix lands, and a round the user rules off ends without one.
     first_attempts = {r.stem for r in found.coders if r.data["cycle"] == 1}
-    handoffs = [f"{i.source}: {i.summary}" for i in unfinished_handoffs(found.coders)
+    handoffs = [f"{i.source}: {i.summary}"
+                for i in unfinished_handoffs(found.coders, load_history(store_dir))
                 if i.source in first_attempts]
     if handoffs:
         blockers.append(f"a handoff awaits its coder of record: {'; '.join(handoffs)}")
@@ -3145,12 +3152,15 @@ def _deferred_root_causes(decisions: list[Record], scope: str) -> dict[str, str]
             for e in d.data["excluded"] if f"#{CONCERN_FIELD}[" in e["finding"]}
 
 
-def _claimed_root_causes(decisions: list[Record], scope: str) -> set[str]:
+def _claimed_root_causes(decisions: list[Record], scope: str, ruled_off: set[str]) -> set[str]:
     """Coder `root cause:` concerns a decision of the scope chose to fix:
     its round implements them, so they are no longer open work even on a
-    record no coder rewrites (a first coder that handed off)."""
-    return {f for d in decisions if _scope(d.stem) == scope for c in d.data["choices"]
-            if c["kind"] == "fix" for f in c["findings"] if f"#{CONCERN_FIELD}[" in f}
+    record no coder rewrites (a first coder that handed off). A decision
+    whose round the user ruled off (`ruled_off`, by stem) implemented
+    nothing, so it claims nothing."""
+    return {f for d in decisions if _scope(d.stem) == scope and d.stem not in ruled_off
+            for c in d.data["choices"] if c["kind"] == "fix"
+            for f in c["findings"] if f"#{CONCERN_FIELD}[" in f}
 
 
 def finding_entries(log: list[dict], task: int | str) -> list[dict]:
@@ -3266,7 +3276,10 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     raised = _finding_inputs(found.reviewers)
     waived = _user_waived(log, scope)
     deferred = _deferred_root_causes(found.decisions, scope)
-    settled = deferred.keys() | _claimed_root_causes(found.decisions, scope) | waived
+    states = finding_states(log, task)
+    ruled_off = {e["decision"] for e in triage_entries(log, task)
+                 if e.get("decision") and _round_ruled_off(e, states)}
+    settled = deferred.keys() | _claimed_root_causes(found.decisions, scope, ruled_off) | waived
     root_causes = [cid for rec in found.coders for cid, text in concern_ids(rec).items()
                    if text.lower().startswith(ROOT_CAUSE_PREFIX) and cid not in settled]
     rules = {f["id"]: f["rule"] for f in raised}
@@ -3275,7 +3288,7 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     resolved = resolutions_from_log(log)
     return {
         "log": log, "reviewers": found.reviewers, "coder": coder,
-        "states": finding_states(log, task), "raised": raised,
+        "states": states, "raised": raised,
         # Only the reviewer that raised a finding answers a contest of it.
         "answers": {a["finding"]: a["verdict"] for rec in found.reviewers
                     for a in rec.data.get("contests", []) if a["finding"].startswith(f"{rec.stem}#")},

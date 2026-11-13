@@ -5030,6 +5030,36 @@ class TestHandoffInTheLoop(TriageStoreTestCase):
                                                         reviewer_records=["task-3-spec-reviewer"]))
         self.assertEqual(ledger.triage_inputs(self.store, 3)["root_causes"], [])
 
+    def test_only_a_fix_choice_claims_a_root_cause(self):
+        cid = "task-3-python-coder#concerns[abcd1234]"
+        decision = ledger.Record("task-3-decision-c2", True, data={"choices": [
+            {"kind": "escalate", "findings": [cid]}, {"kind": "fix", "findings": ["other"]}]})
+        self.assertEqual(ledger._claimed_root_causes([decision], "task-3", set()), set())
+
+    def test_a_root_cause_claimed_by_a_ruled_off_round_counts_again(self):
+        concern = "root cause: b.py:1 the parser drops the key"
+        self.partner(concerns=[concern])
+        self.finisher()
+        issue = _finding()
+        self.spec(issue)
+        cid = _entry_id("task-3-python-coder", "concerns", concern)
+        self.triage()
+        decision = self.entries()[-1]["decision"]
+        self.write(f"{decision}.json", _decision([cid, self.spec_id(issue)], task=3,
+                                                 reviewer_records=["task-3-spec-reviewer"]))
+        _rule(self.store, self.spec_id(issue))
+        self.assertIn(cid, ledger.triage_inputs(self.store, 3)["root_causes"])
+
+    def test_a_first_attempts_handoff_stays_finished_after_a_ruled_off_round(self):
+        # The coder of record finished the first attempt, then blocked in a
+        # round the user ruled off: its history still shows the finish.
+        self.partner()
+        ledger.cmd_check(str(self.finisher()))
+        self.finisher(status="blocked", cycle=2)
+        self.spec()
+        self.triage()
+        self.assertFalse(any("handoff" in b for b in ledger.ready_blockers(self.store, 3)))
+
     def test_the_first_coders_deferrals_are_filed(self):
         skipped = {"finding": "task-3-spec-reviewer#issues[deadbeef]", "reason": "callers use the name"}
         self.partner(notes_skipped=[skipped])
