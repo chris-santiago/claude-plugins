@@ -5993,6 +5993,27 @@ class TestScratch(GitRepoTestCase):
                 self.assertFalse(path.resolve().is_relative_to(self.repo.resolve()))
         self.assertFalse((self.store / "scratch").exists())
 
+    def test_the_scratch_folder_is_private_to_this_user(self):
+        self.make()
+        base = ledger.scratch_root(self.store).parent
+        self.assertIn(str(os.getuid()), base.name)
+        self.assertEqual(base.stat().st_mode & 0o777, 0o700)
+
+    def test_a_scratch_folder_others_could_plant_in_is_refused(self):
+        base = ledger.scratch_root(self.store).parent
+        decoy = self.temp / "decoy"
+        decoy.mkdir()
+        cases = {"a symlink": lambda: base.symlink_to(decoy, target_is_directory=True),
+                 "writable by others": lambda: (base.mkdir(), base.chmod(0o777))}
+        for label, plant in cases.items():
+            with self.subTest(label):
+                plant()
+                with self.assertRaisesRegex(ledger.RecordError, "scratch folder"):
+                    self.make()
+                with self.assertRaisesRegex(ledger.RecordError, "scratch folder"):
+                    ledger.drop_scratch(self.repo, self.store)
+                base.unlink() if base.is_symlink() else base.rmdir()
+
     def test_two_stores_never_share_a_copy(self):
         other = self.repo / ".sdd" / "other-run"
         self.assertNotEqual(ledger.make_scratch(self.repo, other, 3, "r"),

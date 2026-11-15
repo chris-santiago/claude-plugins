@@ -2034,12 +2034,36 @@ SCRATCH_IDENTITY = {"GIT_AUTHOR_NAME": "ledger.py scratch", "GIT_AUTHOR_EMAIL": 
 
 def scratch_root(store_dir: Path) -> Path:
     """Where the store's scratch copies and build caches live: the system
-    temp folder, one folder per store. Never the store itself, which sits
-    in the repo, often inside a synced folder, where a build cache of tens
-    of gigabytes would be synced too."""
+    temp folder, in a folder private to this user (`_private_scratch_base`),
+    one folder per store. Never the store itself, which sits in the repo,
+    often inside a synced folder, where a build cache of tens of gigabytes
+    would be synced too."""
     resolved = str(store_dir.resolve())
     key = hashlib.sha256(resolved.encode()).hexdigest()[:12]
-    return Path(tempfile.gettempdir()) / SCRATCH_ROOT / f"{store_dir.name.lstrip('.') or 'store'}-{key}"
+    base = Path(tempfile.gettempdir()) / f"{SCRATCH_ROOT}-{os.getuid()}"
+    return base / f"{store_dir.name.lstrip('.') or 'store'}-{key}"
+
+
+def _private_scratch_base(store_dir: Path, create: bool) -> bool:
+    """Make sure the per-user scratch folder is this user's alone before
+    building or deleting under it: the temp folder may be shared, and its
+    path is predictable, so another user could plant a symlink or a build
+    cache there. Creates it (mode 0o700) when `create`; returns whether it
+    exists."""
+    base = scratch_root(store_dir).parent
+    if create:
+        with contextlib.suppress(FileExistsError):
+            base.mkdir(mode=0o700, parents=True)
+    try:
+        info = os.lstat(base)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() \
+            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RecordError(f"the scratch folder {base} isn't a folder only you can write to "
+                          "(a symlink, another user's, or writable by others): remove it, or "
+                          "point TMPDIR elsewhere")
+    return True
 
 
 def _scratch_dir(store_dir: Path, task: int | str, agent: str) -> Path:
@@ -2074,6 +2098,7 @@ def make_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> Pa
     it, so the copy stays out of later snapshots."""
     path = scratch_copy(store_dir, task, agent)
     top = _toplevel(repo)
+    _private_scratch_base(store_dir, create=True)
     _check_scratch_ignored(top, path)
     tree = snapshot_tree(top)
     parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top,
@@ -2115,6 +2140,8 @@ def remove_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> 
 def drop_scratch(repo: Path | None, store_dir: Path, task: int | str | None = None) -> None:
     """Delete every copy and build cache of one task (when it completes),
     or of the whole store (when it is cleared). Nothing there is an error."""
+    if not _private_scratch_base(store_dir, create=False):
+        return
     root = scratch_root(store_dir)
     folder = root if task is None else root / f"task-{task}"
     if not folder.exists():

@@ -8,6 +8,14 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-14
+
+### Added
+- **A small fix round can be fixed inline.** When every finding a patch, polish or ruling step sends is one site of S3 or less (none a gate failure or an intent not-met, and no root cause), `triage` marks the step `inline`, and the orchestrator asks you whether it fixes the round itself or dispatches the coder. This covers docstrings, imports and other one-site fixes, in a task, at the whole-change gate, and at the close after you rule a waiting finding `fix`. If you choose inline, the orchestrator sweeps each finding's rule, writes a failing test first for an S3, fixes the sites and runs the new `ledger.py inline --task N|final|close --note "user ruling: ..."`, which finishes the round as a coder's record would. Nothing else changes: the round counts toward the cap, the raising reviewer re-checks each S3, and the commit and the completion report work as before. Before, every fix round dispatched a coder, however small the change.
+
+### Fixed
+- **Break-check copies and build caches no longer pile up.** `ledger.py scratch` now takes `--task N --agent <name>` and names the copy itself, so a reviewer has one copy and one build cache per task however many rounds it runs. It puts them in the system temp folder, in a folder only you can write to, instead of in the store inside the repo, where a synced folder would sync them too. A task's commit deletes its copies and caches, and `clear` deletes all the store's. The quality reviewers make their copy only with this command, even when a dispatch says otherwise, and SDD now tells the orchestrator never to choose where a break check builds or forbid its cleanup. Before, nothing deleted a build cache, each new name a reviewer made up started a fresh full build, and a reviewer told to build elsewhere and not clean up left copies of a multi-gigabyte cache behind every round.
+
 ## [0.17.0] - 2026-11-13
 
 ### Changed
