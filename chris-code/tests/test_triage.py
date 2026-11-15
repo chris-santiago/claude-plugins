@@ -324,6 +324,47 @@ class TestClose(unittest.TestCase):
         self.assertEqual(loop.review(finding("a", 4, source=DESIGN))["kind"], "done")
 
 
+class TestInline(unittest.TestCase):
+    """A fix step whose every finding is one site of S3 or less may be fixed
+    by the orchestrator itself, if the user chooses."""
+
+    def test_small_local_findings_are_inline(self):
+        cases = {"patch": (finding("a"),), "polish": (finding("n", 1),),
+                 "patch with a note": (finding("a"), finding("n", 2))}
+        for label, raised in cases.items():
+            with self.subTest(label):
+                self.assertTrue(Loop().review(*raised)["inline"])
+
+    def test_anything_bigger_is_not(self):
+        cases = {"s4": (finding("a", 4),), "class reach": (finding("a", 3, "class"),),
+                 "a class note beside a local s3": (finding("a"), finding("n", 1, "class")),
+                 "a gate finding": (finding("g", source="task-1-gate", gate=True),),
+                 "holistic": (finding("a", 3, "contract"),)}
+        for label, raised in cases.items():
+            with self.subTest(label):
+                self.assertFalse(Loop().review(*raised)["inline"])
+
+    def test_a_root_cause_or_a_bare_note_delivery_is_not(self):
+        self.assertFalse(Loop().review(finding("a"), root_causes=["c"])["inline"])
+        self.assertFalse(Loop().review(undelivered_note=True)["inline"])
+
+    def test_a_step_that_fixes_nothing_is_not(self):
+        for entry in (Loop().review(), Loop(close=True).review(finding("a", 3, source=DESIGN))):
+            with self.subTest(entry["kind"]):
+                self.assertFalse(entry["inline"])
+
+    def test_a_close_ruling_on_a_small_finding_is_inline(self):
+        loop = Loop(close=True)
+        loop.review(finding("a", 2, source=DESIGN))
+        loop.rule("a", "fix")
+        entry = loop.review(finding("a", 2, source=DESIGN), rewrote=set())
+        self.assertEqual((entry["kind"], entry["inline"]), ("ruling", True))
+
+    def test_an_intent_not_met_is_never_inline(self):
+        entry = Loop(close=True).review(finding("n", 2, source=INTENT, not_met=True))
+        self.assertEqual((entry["kind"], entry["inline"]), ("patch", False))
+
+
 class TestAwaiting(unittest.TestCase):
     def test_a_round_waits_on_each_named_record_not_rewritten_since(self):
         awaited = {DESIGN: "d1", INTENT: "i1", "close-gate": None}

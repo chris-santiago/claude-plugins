@@ -39,6 +39,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py rule <id>... --as fix|file|drop --note "user ruling: ..." [--store DIR]
        python3 ledger.py discard --task N|final|close [--store DIR]
+       python3 ledger.py inline --task N|final|close --note "user ruling: ..." [--files PATH...] [--store DIR]
+       python3 ledger.py scratch --task N --agent NAME [--remove] [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -259,6 +261,9 @@ FINDING_ENTRY = "finding"
 FIX_COMMIT_ENTRY = "fix_commit"
 # `discard` put a ruled-off round's files back to the round's baseline.
 DISCARD_ENTRY = "discard"
+# `inline`: the orchestrator fixed an inline-eligible round itself, on the
+# user's ruling, finishing the round as a coder's fix would.
+INLINE_ENTRY = "inline"
 
 PROGRESS_FILENAME = "progress.jsonl"
 # Every command that appends to or deletes from the store holds an
@@ -1601,6 +1606,9 @@ def render_report(log: list[dict], records: list[Record]) -> str:
             rulings.append(f"- `{e.get('resolves')}`: {e['note']}")
         elif e.get("type") == FINDING_ENTRY and e.get("by") == "user":
             rulings.append(f"- `{e.get('id')}` {e.get('state')}: {e['note']}")
+        elif e.get("type") == INLINE_ENTRY:
+            rulings.append(f"- {_scope_name(e.get('task'))}: fixed inline "
+                           f"({', '.join(e.get('files', []))}): {e['note']}")
     lines += rulings or ["(none)"]
 
     lines += ["", "## Follow-ups"]
@@ -2013,8 +2021,7 @@ def diff_trees(repo: Path, base_tree: str, tree: str,
                 base_tree, tree, "--", *paths)
 
 
-SCRATCH_DIR = "scratch"
-SCRATCH_TARGET_DIR = "scratch-target"
+SCRATCH_ROOT = "sdd-scratch"
 SCRATCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -2025,39 +2032,57 @@ SCRATCH_IDENTITY = {"GIT_AUTHOR_NAME": "ledger.py scratch", "GIT_AUTHOR_EMAIL": 
                     "GIT_COMMITTER_EMAIL": "scratch@ledger"}
 
 
-def _scratch_path(store_dir: Path, name: str) -> Path:
-    if not SCRATCH_NAME_RE.fullmatch(name):
-        raise RecordError(f"scratch name must be letters, digits, '.', '_' or '-', not "
-                          f"starting with a symbol: got {name!r}")
-    return store_dir / SCRATCH_DIR / name
+def scratch_root(store_dir: Path) -> Path:
+    """Where the store's scratch copies and build caches live: the system
+    temp folder, one folder per store. Never the store itself, which sits
+    in the repo, often inside a synced folder, where a build cache of tens
+    of gigabytes would be synced too."""
+    resolved = str(store_dir.resolve())
+    key = hashlib.sha256(resolved.encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / SCRATCH_ROOT / f"{store_dir.name.lstrip('.') or 'store'}-{key}"
 
 
-def scratch_target(store_dir: Path, name: str) -> Path:
+def _scratch_dir(store_dir: Path, task: int | str, agent: str) -> Path:
+    """One folder per task and reviewer, holding its copy and its cache:
+    the script names it, so a reviewer can't start a new one each round."""
+    for label, value in (("task", str(task)), ("agent", agent)):
+        if not SCRATCH_NAME_RE.fullmatch(value):
+            raise RecordError(f"scratch {label} must be letters, digits, '.', '_' or '-', not "
+                              f"starting with a symbol: got {value!r}")
+    return scratch_root(store_dir) / f"task-{task}" / agent
+
+
+def scratch_copy(store_dir: Path, task: int | str, agent: str) -> Path:
+    return _scratch_dir(store_dir, task, agent) / "copy"
+
+
+def scratch_target(store_dir: Path, task: int | str, agent: str) -> Path:
     """The copy's own cargo target directory. It outlives the copy, so a
-    re-check rebuilds incrementally; it is never shared, since cargo judges
-    a path dependency fresh by mtime and could run another copy's build."""
-    return store_dir / SCRATCH_TARGET_DIR / _scratch_path(store_dir, name).name
+    re-check rebuilds incrementally, until its task completes; it is never
+    shared, since cargo judges a path dependency fresh by mtime and could
+    run another copy's build."""
+    return _scratch_dir(store_dir, task, agent) / "target"
 
 
-def make_scratch(repo: Path, store_dir: Path, name: str) -> Path:
+def make_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> Path:
     """A throwaway worktree holding the working tree as it is now,
     uncommitted edits and new files included, for a reviewer to break code
-    in. It replaces any copy left under the same name. The checkout's
-    working tree, index and HEAD are never touched; the copy is a detached
-    worktree of a commit made from snapshot_tree, inside the store, which
-    must be ignored so the copy stays out of later snapshots."""
-    path = _scratch_path(store_dir, name)
+    in. It replaces any copy left by the same reviewer on the same task.
+    The checkout's working tree, index and HEAD are never touched; the copy
+    is a detached worktree of a commit made from snapshot_tree, outside the
+    repo (`scratch_root`), or ignored by git if the temp folder is inside
+    it, so the copy stays out of later snapshots."""
+    path = scratch_copy(store_dir, task, agent)
     top = _toplevel(repo)
-    ensure_store(store_dir)
     _check_scratch_ignored(top, path)
     tree = snapshot_tree(top)
     parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top,
                             capture_output=True, text=True).stdout.strip()
     commit = _git(top, "commit-tree", tree, *(["-p", parent] if parent else []),
-                  "-m", f"scratch copy for {name}",
+                  "-m", f"scratch copy for {agent} on task {task}",
                   env={**os.environ, **SCRATCH_IDENTITY}).strip()
-    remove_scratch(top, store_dir, name)
-    path.parent.mkdir(exist_ok=True)
+    _remove_copy(top, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
     # --force: a copy deleted by hand leaves its registration behind.
     _git(top, "worktree", "add", "--force", "--detach", "-q", str(path), commit)
     return path
@@ -2076,33 +2101,57 @@ def _check_scratch_ignored(top: Path, path: Path) -> None:
         raise RecordError(f"can't tell whether git ignores {relative}: "
                           f"{check.stderr.strip()}")
     if check.returncode == 1:
-        raise RecordError(f"{relative} is inside the repo but not ignored by git: use a store "
-                          "git ignores, such as the default .sdd/")
+        raise RecordError(f"{relative} is inside the repo but not ignored by git: point "
+                          "TMPDIR outside the repo, or at a folder git ignores")
 
 
-def remove_scratch(repo: Path, store_dir: Path, name: str) -> None:
-    """Delete a scratch copy and its worktree registration, build outputs
-    and all. A copy that's already gone is not an error."""
-    path = _scratch_path(store_dir, name)
+def remove_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> None:
+    """Delete a reviewer's scratch copy and its worktree registration,
+    build outputs and all, keeping its build cache for a re-check. A copy
+    that's already gone is not an error."""
+    _remove_copy(_toplevel(repo), scratch_copy(store_dir, task, agent))
+
+
+def drop_scratch(repo: Path | None, store_dir: Path, task: int | str | None = None) -> None:
+    """Delete every copy and build cache of one task (when it completes),
+    or of the whole store (when it is cleared). Nothing there is an error."""
+    root = scratch_root(store_dir)
+    folder = root if task is None else root / f"task-{task}"
+    if not folder.exists():
+        return
+    if repo is not None:
+        top = _toplevel(repo)
+        for copy in sorted(folder.glob("task-*/*/copy" if task is None else "*/copy")):
+            _remove_copy(top, copy)
+    _force_rmtree(folder)
+
+
+def _remove_copy(top: Path, path: Path) -> None:
     if not path.exists():
         return
-    top = _toplevel(repo)
     try:
         _git(top, "worktree", "remove", "--force", "--force", str(path))
     except subprocess.CalledProcessError:
         pass  # not a worktree git can validate: delete it below
-    if path.exists():
-        # A folder git doesn't know, a copy whose .git is gone, or one git
-        # could only partly delete (a read-only build folder inside). Any
-        # registration left behind is stale but harmless: the next copy
-        # under this name is added with --force. No `worktree prune`: it
-        # would drop every other missing worktree's registration too.
-        _make_folders_removable(path)
-        for folder, subfolders, _ in os.walk(path):
-            # Before the walk descends: it silently skips a folder it can't read.
-            for sub in subfolders:
-                _make_folders_removable(Path(folder) / sub)
-        shutil.rmtree(path)
+    # A folder git doesn't know, a copy whose .git is gone, or one git could
+    # only partly delete (a read-only build folder inside). Any registration
+    # left behind is stale but harmless: the next copy under this name is
+    # added with --force. No `worktree prune`: it would drop every other
+    # missing worktree's registration too.
+    _force_rmtree(path)
+
+
+def _force_rmtree(path: Path) -> None:
+    """Delete a folder even where a build made parts of it read-only or
+    unreadable, never changing permissions outside it."""
+    if not path.exists():
+        return
+    _make_folders_removable(path)
+    for folder, subfolders, _ in os.walk(path):
+        # Before the walk descends: it silently skips a folder it can't read.
+        for sub in subfolders:
+            _make_folders_removable(Path(folder) / sub)
+    shutil.rmtree(path)
 
 
 def _make_folders_removable(folder: Path) -> None:
@@ -2467,13 +2516,15 @@ def cmd_path(store_dir: Path, scope: int | str, agent: str | None, kind: str = "
 def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
     """Refuse while the log holds follow-ups, disclosures or questions not
     yet settled (they would vanish unreported) unless `discard_open` says
-    the user confirmed the loss; then clear (`_clear_store`)."""
+    the user confirmed the loss; then clear (`_clear_store`) and delete
+    every scratch copy and build cache the store's reviewers left."""
     if not store_dir.is_dir():
         return
     with store_lock(store_dir):
         if not discard_open:
             _check_nothing_owed(store_dir)
         _clear_store(store_dir)
+        drop_scratch(_store_repo(store_dir), store_dir)
 
 
 def _check_nothing_owed(store_dir: Path) -> None:
@@ -3301,7 +3352,7 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     close = task == CLOSE_SCOPE
     resolved = resolutions_from_log(log)
     return {
-        "log": log, "reviewers": found.reviewers, "coder": coder,
+        "task": task, "log": log, "reviewers": found.reviewers, "coder": coder,
         "states": states, "raised": raised,
         # Only the reviewer that raised a finding answers a contest of it.
         "answers": {a["finding"]: a["verdict"] for rec in found.reviewers
@@ -3502,7 +3553,7 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
                  "survived": sum(1 for c in observed if c["from"] == "sent" and c["state"] == "fix"),
                  "introduced": sum(1 for f in ctx["raised"] if f["id"] in first_seen and f["introduced"]),
                  "inputs": digest, "at": _now()}
-        fix_cycle = _step_fix_cycle(ctx["coder"])
+        fix_cycle = _step_fix_cycle(ctx["coder"], _inline_entries(log, task))
         if result["kind"] == "holistic":
             entry["decision"] = f"{scope_prefix(log, task)}-decision-c{fix_cycle}"
         _append_progress(store_dir, entry)
@@ -3539,16 +3590,19 @@ def _finding_entry(task: int | str, change: dict, states: dict[str, dict],
     return entry
 
 
-def _step_fix_cycle(coder: Record | None) -> int:
+def _step_fix_cycle(coder: Record | None, inlines: list[dict] = ()) -> int:
     """The cycle the coder writes for the fix a step routes: its record's
     cycle + 1, or that same cycle when the record is a fix it paused
     (needs_context or blocked at cycle 2 or later), since a resumed fix
-    keeps its cycle. With no coder record (the first fix at `final`), 2."""
+    keeps its cycle. With no coder record (the first fix at `final`), 2.
+    Never at or below a round the orchestrator fixed inline (`inlines`)."""
     if coder is None:
-        return 2
-    cycle = coder.data["cycle"]
-    paused_fix = coder.data["status"] in CODER_OPEN_STATUSES and cycle >= 2
-    return cycle if paused_fix else cycle + 1
+        cycle = 2
+    else:
+        cycle = coder.data["cycle"]
+        paused_fix = coder.data["status"] in CODER_OPEN_STATUSES and cycle >= 2
+        cycle = cycle if paused_fix else cycle + 1
+    return max([cycle, *((e.get("cycle") or 0) + 1 for e in inlines)])
 
 
 def _round_baseline(log: list[dict], task: int | str) -> dict | None:
@@ -3566,6 +3620,24 @@ def _round_baseline(log: list[dict], task: int | str) -> dict | None:
     return None
 
 
+def _due_cycle(baseline: dict) -> int:
+    """The cycle a round's fix writes, from the snapshot triage took."""
+    due = baseline.get("fix_cycle")
+    if due is None:
+        # A snapshot from before fix cycles recorded the coder cycle it saw.
+        seen = baseline.get("coder_cycle")
+        due = 0 if seen is None else seen + 1
+    return due
+
+
+def _inline_entries(log: list[dict], task: int | str) -> list[dict]:
+    return [e for e in log if e.get("type") == INLINE_ENTRY and e.get("task") == task]
+
+
+def _inline_files(log: list[dict], task: int | str) -> set[str]:
+    return {f for e in _inline_entries(log, task) for f in e.get("files", [])}
+
+
 def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                  baseline: dict | None) -> bool:
     """True while the latest step's fix hasn't finished: no coder record in
@@ -3573,20 +3645,23 @@ def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
     from that step's baseline, at the step's fix cycle or later. The history
     counts because a coder that pauses before the next step overwrites the
     record that finished this one. The cycle matters when a round changed
-    no code, so the next step's snapshot is the same tree."""
+    no code, so the next step's snapshot is the same tree. An inline fix
+    the orchestrator logged from that baseline finishes it too."""
     if baseline is None:
         return False
-    due = baseline.get("fix_cycle")
-    if due is None:
-        # A snapshot from before fix cycles recorded the coder cycle it saw.
-        seen = baseline.get("coder_cycle")
-        due = 0 if seen is None else seen + 1
+    due = _due_cycle(baseline)
+    if any(e.get("baseline") == baseline["tree"] and (e.get("cycle") or 0) >= due
+           for e in _inline_entries(log, task)):
+        return False
     scope = scope_prefix(log, task)
     states = [r.data for r in _scope_records(store_dir, scope).coders]
     states += [e for e in load_history(store_dir)
                if e.get("role") == "coder" and _scope(str(e.get("record"))) == scope]
     return not any(s.get("status") in DIAGNOSIS_STATUSES and s.get("baseline") == baseline["tree"]
                    and (s.get("cycle") or 0) >= due for s in states)
+
+
+CODER_FIX_WAIT = "the coder's finished fix"
 
 
 def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict | None,
@@ -3605,7 +3680,7 @@ def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict
         return []
     baseline = _round_baseline(log, task)
     if baseline is not None and _fix_is_open(store_dir, log, task, baseline):
-        return ["the coder's finished fix"]
+        return [CODER_FIX_WAIT]
     if baseline is not None and task in PATH_SCOPES and not _fix_landed(log, task):
         return [f"the fix's commit (`ledger.py commit --task {task}`)"]
     stems = {*triage_rules.unchecked(states, versions),
@@ -3627,8 +3702,15 @@ def _round_ruled_off(latest: dict, states: dict[str, dict]) -> bool:
 def _round_paths(store_dir: Path, log: list[dict], task: int | str) -> list[str]:
     """The files the scope's latest round could have changed: its footprint
     and what its coders say they changed."""
-    changed = _coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
-    return sorted((scope_footprint(store_dir, log, task) or set()) | changed)
+    return sorted((scope_footprint(store_dir, log, task) or set())
+                  | _fix_changed_files(store_dir, log, task))
+
+
+def _fix_changed_files(store_dir: Path, log: list[dict], task: int | str) -> set[str]:
+    """What the scope's fixers changed: its coders, by their records, and the
+    orchestrator, by its inline entries."""
+    coders = _scope_records(store_dir, scope_prefix(log, task)).coders
+    return _coder_changed_files(coders) | _inline_files(log, task)
 
 
 def _coder_changed_files(coders: list[Record]) -> set[str]:
@@ -3681,6 +3763,48 @@ def cmd_discard(store_dir: Path, task: int | str) -> None:
           f"`triage --task {task}`")
 
 
+def cmd_inline(store_dir: Path, task: int | str, note: str, files: list[str]) -> None:
+    """Log that the orchestrator fixed the scope's latest round itself, on
+    the user's ruling, in place of a coder: only a round triage marked
+    inline, still open, with changes since its baseline. It finishes the
+    round as a coder's finished fix would; the commit (at `final` and the
+    close) and the re-checks follow as for any fix. `files` are changed
+    files outside the scope's footprint, which only `final` and the close
+    take: a task's footprint grows by `stage`, as it does for a coder."""
+    if not note.lower().startswith(RULING_PREFIX):
+        raise RecordError(f"fixing inline is the user's choice: --note \"{RULING_PREFIX} "
+                          "<their words>\"")
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        latest = latest_triage(log, task)
+        baseline = _round_baseline(log, task)
+        top = _store_repo(store_dir)
+        if latest is None or not latest.get("inline") or baseline is None or top is None:
+            raise RecordError(f"{_scope_name(task)}'s latest step isn't one triage marked "
+                              "inline: dispatch the coder")
+        if _round_ruled_off(latest, finding_states(log, task)):
+            raise RecordError(f"the user ruled {_scope_name(task)}'s round off: nothing to fix")
+        if not _fix_is_open(store_dir, log, task, baseline):
+            raise RecordError(f"{_scope_name(task)}'s round is already finished: run "
+                              f"`triage --task {task}`")
+        footprint = scope_footprint(store_dir, log, task) or set()
+        extra = {_normalize_path(f) for f in files} - footprint
+        if extra and task not in PATH_SCOPES:
+            raise RecordError(f"{', '.join(sorted(extra))} outside task {task}'s footprint: "
+                              "re-issue `ledger.py stage` with those files first")
+        paths = sorted(footprint | extra)
+        changed = sorted(changed_lines(diff_since(top, baseline["tree"], paths))) if paths else []
+        if not changed:
+            raise RecordError(f"nothing changed in {', '.join(paths) or 'the scope'} since the "
+                              "round's baseline: fix the findings first")
+        _append_progress(store_dir, {"type": INLINE_ENTRY, "task": task,
+                                     "baseline": baseline["tree"], "cycle": _due_cycle(baseline),
+                                     "files": changed, "note": note, "at": _now()})
+    commit = f"commit it (`commit --task {task}`), then " if task in PATH_SCOPES else ""
+    print(f"{_scope_name(task)}: inline fix logged ({', '.join(changed)}); {commit}dispatch the "
+          f"re-checks triage printed, if any, and run `triage --task {task}`")
+
+
 def _fix_landed(log: list[dict], task: int | str) -> bool:
     """`commit` landed the latest step's fix (or found nothing to commit)."""
     at = max((i for i, e in enumerate(log) if e.get("type") == TRIAGE_ENTRY
@@ -3714,9 +3838,14 @@ def _triage_digest(ctx: dict) -> str:
     write, a re-check even with the same content, is new work), the coder's
     record, the finding states (a ruling is new work) and the rest of its
     inputs. The scope's earlier entries are left out, so an unchanged state
-    yields the step already logged."""
+    yields the step already logged. An inline fix is new work like a coder's
+    record; the key is left out with none, so a store without one keeps the
+    digests it logged."""
     coder = ctx["coder"]
+    inlines = [(e.get("baseline"), e.get("cycle")) for e in ctx["log"]
+               if e.get("type") == INLINE_ENTRY and e.get("task") == ctx["task"]]
     return _entry_digest({
+        **({"inlines": inlines} if inlines else {}),
         "records": ctx["versions"],
         "coder": coder.data if coder else None,
         "states": {fid: s.get("state") for fid, s in ctx["states"].items()},
@@ -3762,6 +3891,10 @@ def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
                      f"({finding['source']})")
     for cid in entry.get("root_causes", []):
         lines.append(f"  [{cid}] holistic: root cause")
+    if entry.get("inline") and (not waits or waits == [CODER_FIX_WAIT]):
+        lines.append("inline: every finding is one site of S3 or less: ask the user whether you "
+                     "fix it yourself (then `ledger.py inline --task "
+                     f"{entry['task']} --note \"user ruling: ...\"`) or dispatch the coder")
     for label, key in (("held", "held"), ("waiting for a ruling", "waiting")):
         for fid in entry.get(key, []):
             data = states.get(fid, {}).get("data") or {}
@@ -3811,14 +3944,14 @@ def _staged_scope(top: Path, files: list[str]) -> list[str]:
 
 def scope_footprint(store_dir: Path, log: list[dict], task: int | str) -> set[str] | None:
     """The files a scope stages, gates and commits: a task's recorded
-    footprint, or at `final` every task's plus the files the scope's coders
+    footprint, or at `final` every task's plus the files the scope's fixers
     changed, since a whole-change fix has no stage entry of its own."""
     footprint = task_footprint(log, task)
     if task not in ("final", CLOSE_SCOPE):
         return footprint
     coders = _scope_records(store_dir, scope_prefix(log, task)).coders
     changed = {_normalize_path(f) for r in coders for f in r.data.get("changed_files", [])}
-    return (footprint or set()) | changed or None
+    return (footprint or set()) | changed | _inline_files(log, task) or None
 
 
 def _stage_footprint(top: Path, files: list[str]) -> None:
@@ -3970,12 +4103,12 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
 
 
 def _log_fix_files(store_dir: Path, task: int | str) -> list[dict]:
-    """Add the files the scope's coder changed to its footprint in the log,
+    """Add the files the scope's fixers changed to its footprint in the log,
     so a file one attempt changed stays staged, gated and committed after
     the coder's record is rewritten. Returns the log as it now stands."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
-        changed = _coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
+        changed = _fix_changed_files(store_dir, log, task)
         new = sorted(changed - (task_footprint(log, task) or set()))
         if new:
             _append_progress(store_dir, {"type": "stage", "task": task, "files": new,
@@ -4003,12 +4136,15 @@ def _land_unchanged_fix(store_dir: Path, task: int | str) -> int:
 
 
 def _complete(store_dir: Path, task: int | str, note: str, light: bool) -> int:
+    """Complete the scope, then delete its reviewers' scratch copies and
+    build caches: no re-check can come after a completion."""
     try:
         cmd_append(store_dir, "complete", task, note, light)
     except RecordError as e:
         print(f"{_scope_name(task)} not completed: {e}")
         return 1
     print(f"{_scope_name(task)} complete")
+    drop_scratch(_store_repo(store_dir), store_dir, task)
     return 0
 
 
@@ -4680,12 +4816,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_scratch = sub.add_parser("scratch", parents=[store_parent],
                                help="make a throwaway worktree of the working tree as it is "
-                                    "now (checkout untouched) and print its path, then the "
-                                    "CARGO_TARGET_DIR line for its own build cache; --remove "
-                                    "deletes it")
-    p_scratch.add_argument("--name", required=True,
-                           help="one per reviewer and task, e.g. rust-quality-reviewer-4")
+                                    "now (checkout untouched), in the system temp folder, and "
+                                    "print its path, then the CARGO_TARGET_DIR line for its "
+                                    "own build cache; --remove deletes the copy and keeps the "
+                                    "cache, and the task's commit deletes both")
+    p_scratch.add_argument("--task", required=True, type=_task_arg)
+    p_scratch.add_argument("--agent", required=True, help="your agent name")
     p_scratch.add_argument("--remove", action="store_true")
+
+    p_inline = sub.add_parser("inline", parents=[store_parent],
+                               help="log that you fixed the scope's inline-eligible round "
+                                    "yourself, on the user's ruling; it finishes the round as "
+                                    "a coder's fix would")
+    p_inline.add_argument("--task", required=True, type=_task_arg)
+    p_inline.add_argument("--note", required=True, help="\"user ruling: <their words>\"")
+    p_inline.add_argument("--files", nargs="*", default=[],
+                          help="files you changed outside the scope's footprint (final and "
+                               "the close only; a task stages them first)")
 
     p_labels = sub.add_parser("labels",
                                help="list review-process labels (task/cycle/finding ids, "
@@ -4805,11 +4952,11 @@ def main() -> None:
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()))
         elif args.command == "scratch":
             if args.remove:
-                remove_scratch(Path.cwd(), store_dir, args.name)
+                remove_scratch(Path.cwd(), store_dir, args.task, args.agent)
             else:
                 _warn_submodules(Path.cwd())
-                print(make_scratch(Path.cwd(), store_dir, args.name))
-                print(f"CARGO_TARGET_DIR={scratch_target(store_dir, args.name)}")
+                print(make_scratch(Path.cwd(), store_dir, args.task, args.agent))
+                print(f"CARGO_TARGET_DIR={scratch_target(store_dir, args.task, args.agent)}")
         elif args.command == "baseline":
             cmd_baseline(store_dir, args.tree, args.task)
         elif args.command == "findings":
@@ -4833,6 +4980,8 @@ def main() -> None:
             cmd_rule(store_dir, args.ids, args.verb, args.note)
         elif args.command == "discard":
             cmd_discard(store_dir, args.task)
+        elif args.command == "inline":
+            cmd_inline(store_dir, args.task, args.note, args.files)
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":

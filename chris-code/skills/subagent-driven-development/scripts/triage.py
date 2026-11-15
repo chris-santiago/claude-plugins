@@ -27,6 +27,10 @@ At the close, an intent not-met, a failing commit gate or S4 and worse is
 fix, and everything else waits for the user. A coder's `root cause:`
 concern and a reach the coder raised are holistic. `recurring` and
 `introduced_by_fix` never change a state; they feed telemetry.
+
+A patch, polish or ruling step whose every finding is one site of S3 or
+less is `inline`: the user may have the orchestrator fix it instead of a
+coder. The round, its cap and its re-checks are the same either way.
 """
 
 from __future__ import annotations
@@ -36,6 +40,9 @@ BLOCKING_SEVERITY = 4
 MAX_FIX_ROUNDS = 2
 FIX_ROUND_KINDS = ("patch", "holistic")
 FIX_KINDS = ("patch", "holistic", "polish", "ruling")
+# Steps the orchestrator may fix itself when every finding is small.
+INLINE_KINDS = ("patch", "polish", "ruling")
+INLINE_MAX_SEVERITY = 3
 STATES = ("fix", "sent", "held", "waiting", "note", "noted", "filed", "fixed", "dropped")
 # States no record can change: only a user's ruling (or nothing) moves them.
 FINAL_STATES = ("noted", "filed", "fixed", "dropped")
@@ -203,12 +210,16 @@ def step(states: dict[str, dict], *, close: bool, prior: list[dict], root_causes
         shown += [_shown(fid, states[fid], "note") for fid in notes]
         changes += [{"id": fid, "state": "noted", "from": "note"} for fid in notes]
     after = apply(states, changes)
+    inline = kind in INLINE_KINDS and not root_causes and inline_eligible(
+        [states[f["id"]].get("data") or {} for f in shown],
+        {f["id"] for f in shown} & reach_raised)
     if close:
         recheck = "intent" if kind == "clarify" else ("raising" if sent else "none")
     else:
         recheck = _recheck(kind, [f for f in shown if f["tier"] != "note"])
     return {
         "kind": kind,
+        "inline": inline,
         "round": rounds + (1 if kind in FIX_ROUND_KINDS else 0),
         "recheck": recheck,
         "findings": shown,
@@ -219,6 +230,16 @@ def step(states: dict[str, dict], *, close: bool, prior: list[dict], root_causes
         "waiting": waiting,
         "settled": sorted(fid for fid, e in after.items() if e["state"] in SETTLED_STATES),
     }
+
+
+def inline_eligible(findings: list[dict], raised_reach: set[str]) -> bool:
+    """Whether the orchestrator may fix a step's findings itself, if the
+    user chooses: there are some, and each is one site (reach local, not
+    raised by the coder) of S3 or less, neither a gate's nor an intent
+    not-met. Anything bigger keeps its coder."""
+    return bool(findings) and not raised_reach and all(
+        f.get("reach") == "local" and (f.get("severity") or SERIOUS) <= INLINE_MAX_SEVERITY
+        and not f.get("gate") and not f.get("not_met") for f in findings)
 
 
 def _shown(fid: str, entry: dict, tier_name: str) -> dict:

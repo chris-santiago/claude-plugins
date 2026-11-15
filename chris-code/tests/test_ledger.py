@@ -91,8 +91,13 @@ _FIX_FIELDS = {"diagnosis": {"root_cause": "r", "end_state": "e", "resolves_clus
 
 def _baseline(store: Path, task: int | str = 3) -> str:
     """The fix baseline triage took for the scope's latest fix step."""
+    return _snapshot(store, task)["tree"]
+
+
+def _snapshot(store: Path, task: int | str = 3) -> dict:
+    """The snapshot triage took for the scope's latest fix step."""
     return [e for e in ledger.load_progress_log(store)
-            if e.get("type") == "snapshot" and e.get("task") == task][-1]["tree"]
+            if e.get("type") == "snapshot" and e.get("task") == task][-1]
 
 
 def _completable(store: Path, task: int | str) -> None:
@@ -5786,96 +5791,322 @@ class TestCLI(LedgerTestCase):
         self.assertIn("shipped", result.stdout)
 
 
+class TestInlineFix(TriageStoreTestCase):
+    """A fix step whose every finding is one site of S3 or less can be fixed
+    by the orchestrator itself when the user chooses: the round, its cap and
+    its re-checks stay; only the fixer changes."""
+
+    NOTE = "user ruling: fix it inline"
+
+    def inline(self, task: int | str = 3, note: str = NOTE, files: tuple[str, ...] = ()) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_inline(self.store, task, note, list(files))
+        return out.getvalue()
+
+    def edit(self, text: str = "x = 2\n") -> None:
+        (self.repo / "a.py").write_text(text, encoding="utf-8")
+
+    def test_an_eligible_step_says_so_and_an_inline_fix_finishes_the_round(self):
+        issue = _finding()
+        self.spec(issue)
+        out = self.triage()
+        self.assertIn("inline", out)
+        self.assertIn("ledger.py inline --task 3", out)
+        self.edit()
+        self.inline()
+        out = self.triage()
+        self.assertNotIn("the coder's finished fix", out)
+        self.assertIn("waiting for: a re-check from task-3-spec-reviewer", out)
+        self.spec()
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "done"])
+
+    def test_an_inline_polish_needs_no_recheck(self):
+        self.spec(_finding(severity=1, rule="a name"))
+        self.assertIn("polish", self.triage())
+        self.edit()
+        self.inline()
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["polish", "done"])
+
+    def test_a_step_that_is_not_eligible_is_refused_and_says_no_inline(self):
+        self.spec(_finding(severity=4))
+        self.assertNotIn("ledger.py inline", self.triage())
+        self.edit()
+        with self.assertRaisesRegex(ledger.RecordError, "coder"):
+            self.inline()
+
+    def test_a_note_that_is_not_the_users_ruling_is_refused(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        with self.assertRaisesRegex(ledger.RecordError, "user ruling"):
+            self.inline(note="looks small, doing it myself")
+
+    def test_an_inline_fix_that_changed_nothing_is_refused(self):
+        self.spec(_finding())
+        self.triage()
+        with self.assertRaisesRegex(ledger.RecordError, "nothing"):
+            self.inline()
+
+    def test_a_round_already_finished_is_refused(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        self.inline()
+        self.edit("x = 3\n")
+        with self.assertRaisesRegex(ledger.RecordError, "finished"):
+            self.inline()
+
+    def test_a_round_the_coder_finished_is_refused(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        self.fixed(changed_files=["a.py"])
+        with self.assertRaisesRegex(ledger.RecordError, "finished"):
+            self.inline()
+
+    def test_a_task_file_outside_the_footprint_is_refused(self):
+        self.spec(_finding())
+        self.triage()
+        (self.repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        with self.assertRaisesRegex(ledger.RecordError, "stage"):
+            self.inline(files=("b.py",))
+
+    def test_the_next_round_after_an_inline_one_is_a_new_cycle(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        cycle = _snapshot(self.store, 3)["fix_cycle"]
+        self.edit()
+        self.inline()
+        self.spec(issue)  # the re-check still raises it
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "patch")
+        self.assertEqual(_snapshot(self.store, 3)["fix_cycle"], cycle + 1)
+
+    def test_an_inline_round_counts_toward_the_cap(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        self.edit()
+        self.inline()
+        self.spec(issue)
+        self.triage()
+        self.edit("x = 3\n")
+        self.inline()
+        self.spec(issue)
+        self.triage()
+        self.assertEqual([e["kind"] for e in self.entries()], ["patch", "patch", "escalate"])
+
+    def test_a_ruled_off_inline_round_is_discarded_to_its_baseline(self):
+        issue = _finding()
+        self.spec(issue)
+        self.triage()
+        self.edit()
+        self.inline()
+        _rule(self.store, self.spec_id(issue), "drop", "user ruling: drop it")
+        self.assertIn("ledger.py discard --task 3", self.triage())
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_discard(self.store, 3)
+        self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 1\n")
+
+    def test_the_report_lists_the_inline_ruling(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        self.inline()
+        report = ledger.render_report(ledger.load_progress_log(self.store), [])
+        self.assertIn(self.NOTE, report)
+        self.assertIn("a.py", report)
+
+
+class TestCloseInlineFix(CloseStoreTestCase):
+    """At the close, a small finding the user rules fix can be fixed inline
+    and committed like a coder's fix, a new test file included."""
+
+    DESIGN = "close-python-design-reviewer"
+
+    def test_a_ruled_small_finding_is_fixed_inline_committed_and_rechecked(self):
+        s2 = _finding(severity=2, rule="the docstring names the old argument")
+        fid = self.fid(self.DESIGN, s2)
+        self.design(s2)
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_rule(self.store, [fid], "fix", "user ruling: fix it")
+        self.assertIn("ledger.py inline --task close", self.triage())
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "test_a.py").write_text("def test_x(): pass\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_inline(self.store, "close", "user ruling: inline", ["a.py", "test_a.py"])
+        self.assertIn("waiting for: the fix's commit", self.triage())
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = ledger.cmd_commit(self.store, "close", "Name the new argument", "true", None)
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(self._git("show", "--name-only", "--format=", "HEAD").split()),
+                         ["a.py", "test_a.py"])
+        self.design()
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+
 class TestScratch(GitRepoTestCase):
     """A quality reviewer breaks code to see whether a test notices. It
     reviews uncommitted work in a checkout other reviewers read at the same
-    time, so every break happens in a private copy of that working state."""
+    time, so every break happens in a private copy of that working state.
+    Copies and their build caches live in the system temp folder, outside
+    the repo and the store, and go away when their task completes."""
 
     def setUp(self):
         super().setUp()
         self.store = self.repo / ".sdd"
+        self.temp = Path(self._tmp.name + "-temp")
+        self.temp.mkdir()
+        self.addCleanup(shutil.rmtree, self.temp, True)
+        patcher = mock.patch.object(tempfile, "tempdir", str(self.temp))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def _cli(self, *args):
+    def _cli(self, *args, cwd=None):
         return subprocess.run([sys.executable, str(LEDGER_PY), "scratch", *args,
                                "--store", str(self.store)],
-                              cwd=self.repo, capture_output=True, text=True)
+                              cwd=cwd or self.repo, capture_output=True, text=True,
+                              env={**os.environ, "TMPDIR": str(self.temp)})
+
+    def make(self, task: int | str = 3, agent: str = "python-quality-reviewer") -> Path:
+        return ledger.make_scratch(self.repo, self.store, task, agent)
 
     def test_the_copy_holds_uncommitted_and_new_files(self):
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         (self.repo / "new.py").write_text("n = 1\n", encoding="utf-8")
-        copy = ledger.make_scratch(self.repo, self.store, "python-quality-reviewer-3")
+        copy = self.make()
         self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 2\n")
         self.assertEqual((copy / "new.py").read_text(encoding="utf-8"), "n = 1\n")
+
+    def test_the_copy_and_its_cache_live_outside_the_repo_and_the_store(self):
+        copy = self.make()
+        target = ledger.scratch_target(self.store, 3, "python-quality-reviewer")
+        for path in (copy, target):
+            with self.subTest(path=path):
+                self.assertTrue(path.resolve().is_relative_to(self.temp.resolve()))
+                self.assertFalse(path.resolve().is_relative_to(self.repo.resolve()))
+        self.assertFalse((self.store / "scratch").exists())
+
+    def test_two_stores_never_share_a_copy(self):
+        other = self.repo / ".sdd" / "other-run"
+        self.assertNotEqual(ledger.make_scratch(self.repo, other, 3, "r"),
+                            ledger.make_scratch(self.repo, self.store, 3, "r"))
+
+    def test_each_task_and_reviewer_gets_its_own_copy_and_cache(self):
+        names = [(3, "python-quality-reviewer"), (3, "rust-quality-reviewer"),
+                 (4, "rust-quality-reviewer")]
+        copies = {self.make(t, a) for t, a in names}
+        targets = {ledger.scratch_target(self.store, t, a) for t, a in names}
+        self.assertEqual((len(copies), len(targets)), (3, 3))
+        self.assertFalse(copies & targets)
 
     def test_breaking_the_copy_leaves_the_checkout_alone(self):
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         status = self._git("status", "--porcelain")
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        copy = self.make()
         (copy / "a.py").write_text("x = 99\n", encoding="utf-8")
         self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 2\n")
         self.assertEqual(self._git("status", "--porcelain"), status)
 
     def test_the_copy_stays_out_of_later_snapshots(self):
         before = ledger.snapshot_tree(self.repo)
-        ledger.make_scratch(self.repo, self.store, "r-1")
+        self.make()
         self.assertEqual(ledger.snapshot_tree(self.repo), before)
 
-    def test_making_it_again_replaces_a_left_over_copy(self):
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+    def test_making_it_again_replaces_a_left_over_copy_and_keeps_the_cache(self):
+        copy = self.make()
+        target = ledger.scratch_target(self.store, 3, "python-quality-reviewer")
+        target.mkdir(parents=True)
+        (target / "build.o").write_bytes(b"\0")
         (copy / "a.py").write_text("x = 99\n", encoding="utf-8")
         (copy / "junk.txt").write_text("left over\n", encoding="utf-8")
         (self.repo / "a.py").write_text("x = 3\n", encoding="utf-8")
-        again = ledger.make_scratch(self.repo, self.store, "r-1")
+        again = self.make()
         self.assertEqual(again, copy)
         self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 3\n")
         self.assertFalse((copy / "junk.txt").exists())
+        self.assertTrue((target / "build.o").exists())
 
-    def test_remove_deletes_the_copy_and_its_registration(self):
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+    def test_remove_deletes_the_copy_and_its_registration_but_keeps_the_cache(self):
+        copy = self.make()
+        target = ledger.scratch_target(self.store, 3, "python-quality-reviewer")
+        target.mkdir(parents=True)
         (copy / "build.so").write_bytes(b"\0")  # a build output copied in
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+        ledger.remove_scratch(self.repo, self.store, 3, "python-quality-reviewer")
         self.assertFalse(copy.exists())
+        self.assertTrue(target.exists())
         self.assertNotIn(str(copy), self._git("worktree", "list", "--porcelain"))
 
     def test_removing_a_copy_that_is_gone_is_a_no_op(self):
-        ledger.remove_scratch(self.repo, self.store, "never-made")
+        ledger.remove_scratch(self.repo, self.store, 3, "never-made")
 
-    def test_a_name_that_would_leave_the_scratch_folder_is_refused(self):
-        for name in ("../escape", "a/b", "-x", "", ".", "r-1\n"):
-            with self.subTest(name=name), self.assertRaises(ledger.RecordError):
-                ledger.make_scratch(self.repo, self.store, name)
+    def test_a_name_that_would_leave_its_folder_is_refused(self):
+        for task, agent in ((3, "../escape"), (3, "a/b"), (3, "-x"), (3, ""), (3, "."),
+                            (3, "r-1\n"), ("../x", "r"), ("", "r")):
+            with self.subTest(task=task, agent=agent), self.assertRaises(ledger.RecordError):
+                ledger.make_scratch(self.repo, self.store, task, agent)
+
+    def test_completing_a_task_deletes_its_copies_and_caches_only(self):
+        mine, other = self.make(3, "r"), self.make(4, "r")
+        for task in (3, 4):
+            ledger.scratch_target(self.store, task, "r").mkdir(parents=True)
+        ledger.drop_scratch(self.repo, self.store, 3)
+        self.assertFalse(mine.exists())
+        self.assertFalse(ledger.scratch_target(self.store, 3, "r").exists())
+        self.assertTrue(other.exists())
+        self.assertTrue(ledger.scratch_target(self.store, 4, "r").exists())
+        self.assertNotIn(str(mine), self._git("worktree", "list", "--porcelain"))
+
+    def test_dropping_everything_leaves_no_folder_behind(self):
+        self.make(3, "r")
+        self.make("final", "r")
+        ledger.drop_scratch(self.repo, self.store)
+        self.assertFalse(ledger.scratch_root(self.store).exists())
+
+    def test_dropping_a_task_with_no_copies_is_a_no_op(self):
+        ledger.drop_scratch(self.repo, self.store, 9)
+        ledger.drop_scratch(self.repo, self.store)
 
     def test_a_left_over_folder_git_no_longer_knows_is_replaced_and_removed(self):
-        stray = self.store / "scratch" / "r-1"
+        stray = ledger.make_scratch(self.repo, self.store, 3, "r")
+        shutil.rmtree(stray)
         stray.mkdir(parents=True)
         (stray / "old.txt").write_text("stale\n", encoding="utf-8")
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        copy = self.make(3, "r")
         self.assertTrue((copy / "a.py").is_file())
         self.assertFalse((copy / "old.txt").exists())
         (copy / ".git").unlink()  # a copy git can no longer validate
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+        ledger.remove_scratch(self.repo, self.store, 3, "r")
         self.assertFalse(copy.exists())
 
-    def test_a_read_only_build_folder_in_the_copy_does_not_block_removal(self):
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
-        locked = copy / "cache"
-        locked.mkdir()
-        (locked / "dep.o").write_bytes(b"\0")
-        locked.chmod(0o555)
-        self.addCleanup(lambda: locked.exists() and locked.chmod(0o755))
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+    def test_a_read_only_build_folder_does_not_block_removal(self):
+        copy = self.make()
+        target = ledger.scratch_target(self.store, 3, "python-quality-reviewer")
+        for folder in (copy / "cache", target / "debug"):
+            folder.mkdir(parents=True)
+            (folder / "dep.o").write_bytes(b"\0")
+            folder.chmod(0o555)
+            self.addCleanup(lambda f=folder: f.exists() and f.chmod(0o755))
+        ledger.drop_scratch(self.repo, self.store, 3)
         self.assertFalse(copy.exists())
-        self.assertIsNotNone(ledger.make_scratch(self.repo, self.store, "r-1"))
+        self.assertFalse(target.exists())
+        self.assertIsNotNone(self.make())
 
     def test_an_unreadable_folder_in_a_left_over_copy_does_not_block_removal(self):
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        copy = self.make()
         (copy / ".git").unlink()  # forces the fallback delete
         sealed = copy / "out" / "sealed"
         sealed.mkdir(parents=True)
         (sealed / "x.o").write_bytes(b"\0")
         sealed.chmod(0o000)
         self.addCleanup(lambda: sealed.exists() and sealed.chmod(0o755))
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+        ledger.remove_scratch(self.repo, self.store, 3, "python-quality-reviewer")
         self.assertFalse(copy.exists())
 
     def test_removal_never_changes_permissions_outside_the_copy(self):
@@ -5883,24 +6114,24 @@ class TestScratch(GitRepoTestCase):
         outside.mkdir()
         self.addCleanup(lambda: (outside.chmod(0o755), shutil.rmtree(outside)))
         outside.chmod(0o555)
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        copy = self.make()
         (copy / ".git").unlink()
         (copy / "link").symlink_to(outside, target_is_directory=True)
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+        ledger.drop_scratch(self.repo, self.store, 3)
         self.assertFalse(copy.exists())
         self.assertEqual(outside.stat().st_mode & 0o777, 0o555)
 
     def test_a_copy_whose_folder_was_deleted_by_hand_can_be_made_again(self):
-        copy = ledger.make_scratch(self.repo, self.store, "r-1")
+        copy = self.make()
         shutil.rmtree(copy)
-        self.assertEqual(ledger.make_scratch(self.repo, self.store, "r-1"), copy)
+        self.assertEqual(self.make(), copy)
 
     def test_removing_one_copy_keeps_another_worktree_registration(self):
         other = Path(self._tmp.name + "-elsewhere")
         self._git("worktree", "add", "--detach", "-q", str(other))
         shutil.rmtree(other)  # e.g. on a volume that isn't mounted right now
-        ledger.make_scratch(self.repo, self.store, "r-1")
-        ledger.remove_scratch(self.repo, self.store, "r-1")
+        self.make()
+        ledger.drop_scratch(self.repo, self.store, 3)
         self.assertIn(other.name, self._git("worktree", "list", "--porcelain"))
 
     def test_no_git_identity_is_needed(self):
@@ -5912,46 +6143,90 @@ class TestScratch(GitRepoTestCase):
         with mock.patch.dict(os.environ, env, clear=True), \
                 mock.patch.dict(os.environ, {"HOME": self._tmp.name,
                                              "GIT_CONFIG_NOSYSTEM": "1"}):
-            copy = ledger.make_scratch(self.repo, self.store, "r-1")
+            copy = self.make()
         self.assertTrue((copy / "a.py").is_file())
 
-    def test_a_store_git_does_not_ignore_is_refused(self):
-        store = self.repo / "notes"
-        store.mkdir()
-        (store / ".gitignore").write_text("*.json\n", encoding="utf-8")
-        with self.assertRaises(ledger.RecordError):
-            ledger.make_scratch(self.repo, store, "r-1")
-        self.assertFalse((store / "scratch").exists())
-
-    def test_a_store_outside_the_repo_works(self):
-        store = Path(self._tmp.name + "-store")
-        self.addCleanup(shutil.rmtree, store, True)
-        copy = ledger.make_scratch(self.repo, store, "r-1")
-        self.assertTrue((copy / "a.py").is_file())
-        ledger.remove_scratch(self.repo, store, "r-1")
-        self.assertFalse(copy.exists())
+    def test_a_temp_folder_inside_the_repo_that_git_does_not_ignore_is_refused(self):
+        inside = self.repo / "tmp"
+        inside.mkdir()
+        with mock.patch.object(tempfile, "tempdir", str(inside)), \
+                self.assertRaises(ledger.RecordError):
+            self.make()
 
     def test_cli_from_a_subfolder_uses_the_default_store(self):
         (self.repo / "pkg").mkdir()
-        result = subprocess.run([sys.executable, str(LEDGER_PY), "scratch", "--name", "r-1"],
-                                cwd=self.repo / "pkg", capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(LEDGER_PY), "scratch", "--task", "3",
+                                 "--agent", "r"], cwd=self.repo / "pkg", capture_output=True,
+                                text=True, env={**os.environ, "TMPDIR": str(self.temp)})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(Path(result.stdout.splitlines()[0]),
-                         (self.store / "scratch" / "r-1").resolve())
+        self.assertEqual(Path(result.stdout.splitlines()[0]).resolve(),
+                         ledger.make_scratch(self.repo, self.store, 3, "r").resolve())
 
     def test_cli_prints_the_copy_and_its_own_cargo_target(self):
         # Copies built at the same time must not share artifacts: cargo
         # judges a path dependency fresh by mtime, so one copy could run
         # another's broken build.
-        result = self._cli("--name", "rust-quality-reviewer-2")
+        result = self._cli("--task", "2", "--agent", "rust-quality-reviewer")
         self.assertEqual(result.returncode, 0, result.stderr)
         path, target = result.stdout.splitlines()
         self.assertTrue(Path(path).is_dir())
         self.assertEqual(target, "CARGO_TARGET_DIR="
-                         f"{self.store.resolve() / 'scratch-target' / 'rust-quality-reviewer-2'}")
-        removed = self._cli("--name", "rust-quality-reviewer-2", "--remove")
+                         f"{ledger.scratch_target(self.store, 2, 'rust-quality-reviewer')}")
+        removed = self._cli("--task", "2", "--agent", "rust-quality-reviewer", "--remove")
         self.assertEqual(removed.returncode, 0, removed.stderr)
         self.assertFalse(Path(path).exists())
+
+    def test_cli_refuses_the_old_free_form_name(self):
+        result = self._cli("--name", "rust-quality-reviewer-2")
+        self.assertNotEqual(result.returncode, 0)
+
+
+class TestScratchLifetime(TriageStoreTestCase):
+    """A task's copies and caches go when it commits, and every copy goes
+    when the store is cleared."""
+
+    def setUp(self):
+        super().setUp()
+        self.temp = Path(self._tmp.name + "-temp")
+        self.temp.mkdir()
+        self.addCleanup(shutil.rmtree, self.temp, True)
+        patcher = mock.patch.object(tempfile, "tempdir", str(self.temp))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def scratch(self, task: int | str) -> tuple[Path, Path]:
+        copy = ledger.make_scratch(self.repo, self.store, task, "python-quality-reviewer")
+        target = ledger.scratch_target(self.store, task, "python-quality-reviewer")
+        target.mkdir(parents=True)
+        return copy, target
+
+    def test_committing_a_task_deletes_its_copies_and_caches(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        ledger.cmd_stage(self.store, 4, 1, ["b.py"])
+        mine, other = self.scratch(3), self.scratch(4)
+        self.spec()
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = ledger.cmd_commit(self.store, 3, "Add the size check", "true", None)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(p.exists() for p in mine))
+        self.assertTrue(all(p.exists() for p in other))
+
+    def test_a_commit_that_fails_keeps_them_for_the_recheck(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        copy, target = self.scratch(3)
+        self.spec()
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = ledger.cmd_commit(self.store, 3, "Add the size check", "false", None)
+        self.assertEqual(code, 1)
+        self.assertTrue(copy.exists() and target.exists())
+
+    def test_clearing_the_store_deletes_every_copy(self):
+        self.scratch(3)
+        self.scratch(4)
+        ledger.cmd_clear(self.store, discard_open=True)
+        self.assertFalse(ledger.scratch_root(self.store).exists())
 
 
 if __name__ == "__main__":
