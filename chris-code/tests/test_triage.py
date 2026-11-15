@@ -44,7 +44,7 @@ class Loop:
         self.versions: dict[str, str] = {}
 
     def review(self, *raised: dict, answers=None, rewrote=None, root_causes=(), unclear=(),
-               override=False, undelivered_note=False) -> dict:
+               override=False, undelivered_note=False, reach_raised=()) -> dict:
         sources = rewrote if rewrote is not None else {f["source"] for f in raised} or {SPEC}
         for source in sources:
             self.versions[source] = self.versions.get(source, "") + "'"
@@ -52,7 +52,7 @@ class Loop:
                                        self.versions, self.close)
         self.states = triage.apply(self.states, self.observed)
         entry = triage.step(self.states, close=self.close, prior=self.prior,
-                            root_causes=list(root_causes), reach_raised=set(),
+                            root_causes=list(root_causes), reach_raised=set(reach_raised),
                             unclear=list(unclear), override=override,
                             undelivered_note=undelivered_note)
         changes = entry.pop("changes")
@@ -347,6 +347,20 @@ class TestInline(unittest.TestCase):
     def test_a_root_cause_or_a_bare_note_delivery_is_not(self):
         self.assertFalse(Loop().review(finding("a"), root_causes=["c"])["inline"])
         self.assertFalse(Loop().review(undelivered_note=True)["inline"])
+
+    def test_a_step_whose_work_is_more_than_its_findings_is_not(self):
+        polish = Loop().review(finding("n", 1), undelivered_note=True)
+        self.assertEqual((polish["kind"], polish["inline"]), ("polish", False))
+        loop = Loop()
+        for _ in range(2):
+            loop.review(finding("a"))
+        loop.review(finding("a"), finding("n", 2))  # spent: escalate
+        override = loop.review(finding("a"), finding("n", 2), rewrote=set(), override=True)
+        self.assertEqual((override["kind"], override["inline"]), ("ruling", False))
+
+    def test_a_note_the_coder_raised_the_reach_of_is_not(self):
+        entry = Loop().review(finding("a"), finding("n", 1), reach_raised={"n"})
+        self.assertEqual((entry["kind"], entry["inline"]), ("patch", False))
 
     def test_a_step_that_fixes_nothing_is_not(self):
         for entry in (Loop().review(), Loop(close=True).review(finding("a", 3, source=DESIGN))):

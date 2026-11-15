@@ -210,7 +210,10 @@ def step(states: dict[str, dict], *, close: bool, prior: list[dict], root_causes
         shown += [_shown(fid, states[fid], "note") for fid in notes]
         changes += [{"id": fid, "state": "noted", "from": "note"} for fid in notes]
     after = apply(states, changes)
-    inline = kind in INLINE_KINDS and not root_causes and inline_eligible(
+    # Inline only when the findings shown are the step's whole work: never
+    # with a root cause, an overridden behavior choice or a note to deliver.
+    whole_work = not (root_causes or override or undelivered_note)
+    inline = kind in INLINE_KINDS and whole_work and inline_eligible(
         [states[f["id"]].get("data") or {} for f in shown],
         {f["id"] for f in shown} & reach_raised)
     if close:

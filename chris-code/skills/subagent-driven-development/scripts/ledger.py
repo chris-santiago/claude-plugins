@@ -1224,6 +1224,10 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
                           f"{entry.get('reason', '')}")
         elif entry.get("type") == "plan":
             lines.append(f"- plan `{entry.get('path')}`")
+        elif entry.get("type") == INLINE_ENTRY:
+            lines.append(f"- {_scope_name(entry.get('task'))} fixed inline from "
+                         f"`{str(entry.get('baseline', ''))[:7]}` "
+                         f"({', '.join(entry.get('files', []))}): {entry.get('note', '')}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -2134,7 +2138,8 @@ def remove_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> 
     """Delete a reviewer's scratch copy and its worktree registration,
     build outputs and all, keeping its build cache for a re-check. A copy
     that's already gone is not an error."""
-    _remove_copy(_toplevel(repo), scratch_copy(store_dir, task, agent))
+    if _private_scratch_base(store_dir, create=False):
+        _remove_copy(_toplevel(repo), scratch_copy(store_dir, task, agent))
 
 
 def drop_scratch(repo: Path | None, store_dir: Path, task: int | str | None = None) -> None:
@@ -2154,6 +2159,9 @@ def drop_scratch(repo: Path | None, store_dir: Path, task: int | str | None = No
 
 
 def _remove_copy(top: Path, path: Path) -> None:
+    if path.is_symlink():
+        path.unlink()  # never delete through a link: it isn't our copy
+        return
     if not path.exists():
         return
     try:
@@ -2551,7 +2559,7 @@ def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
         if not discard_open:
             _check_nothing_owed(store_dir)
         _clear_store(store_dir)
-        drop_scratch(_store_repo(store_dir), store_dir)
+        _drop_scratch_or_warn(store_dir)
 
 
 def _check_nothing_owed(store_dir: Path) -> None:
@@ -3381,9 +3389,11 @@ def triage_inputs(store_dir: Path, task: int | str) -> dict:
     return {
         "task": task, "log": log, "reviewers": found.reviewers, "coder": coder,
         "states": states, "raised": raised,
-        # Only the reviewer that raised a finding answers a contest of it.
-        "answers": {a["finding"]: a["verdict"] for rec in found.reviewers
-                    for a in rec.data.get("contests", []) if a["finding"].startswith(f"{rec.stem}#")},
+        # Only the reviewer that raised a finding answers a contest of it,
+        # and only while the contesting coder record is the round's.
+        "answers": {} if _fixed_inline_since(log, task, coder) else {
+            a["finding"]: a["verdict"] for rec in found.reviewers
+            for a in rec.data.get("contests", []) if a["finding"].startswith(f"{rec.stem}#")},
         "versions": {r.stem: _record_version(store_dir, r) for r in found.reviewers},
         "root_causes": root_causes,
         "reach_raised": {e["finding"] for e in coder_data.get("reach_raised", [])},
@@ -3665,6 +3675,14 @@ def _inline_files(log: list[dict], task: int | str) -> set[str]:
     return {f for e in _inline_entries(log, task) for f in e.get("files", [])}
 
 
+def _fixed_inline_since(log: list[dict], task: int | str, coder: Record | None) -> bool:
+    """The orchestrator fixed a round inline at or after the coder's latest
+    cycle, so the coder's record (its contests, sweeps and diagnosis) speaks
+    for an earlier round, not the one being re-checked."""
+    cycle = (coder.data.get("cycle") or 0) if coder is not None else 0
+    return any((e.get("cycle") or 0) >= cycle for e in _inline_entries(log, task))
+
+
 def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                  baseline: dict | None) -> bool:
     """True while the latest step's fix hasn't finished: no coder record in
@@ -3815,7 +3833,10 @@ def cmd_inline(store_dir: Path, task: int | str, note: str, files: list[str]) ->
             raise RecordError(f"{_scope_name(task)}'s round is already finished: run "
                               f"`triage --task {task}`")
         footprint = scope_footprint(store_dir, log, task) or set()
-        extra = {_normalize_path(f) for f in files} - footprint
+        named = {_normalize_path(f) for f in files if f.strip()}
+        if len(named) < len(files) or any(f == "." or (top / f).is_dir() for f in named):
+            raise RecordError(f"--files: got {files!r}; name each file you changed, not a folder")
+        extra = named - footprint
         if extra and task not in PATH_SCOPES:
             raise RecordError(f"{', '.join(sorted(extra))} outside task {task}'s footprint: "
                               "re-issue `ledger.py stage` with those files first")
@@ -4171,8 +4192,18 @@ def _complete(store_dir: Path, task: int | str, note: str, light: bool) -> int:
         print(f"{_scope_name(task)} not completed: {e}")
         return 1
     print(f"{_scope_name(task)} complete")
-    drop_scratch(_store_repo(store_dir), store_dir, task)
+    _drop_scratch_or_warn(store_dir, task)
     return 0
+
+
+def _drop_scratch_or_warn(store_dir: Path, task: int | str | None = None) -> None:
+    """Delete scratch copies after a command already did its work: a cleanup
+    that fails is reported, never turned into the command's failure."""
+    try:
+        drop_scratch(_store_repo(store_dir), store_dir, task)
+    except (RecordError, OSError, subprocess.CalledProcessError) as e:
+        print(f"warning: scratch copies of {_scope_name(task) if task is not None else 'the store'} "
+              f"not deleted: {e}")
 
 
 def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | str,
@@ -4260,7 +4291,8 @@ def _check_contest_answers(path: Path, data: dict) -> None:
     one of its findings, so a finding closes only after it read the evidence."""
     scope = _scope(path.stem)
     coder = _coder_of_record(_scope_records(path.parent, scope).coders) if scope else None
-    if coder is None:
+    if coder is None or _fixed_inline_since(load_progress_log(path.parent), _scope_task(scope),
+                                            coder):
         return
     sent = {c["finding"] for c in coder.data.get("contested", [])
             if c["finding"].startswith(f"{path.stem}#")}

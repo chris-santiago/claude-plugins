@@ -5912,6 +5912,73 @@ class TestInlineFix(TriageStoreTestCase):
             ledger.cmd_discard(self.store, 3)
         self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 1\n")
 
+    def held_then_ruled_inline(self) -> tuple[dict, str]:
+        """A finding the coder contested and the reviewer held, ruled fix by
+        the user and fixed inline: the coder's record still holds the old
+        contest."""
+        issue = _finding()
+        fid = self.spec_id(issue)
+        self.spec(issue)
+        self.triage()
+        self.fixed(contested=[{"finding": fid, "reason": "wrong", "evidence": "a.py:1"}])
+        self.spec(issue, contests=[{"finding": fid, "verdict": "hold", "reason": "no"}])
+        self.triage()
+        _rule(self.store, fid, "fix", "user ruling: fix it")
+        self.assertEqual(self.entries()[-1]["kind"], "escalate")
+        self.triage()
+        self.assertTrue(self.entries()[-1]["inline"])
+        self.edit()
+        self.inline()
+        return issue, fid
+
+    def test_a_recheck_after_an_inline_fix_owes_no_answer_to_an_old_contest(self):
+        self.held_then_ruled_inline()
+        ledger.cmd_check(str(self.spec()))  # no raise: the contest was an earlier round's
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+
+    def test_an_old_hold_copied_into_the_recheck_does_not_hold_the_finding(self):
+        issue, fid = self.held_then_ruled_inline()
+        self.spec(issue, contests=[{"finding": fid, "verdict": "hold", "reason": "no"}])
+        self.triage()
+        state = ledger.finding_states(ledger.load_progress_log(self.store), 3)[fid]["state"]
+        self.assertNotEqual(state, "held")
+
+    def test_a_later_round_on_the_same_tree_is_not_finished_by_the_old_inline_fix(self):
+        issue, other = _finding(), _finding(rule="other rule")
+        self.spec(issue)
+        self.triage()
+        tree = _baseline(self.store, 3)
+        self.edit()
+        self.inline()
+        _rule(self.store, self.spec_id(issue), "drop", "user ruling: drop it")
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_discard(self.store, 3)
+        self.spec(issue, other)
+        self.triage()
+        self.assertEqual((self.entries()[-1]["kind"], _baseline(self.store, 3)), ("patch", tree))
+        self.assertIn("waiting for: the coder's finished fix", self.triage())
+
+    def test_files_must_be_files(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        (self.repo / "pkg").mkdir()
+        for bad in (".", "", "pkg"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ledger.RecordError, "file"):
+                ledger.cmd_inline(self.store, 3, self.NOTE, [bad])
+
+    def test_read_shows_the_inline_fix(self):
+        self.spec(_finding())
+        self.triage()
+        self.edit()
+        self.inline()
+        shown = ledger.render_store_markdown(ledger.load_records(self.store),
+                                             ledger.load_progress_log(self.store))
+        self.assertNotIn("unknown entry", shown)
+        self.assertIn("fixed inline", shown)
+
     def test_the_report_lists_the_inline_ruling(self):
         self.spec(_finding())
         self.triage()
@@ -6012,7 +6079,23 @@ class TestScratch(GitRepoTestCase):
                     self.make()
                 with self.assertRaisesRegex(ledger.RecordError, "scratch folder"):
                     ledger.drop_scratch(self.repo, self.store)
+                with self.assertRaisesRegex(ledger.RecordError, "scratch folder"):
+                    ledger.remove_scratch(self.repo, self.store, 3, "python-quality-reviewer")
                 base.unlink() if base.is_symlink() else base.rmdir()
+
+    def test_remove_never_deletes_through_a_planted_copy_link(self):
+        precious = Path(self._tmp.name + "-precious")
+        self._git("worktree", "add", "--detach", "-q", str(precious))
+        self.addCleanup(shutil.rmtree, precious, True)
+        (precious / "work.txt").write_text("uncommitted\n", encoding="utf-8")
+        base = ledger.scratch_root(self.store).parent
+        copy = ledger.scratch_copy(self.store, 3, "r")
+        copy.parent.mkdir(parents=True)
+        base.chmod(0o777)
+        copy.symlink_to(precious, target_is_directory=True)
+        with self.assertRaises(ledger.RecordError):
+            ledger.remove_scratch(self.repo, self.store, 3, "r")
+        self.assertTrue((precious / "work.txt").exists())
 
     def test_two_stores_never_share_a_copy(self):
         other = self.repo / ".sdd" / "other-run"
@@ -6248,6 +6331,19 @@ class TestScratchLifetime(TriageStoreTestCase):
         self.scratch(4)
         ledger.cmd_clear(self.store, discard_open=True)
         self.assertFalse(ledger.scratch_root(self.store).exists())
+
+    def test_a_cleanup_that_fails_after_the_commit_only_warns(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.spec()
+        self.triage()
+        out = io.StringIO()
+        with mock.patch.object(ledger, "drop_scratch", side_effect=OSError("busy")), \
+                contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, 3, "Add the size check", "true", None)
+            ledger.cmd_clear(self.store, discard_open=True)
+        self.assertEqual(code, 0)
+        self.assertIn("task 3 complete", out.getvalue())
+        self.assertIn("busy", out.getvalue())
 
 
 if __name__ == "__main__":
