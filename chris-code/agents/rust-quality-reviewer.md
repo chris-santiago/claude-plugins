@@ -180,7 +180,7 @@ A re-check judges the round, not the whole task again:
 - **After a round fixed inline** (the dispatch says so), the orchestrator fixed it, and no coder record speaks for it: the coder's sweeps, `tests_first`, `test_changes`, `diagnosis` and contests belong to an earlier round, so skip them. Read the fix diff and the consumers of every symbol it changed, check each finding you raised, and sweep its rule across the task's files yourself: a site the fix missed is still open.
 - **Settled findings** (the dispatch lists them: conceded, waived or ruled) stay closed. Raise one again only when code changed since: add `"reopens": "<its id>"` and a site in the changed lines. `check` refuses an unchanged repeat of a fixed finding.
 
-Read the coder's `diagnosis` too: a fix that closes the listed sites while leaving its stated root cause in place earns a finding.
+Except after a round fixed inline, read the coder's `diagnosis` too: a fix that closes the listed sites while leaving its stated root cause in place earns a finding.
 
 ## Rules
 

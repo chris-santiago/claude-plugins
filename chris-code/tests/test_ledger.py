@@ -6083,19 +6083,33 @@ class TestScratch(GitRepoTestCase):
                     ledger.remove_scratch(self.repo, self.store, 3, "python-quality-reviewer")
                 base.unlink() if base.is_symlink() else base.rmdir()
 
-    def test_remove_never_deletes_through_a_planted_copy_link(self):
+    def precious_link(self) -> tuple[Path, Path]:
+        """A copy path that is a link to a real worktree with uncommitted work."""
         precious = Path(self._tmp.name + "-precious")
         self._git("worktree", "add", "--detach", "-q", str(precious))
         self.addCleanup(shutil.rmtree, precious, True)
         (precious / "work.txt").write_text("uncommitted\n", encoding="utf-8")
-        base = ledger.scratch_root(self.store).parent
         copy = ledger.scratch_copy(self.store, 3, "r")
-        copy.parent.mkdir(parents=True)
-        base.chmod(0o777)
+        copy.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         copy.symlink_to(precious, target_is_directory=True)
+        return copy, precious
+
+    def test_remove_never_deletes_through_a_planted_copy_link(self):
+        copy, precious = self.precious_link()
+        ledger.scratch_root(self.store).parent.chmod(0o777)
         with self.assertRaises(ledger.RecordError):
             ledger.remove_scratch(self.repo, self.store, 3, "r")
         self.assertTrue((precious / "work.txt").exists())
+
+    def test_a_copy_that_is_a_link_is_unlinked_never_followed(self):
+        for remove in (lambda: ledger.remove_scratch(self.repo, self.store, 3, "r"),
+                       lambda: ledger.drop_scratch(self.repo, self.store, 3)):
+            with self.subTest(remove=remove):
+                copy, precious = self.precious_link()
+                remove()
+                self.assertFalse(copy.is_symlink())
+                self.assertTrue((precious / "work.txt").exists())
+                self._git("worktree", "remove", "--force", str(precious))
 
     def test_two_stores_never_share_a_copy(self):
         other = self.repo / ".sdd" / "other-run"

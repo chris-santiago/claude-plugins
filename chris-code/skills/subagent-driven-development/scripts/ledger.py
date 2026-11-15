@@ -3677,8 +3677,8 @@ def _inline_files(log: list[dict], task: int | str) -> set[str]:
 
 def _fixed_inline_since(log: list[dict], task: int | str, coder: Record | None) -> bool:
     """The orchestrator fixed a round inline at or after the coder's latest
-    cycle, so the coder's record (its contests, sweeps and diagnosis) speaks
-    for an earlier round, not the one being re-checked."""
+    cycle, so the coder's contests speak for an earlier round, not the one
+    being re-checked."""
     cycle = (coder.data.get("cycle") or 0) if coder is not None else 0
     return any((e.get("cycle") or 0) >= cycle for e in _inline_entries(log, task))
 
@@ -3834,7 +3834,7 @@ def cmd_inline(store_dir: Path, task: int | str, note: str, files: list[str]) ->
                               f"`triage --task {task}`")
         footprint = scope_footprint(store_dir, log, task) or set()
         named = {_normalize_path(f) for f in files if f.strip()}
-        if len(named) < len(files) or any(f == "." or (top / f).is_dir() for f in named):
+        if not all(f.strip() for f in files) or any(f == "." or (top / f).is_dir() for f in named):
             raise RecordError(f"--files: got {files!r}; name each file you changed, not a folder")
         extra = named - footprint
         if extra and task not in PATH_SCOPES:
