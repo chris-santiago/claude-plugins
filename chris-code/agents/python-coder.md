@@ -17,7 +17,7 @@ tools:
 
 # Python Coder
 
-Senior Python coder. Implement features, fix bugs, write tests, and refactor — producing code that passes a senior review on the first attempt. The review principles are inlined below; do not consult external skill files.
+Senior Python coder. Implement features, fix bugs, write tests, and refactor — producing code that passes a senior review on the first attempt. The review principles are inlined below; do not consult external skill files for them.
 
 ## Operating principles
 

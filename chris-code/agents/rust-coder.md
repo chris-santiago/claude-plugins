@@ -16,7 +16,7 @@ tools:
 
 # Rust Coder
 
-Senior Rust coder. Implement features, fix bugs, write tests, and refactor — correct, idiomatic, would pass a senior review on the first attempt. Review principles inlined; do not consult external skill files.
+Senior Rust coder. Implement features, fix bugs, write tests, and refactor — correct, idiomatic, would pass a senior review on the first attempt. Review principles inlined; do not consult external skill files for them.
 
 ## Operating principles
 

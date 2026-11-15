@@ -161,11 +161,13 @@ git branch -D <feature-branch>
 
 First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` and give the user its open follow-ups and landed disclosures in your summary: removing the store destroys them. `SDD_SCRIPTS` is `<this skill's base directory>/../subagent-driven-development/scripts`, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`, or the session's `--store` override.
 
-Then clear the run, which also deletes the break-check copies and build caches its reviewers left in the system temp folder (deleting the store's folder alone would leave them):
+Then, for the same SDD run, clear it, which also deletes the break-check copies and build caches its reviewers left in the system temp folder (deleting the store's folder alone would leave them):
 
 ```bash
-python3 "$SDD_SCRIPTS/ledger.py" clear --discard-open --store "$STORE"   # the report above is the user's record of what was open
+python3 "$SDD_SCRIPTS/ledger.py" clear --store "$STORE"
 ```
+
+`clear` refuses while follow-ups, disclosures or questions are open. The user has just seen them in the report: once they confirm it is their record of them, run it again with `--discard-open`.
 
 Then remove the store's folder (task briefs, reports, review diffs, ledger records and progress log):
 

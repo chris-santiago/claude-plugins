@@ -39,7 +39,6 @@ Records carry schema version 2. A record or store written by an earlier release 
 
 - One seen for the first time starts as `note` (S1-S2), `filed` (S1-S2 of contract reach, filed as a follow-up) or `fix` in a task, and at the close as `fix` (an intent not-met, S4+, or a failing commit gate) or `waiting`.
 - After that a record only reports what a re-check saw: a sent finding its rewritten record no longer raises is `fixed`, one still raised is `fix` again, and a contest the raising reviewer concedes is `fixed` and one it holds is `held`. After a round fixed inline, the coder record's contests speak for an earlier round, and their answers are ignored.
-- A store triaged before findings had entries is seeded from its triage entries once.
 
 **The step.**
 
@@ -61,6 +60,8 @@ Records carry schema version 2. A record or store written by an earlier release 
 - the raiser of each finding it sent has written its record again (a re-check, or a new `gate` run for a gate finding), as has every other record it named (every reviewer after a holistic round, the spec reviewer after an override's ruling round).
 
 A round whose every sent finding (a polish round: its notes) the user has filed or dropped waits only for `discard` of its unlanded changes. Until then, or with nothing changed, triage reprints that entry and its baseline with what it is waiting for and logs nothing. A record counts as re-checked by being written, so a re-check with the same content still counts.
+
+**An older store.** A store triaged before findings had entries is seeded from its triage entries once.
 
 ## Writing the run
 
