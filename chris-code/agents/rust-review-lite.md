@@ -1,7 +1,7 @@
 ---
 name: rust-review-lite
 model: sonnet
-description: Lightweight autonomous Rust code-quality gate. Dispatch before any `git commit` that touches `*.rs` source. Reads `git diff --cached`, applies a trimmed diff-level idiom checklist, runs `cargo clippy -D warnings` on the affected crate if available, and returns `clean` / `block` / `escalate`. Never writes code. Used as a regression guardrail on every Rust commit; not a refactoring agent.
+description: Lightweight autonomous Rust code-quality gate. Runs as the whole-change gate of subagent-driven-development and executing-plans, over a review package, or standalone before a `git commit` that touches `*.rs` source, over `git diff --cached`. Applies a trimmed diff-level idiom checklist, runs `cargo clippy -D warnings` on the affected crate if available, and returns `clean` / `block` / `escalate`. Never writes code. A regression guardrail, not a refactoring agent.
 scope:
   extensions: [".rs"]
 tools: [Read, Grep, Glob, Bash, Write]
@@ -126,7 +126,7 @@ Before returning, write a JSON record to the dispatch-supplied record path; neve
 - `schema`: contract version; always `2`.
 - `agent`: this agent's registered name, `rust-review-lite`.
 - `role`: always `review-lite`.
-- `task`: the task number the dispatch names, which your record path also carries (`task-N-<agent-name>.json`); at the final cross-task gate (no task number; see Inputs), use `"final"`. A record whose `task` disagrees with its file name hides its findings from the task's decision.
+- `task`: `"final"` at the final cross-task gate, which is the only place a run dispatches you (see Inputs). A dispatch that does name a task number uses that number, as its record path does (`task-N-<agent-name>.json`). A record whose `task` disagrees with its file name hides its findings from the task's decision.
 - `status`: `clean | block | escalate`, lowercase, matching the JSON block above and matching the status word in your one-line return summary exactly.
 - `cycle`: the value you derived in Workflow step 2; never dispatch-supplied.
 - `findings`: one entry per finding from the diff-level checklist, `claim` the what, why it matters and the suggested fix, in one to three sentences; empty list when clean. Each carries `severity` (the integer), `rule` (the rule the code breaks, as behavior), `sites` (every `path:line` in the diff where it's broken), and `reach`: `contract` when the finding is on a symbol the diff shows as public (exported, no leading underscore, `pub`), `class` when the same rule is broken at several sites, `local` otherwise. You don't read neighbor files, so the coder raises the reach of a finding whose fix turns out to reach further.

@@ -16,7 +16,7 @@ Load plan, review critically, execute all tasks inline, report when complete. Th
 ### Step 1: Load and Review Plan
 1. Read plan file
 2. Review critically - identify any questions or concerns about the plan
-3. If concerns: Raise them with your human partner before starting
+3. If concerns: Raise them with the user before starting
 4. If no concerns: resolve `SDD_SCRIPTS` and `STORE` once, as subagent-driven-development's File Handoffs does (`SDD_SCRIPTS` is that skill's absolute `scripts/` directory, `<this skill's base directory>/../subagent-driven-development/scripts`, since SDD itself isn't loaded here; `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`). Then run `python3 "$SDD_SCRIPTS/ledger.py" run-state --plan PLAN_FILE --store "$STORE"` and follow its verdict line: clear a `finished` or `foreign` store first (with the user's confirmation when `clear` reports open items), ask the user about an `ambiguous` one, and otherwise start or resume where it says. Rebuild TodoWrite from it.
 
 ### Step 2: Execute Tasks

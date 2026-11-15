@@ -40,7 +40,7 @@ flowchart TB
         recheck["Re-check exactly the `recheck` set:<br/>raising reviewers, every reviewer,<br/>the gate, or nobody (polish)"]
         park["Park: the task waits for<br/>the stage's batched question"]
         commit{"ledger.py commit<br/>(ready, stage, gate,<br/>commit, complete)"}
-        back["Labels or lint: back to the coder,<br/>same attempt"]
+        back["Labels or lint: back to the coder<br/>(or you, after an inline fix),<br/>same attempt"]
     end
 
     read["Read plan + run-state verdict,<br/>pre-flight scan (conflicts, rows, open: rows),<br/>map footprints, group into stages"]
@@ -149,7 +149,7 @@ STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)
 - **Cross-task notes.** The other thing a coder can't recover is cross-task context. File it as a task-note for the task that needs it (*Run Notes*), and the brief carries it. Write pointers and decisions, never dereferenced spec content: a dependency contract (`built in Task M → path`), a conflict ruling (`finding §5 governs the extent→band call`), a code entry point (the landing symbol, plus any new wire-key value), or a shared-shape pointer. Point at the entry and let the coder trace the chain. Keep it to a few lines; more means the requirement belongs in the spec, or the conflict belonged in pre-flight.
 - **Reviewer inputs.** Spec and quality reviewers get the brief path, each coder's report path, the changed-file list, the verbatim Constraints, their own record and report paths (`path --task N --agent <reviewer>`, with `--kind report` for the report), each coder's record path and the scripts path, and read the changed files themselves. Each writes its verdict to its report path and returns one line: triage reads the record, so the verdict's prose never enters your context. A re-check adds the round's kind, the `Fix baseline` and `Task files` lines triage printed (for `ledger.py diff-since`), and the settled finding ids from the last triage entry's `settled`. The coder's contests, decision doc and sweeps are in its record. Never paste diffs.
 - **Review-lite inputs.** `*-review-lite` agents run only at the whole-change gate. They get the review-package path, the verbatim Constraints, the task (`"final"`), the record path and the scripts path, with no brief, report or file list. A re-check adds the coder's record path and the scope's settled ids.
-- **Committing is yours; coders never stage or commit.** When triage prints `done`, run `python3 "$SDD_SCRIPTS/ledger.py" commit --task N --message "<message>" --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`. It stops, touching nothing, at any blocker `ready` lists (a held finding, an open behavior choice, an undelivered note, an open `cannot_verify`, a first attempt's handoff whose coder of record hasn't finished, a malformed record, and at `final` an open escalation), or at a coder file outside the task's recorded footprint (re-issue `stage`). Otherwise it stages exactly the footprint, gates it (labels, lint, then the test), commits only those files with your message, and appends `complete`. At `final`, `--test` is the project's full test suite. A labels or lint failure goes back to the coder as the same attempt; a failing test is a gate finding, so run `triage` again.
+- **Committing is yours; coders never stage or commit.** When triage prints `done`, run `python3 "$SDD_SCRIPTS/ledger.py" commit --task N --message "<message>" --test "<the task's Verify: command>" [--lint "<the project's lint command>"] --store "$STORE"`. It stops, touching nothing, at any blocker `ready` lists (a held finding, an open behavior choice, an undelivered note, an open `cannot_verify`, a first attempt's handoff whose coder of record hasn't finished, a malformed record, and at `final` an open escalation), or at a coder file outside the task's recorded footprint (re-issue `stage`). Otherwise it stages exactly the footprint, gates it (labels, lint, then the test), commits only those files with your message, and appends `complete`. At `final`, `--test` is the project's full test suite. A labels or lint failure goes back to the coder as the same attempt (it is yours after an inline fix, *Offer to fix a small round yourself*); a failing test is a gate finding, so run `triage` again.
 - **Never** paste task text, prior-task summaries or diffs into a dispatch or your own context. A fresh subagent needs its brief, the interfaces it touches and the constraints, nothing else.
 
 ## Cross-Task Pattern Ledger
@@ -356,8 +356,8 @@ Breaking any rule above is a red flag. These are the ones a long run's pressure 
 **Required workflow skills:**
 - **chris-code:using-git-worktrees**: isolated workspace
 - **chris-code:lean-plan**: the plan this skill executes
-- **chris-code:requesting-code-review**: ad-hoc reviews outside these gates
-- **chris-code:finishing-a-development-branch**: completing the branch after all tasks
+- **chris-code:verification-before-completion**: the completion close, owed after the whole-change gate
+- **chris-code:finishing-a-development-branch**: completing the branch after the close
 
 **Agents:**
 - **`*-coder` agents**: specialized implementers, dispatched by file type
@@ -368,3 +368,5 @@ Breaking any rule above is a red flag. These are the ones a long run's pressure 
 **Subagents use:** **chris-code:test-driven-development** for each task.
 
 **Alternative workflow:** **chris-code:executing-plans** for inline execution without subagents.
+
+**Related:** **chris-code:requesting-code-review** for ad-hoc reviews outside these gates.

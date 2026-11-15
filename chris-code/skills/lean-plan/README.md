@@ -17,8 +17,8 @@ The insight came from observing that:
 ## Relationship to other skills
 
 - **lean-spec** — produces the design spec that lean-plan references. The spec defines *what must be true*; the plan defines *what to do* in what order.
-- **superpowers:writing-plans** — the skill lean-plan replaces. The global CLAUDE.md redirects brainstorming's plan-writing handoff to lean-plan.
-- **superpowers:subagent-driven-development / superpowers:executing-plans** — consume the plan produced by lean-plan. The 7-section format (Objective, Spec references, Files, Constraints, Tasks, Acceptance checks, Open questions) is designed to be dispatched task-by-task to subagents.
+- **superpowers' writing-plans** — the skill lean-plan replaces. `chris-code:brainstorming` hands its plan-writing off to lean-plan.
+- **chris-code:subagent-driven-development / chris-code:executing-plans** — consume the plan produced by lean-plan. The 7-section format (Objective, Spec references, Files, Constraints, Tasks, Acceptance checks, Open questions) is designed to be dispatched task-by-task to subagents.
 
 ## Target output
 

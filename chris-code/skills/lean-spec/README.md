@@ -16,7 +16,7 @@ This produces two benefits:
 
 ## Relationship to other skills
 
-- **superpowers:brainstorming** — owns the process of arriving at the design. lean-spec is invoked at step 6 ("Write design doc") to constrain the document output.
+- **chris-code:brainstorming** — owns the process of arriving at the design. lean-spec is invoked at step 8 ("Write spec") to constrain the document output.
 - **lean-plan** — the next step after lean-spec. The spec defines *what* must be true; the plan defines *what to do* to make it true. The spec vs plan rule keeps the boundary clean: if it defines system behavior, architecture, interfaces, or invariants, it's spec; if it defines implementation order or task sequence, it's plan.
 
 ## Target output

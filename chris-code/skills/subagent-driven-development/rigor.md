@@ -29,6 +29,8 @@ A plan task can carry `- Rigor: standard|heavy` to raise that task above the pro
 
 A **realistic caller** is one that exists or plausibly will: a caller in the repo, user input, or a file, network or upstream-system input the code reads. An input that only a hostile or type-violating caller would produce is esoteric.
 
+The **TDD edge-case list** is the *Edge cases at `heavy`* list in the `test-driven-development` skill: `../test-driven-development/SKILL.md` from this file.
+
 ## At every level
 
 - **Realistic first.** Plans, coders and reviewers cover the cases a realistic caller hits before anything esoteric.

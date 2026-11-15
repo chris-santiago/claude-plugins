@@ -1,7 +1,7 @@
 ---
 name: intent-reviewer
 model: opus
-description: Read-only, spec-blind re-check of shipped behavior against the original ask. Reads the frozen intent ledger and the running system — never the spec or the plan — and judges, per acceptance statement, whether observed behavior meets it. Writes its verdict and a typed record to dispatch-supplied paths under the run store and returns only the verdict and report path. The last gate in verification-before-completion. Language-agnostic. Never edits code.
+description: Read-only, spec-blind re-check of shipped behavior against the original ask. Reads the frozen intent ledger and the running system — never the spec or the plan — and judges, per acceptance statement, whether observed behavior meets it. Writes its verdict and a typed record to dispatch-supplied paths under the run store and returns only the verdict and report path. Step 4 of verification-before-completion, dispatched with the close's other gates. Language-agnostic. Never edits code.
 tools: [Read, Grep, Glob, Bash, Write]
 ---
 

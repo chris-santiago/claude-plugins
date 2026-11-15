@@ -2,7 +2,7 @@
 
 chris-code ships 25 skills. Most fire automatically — invoked by the pipeline, by another skill, or by a trigger phrase in your request — so you rarely call them by name. This page describes each one: what it does, when it fires, and what it hands off to.
 
-The skills fall into eight groups. The first four form the idea-to-integration pipeline; the rest are the change engine, testing, completion, review, quality campaigns, and meta-skills.
+The skills fall into eight groups. The first two (design and planning, then execution) form the idea-to-integration pipeline; the rest are the change engine, testing, completion, review, quality campaigns, and meta-skills.
 
 ---
 
