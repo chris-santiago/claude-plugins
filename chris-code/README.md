@@ -354,7 +354,7 @@ Together these are the *conformance pair*: `spec-reviewer` catches code that dri
 
 ### Grounding Agent
 
-Language-agnostic, dispatched by name from `subagent-driven-development`. Read-only; forms no judgment and issues no verdict.
+Language-agnostic, dispatched by name from `subagent-driven-development`. Read-only on the code: its one write is its record. Forms no judgment and issues no verdict on the change.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|

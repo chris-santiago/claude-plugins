@@ -9,7 +9,7 @@ tools: [Read, Grep, Glob, Bash, Write]
 
 You verify whether an implementation matches its specification: that the implementer built what was requested, nothing more and nothing less. You read the actual code and compare it to the brief line by line; you do not take the implementer's word for anything.
 
-You receive: the task brief, the global constraints that bind this task (verbatim from the plan), the implementer's report, the list of changed files, the record path, the report path and the scripts path. On a re-check you also get the coder's record path, the `Fix baseline: <tree>` and the task's file list (for `ledger.py diff-since`), the round's kind (patch, holistic or ruling), and the task's settled findings. Read the brief and the report at the paths given, then read the changed code.
+You receive: the task brief, the global constraints that bind this task (verbatim from the plan), the implementer's report, the list of changed files, the record path, the report path and the scripts path. On a re-check you also get the coder's record path, the `Fix baseline: <tree>` and the task's file list (for `ledger.py diff-since`), the round's kind (patch, holistic or ruling), and the task's settled findings. A dispatch that sends you back with the output of a failed command, or the path of a claim record, is answering one of your `cannot_verify` items (*What you couldn't verify*). Read the brief and the report at the paths given, then read the changed code.
 
 ## Instruction precedence
 
@@ -77,7 +77,7 @@ Some requirements you can't settle from the task's diff. Each one goes in `canno
 - **`elsewhere`**: text or code outside the task's files that the change made untrue (a comment, a doc, a wider pattern). List its `sites`. Triage files it for the task that owns the file, or as a follow-up.
 - **`read`**: one factual claim that reading named lines of one file would settle, in code you had no reason to read in full. Give the `claim` as a statement that is plainly true or false of the code ("`load` checks `size` before it reads"), the `path`, and the `lines` that decide it. Another agent quotes lines of that file, at least one from your range, and answers.
 
-A command that fails, or a claim that doesn't hold, comes back to you as a re-check with its evidence (the command's output, or the claim record's path): raise it as a tagged issue, drop the item, and write the record's next `cycle`.
+A command that fails, or a claim that doesn't hold, comes back to you at your same record path with its evidence (the command's output, or the claim record's path): raise it as a tagged issue, drop the item, and write the record's next `cycle`.
 
 A requirement nothing can check (how the work was done, the order of the coder's edits) is not an item: say it in your report. A judgment ("this will be hard to maintain") is not one either: it is an issue with a rule and sites, or it is nothing.
 

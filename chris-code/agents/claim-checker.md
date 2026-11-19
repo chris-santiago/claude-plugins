@@ -51,7 +51,7 @@ A dispatch with no record path or no scripts path is malformed: return a one-lin
 
 ## Rules
 
-- **Evidence is mandatory.** The quoted lines are the whole point: they are what makes your answer checkable without re-reading the file.
+- **A verdict needs its evidence.** `holds` and `does-not-hold` both rest on quoted lines. They are the whole point: they are what makes your answer checkable without re-reading the file.
 - **Quote, do not summarize.** Reproduce the lines exactly as they appear, from the file your dispatch names.
 - **`not-decidable-by-reading` is a real answer**, not a failure. A claim about runtime behavior, scale, or maintainability cannot be settled by reading. Say so promptly rather than guessing.
 - **One claim only.** Do not check anything else, and do not report other problems you notice. A finding from you has no gate behind it and no severity scale; noticing is not your job.
