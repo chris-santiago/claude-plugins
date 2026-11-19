@@ -1473,6 +1473,16 @@ def gate_commands(log: list[dict], task: int | str, test: str | None,
     return test, config.get("lint") if lint is None else lint
 
 
+def command_origins(task: int | str, test: str | None, lint: str | None) -> dict[str, str]:
+    """Where `gate_commands` takes each command from, in the words the
+    gate prints before running it."""
+    given, the_runs = "given on this command line", "the run's, from `run-config`"
+    recorded = f"task {task}'s `Verify:` command, as its brief recorded it" \
+        if isinstance(task, int) else the_runs
+    return {"test": given if test is not None else recorded,
+            "lint": given if lint is not None else the_runs}
+
+
 def store_verdict(store_dir: Path, plan: str | None) -> tuple[str, str]:
     """`store_state.classify`'s verdict and next action for `plan` (default:
     the latest recorded plan), from the facts the progress log holds."""
@@ -3454,7 +3464,21 @@ QUALITY_REVIEWER_OF = {"python-coder": "python-quality-reviewer",
                        "pytorch-coder": "pytorch-quality-reviewer",
                        "rust-coder": "rust-quality-reviewer"}
 SPEC_REVIEWER = "spec-reviewer"
-CONSTRAINTS_HEADING_RE = re.compile(r"^#{1,6}\s+.*\bConstraints\b", re.M)
+TASK_HEADING_RE = re.compile(r"#{1,6}\s+Task\b")
+
+
+def _plan_has_constraints(plan: Path) -> bool:
+    """The plan has the Constraints section `task_brief.py` would copy,
+    found with that script's own reader so the two can't disagree (a
+    heading inside a code fence is not one). A task whose title holds the
+    word is not the plan's Constraints."""
+    # Imported here, as in `_plan_tasks`: task_brief imports this module.
+    import task_brief
+    try:
+        section = task_brief.extract_section(plan.read_text(encoding="utf-8"), "Constraints")
+    except (OSError, task_brief.UsageError):
+        return False
+    return not TASK_HEADING_RE.match(section)
 
 
 def task_agents(coders: list[str]) -> list[str]:
@@ -3482,11 +3506,12 @@ def cmd_brief(store_dir: Path, task: int, intent: str | None, coders: list[str])
              for agent in task_agents(coders) for kind in ("record", "report")]
     repo = _store_repo(store_dir) or Path.cwd()
     plan = repo / config["plan"]
+    # `--intent=`: an intent that starts with a dash is still the intent.
     command = [sys.executable, str(Path(__file__).resolve().with_name("task_brief.py")),
-               str(plan), str(task), "--intent", intent, "--store", str(store_dir.resolve())]
+               str(plan), str(task), f"--intent={intent}", "--store", str(store_dir.resolve())]
     if "spec" in config:
         command += ["--spec", str(repo / config["spec"])]
-    if plan.is_file() and CONSTRAINTS_HEADING_RE.search(plan.read_text(encoding="utf-8")):
+    if _plan_has_constraints(plan):
         command += ["--constraints-from", str(plan)]
     built = subprocess.run(command, cwd=repo, stdout=subprocess.PIPE, text=True, errors="replace")
     if built.returncode != 0:
@@ -5290,6 +5315,7 @@ def cmd_gate(store_dir: Path, task: int | str, test: str | None, lint: str | Non
     meanwhile."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
+        origins = command_origins(task, test, lint)
         test, lint = gate_commands(log, task, test, lint)
         footprint = scope_footprint(store_dir, log, task)
         if not footprint:
@@ -5317,6 +5343,9 @@ def cmd_gate(store_dir: Path, task: int | str, test: str | None, lint: str | Non
                                       for h in hits)}]
     for kind, command in (("lint", lint), ("test", test)):
         if command:
+            # Said before it runs: a command taken from the log was typed
+            # by nobody on this call, so the reader sees what ran and why.
+            print(f"running {kind} ({origins[kind]}): {command}", flush=True)
             commands.append(_run_gate_command(store_dir, log, task, top, kind, command))
     record = _gate_record(task, tree, commands, files)
     validate_record(record)
@@ -5358,12 +5387,13 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str | None,
             print(f"- {blocker}")
         print(f"{_scope_name(task)}: not committed")
         return 1
-    test, lint = gate_commands(log, task, test, lint)
     if final_fix:
         log = _log_fix_files(store_dir, task)
     footprint = scope_footprint(store_dir, log, task)
     if final_fix and not footprint:
         return _land_unchanged_fix(store_dir, task)
+    # Before anything is staged, and after the one path that gates nothing.
+    wanted_test, wanted_lint = gate_commands(log, task, test, lint)
     if not footprint:
         raise RecordError(f"task {task!r} has no recorded footprint; record it with "
                           "`ledger.py stage` before committing it")
@@ -5373,7 +5403,7 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str | None,
     files = sorted(footprint)
     _check_coder_inside_footprint(store_dir, log, task, footprint)
     _stage_footprint(top, files)
-    if not _gate_passed_on_staged(store_dir, log, task, top, files, test, lint) \
+    if not _gate_passed_on_staged(store_dir, log, task, top, files, wanted_test, wanted_lint) \
             and cmd_gate(store_dir, task, test, lint) != 0:
         return 1
     rewritten = _git_paths(top, "diff", "--name-only", "-z", "--", *files)

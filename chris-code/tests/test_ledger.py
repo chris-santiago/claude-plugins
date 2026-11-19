@@ -4064,6 +4064,17 @@ class TestCloseRoundInFlight(CloseStoreTestCase):
             task="close", cycle=cycle, baseline=_baseline(self.store, "close"),
             changed_files=list(files), **{**_FIX_FIELDS, **fields}))
 
+    def test_a_fix_that_changed_nothing_lands_with_no_test_command_on_record(self):
+        # It gates nothing, so it needs no command to gate with.
+        self.design(_finding(severity=4))
+        self.triage()
+        self.fix(files=())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, "close", "Fix the close's finding", None, None)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("changed nothing", out.getvalue())
+
     def test_the_close_waits_for_the_fix_commit_then_the_raising_gates_recheck(self):
         s4 = _finding(severity=4)
         fid = self.fid(self.DESIGN, s4)
@@ -7672,6 +7683,24 @@ class TestGateCommands(TriageStoreTestCase):
         code, record, _ = self.gate(test="true", lint="true")
         self.assertEqual((code, self.ran(record)), (0, {"lint": "true", "test": "true"}))
 
+    def test_each_command_is_printed_with_where_it_came_from_before_it_runs(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, test="test -d .", lint="true")
+        ledger.record_brief_inputs(self.store, 3, "why", "test -f a.py")
+        for task, test, expected in (
+                (3, None, ["running lint (the run's, from `run-config`): true",
+                           "running test (task 3's `Verify:` command, as its brief recorded it): "
+                           "test -f a.py"]),
+                (3, "true", ["running lint (the run's, from `run-config`): true",
+                             "running test (given on this command line): true"]),
+                ("final", None, ["running lint (the run's, from `run-config`): true",
+                                 "running test (the run's, from `run-config`): test -d ."])):
+            with self.subTest(task=task, test=test):
+                lines = self.gate(test=test, task=task)[2].splitlines()
+                self.assertEqual(lines[:2], expected)
+                self.assertLess(lines.index(expected[1]),
+                                next(i for i, line in enumerate(lines) if line.startswith("test: ")))
+
     def test_the_runs_lint_command_runs_unless_an_empty_one_is_given(self):
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_run_config(self.store, lint="false")
@@ -7760,6 +7789,42 @@ class TestCommitCommands(TriageStoreTestCase):
         self.assertEqual(code, 1)
         self.assertIn("no triage entry", out.getvalue())
 
+    def counted(self) -> str:
+        """A test command that counts its own runs in the store."""
+        return "echo run >> .sdd/runs.txt"
+
+    def runs(self) -> int:
+        return len((self.store / "runs.txt").read_text().split())
+
+    def gate(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_gate(self.store, 3, None, None), 0)
+
+    def commit(self) -> int:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return ledger.cmd_commit(self.store, 3, "msg", None, None)
+
+    def test_a_gate_that_passed_on_the_recorded_command_is_not_run_again(self):
+        ledger.record_brief_inputs(self.store, 3, "why", self.counted())
+        self.ready()
+        self.gate()
+        self.assertEqual((self.commit(), self.runs()), (0, 1))
+
+    def test_a_recorded_command_that_changed_since_the_gate_runs_it_again(self):
+        ledger.record_brief_inputs(self.store, 3, "why", self.counted())
+        self.ready()
+        self.gate()
+        ledger.record_brief_inputs(self.store, 3, "why", self.counted() + "; true")
+        self.assertEqual((self.commit(), self.runs()), (0, 2))
+
+    def test_a_lint_command_set_since_the_gate_runs_it_again(self):
+        ledger.record_brief_inputs(self.store, 3, "why", self.counted())
+        self.ready()
+        self.gate()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, lint="true")
+        self.assertEqual((self.commit(), self.runs()), (0, 2))
+
 
 BRIEF_PLAN = """# Plan
 
@@ -7778,7 +7843,7 @@ Spec coverage: spec.md — pass (coverage.md)
 
 ### Task 4: read the contract
 
-- Consumes: contract from spec §6 → `a.py`
+- Consumes: contract from spec §6 → `src/contract.py`
 - Cases: n/a — reads only
 - [ ] Verify: `true`
 
@@ -7798,6 +7863,8 @@ class TestBriefCommand(GitRepoTestCase):
         (self.repo / "spec.md").write_text("# Spec\n\n## 6. Interfaces\n\nText.\n",
                                            encoding="utf-8")
         (self.repo / "coverage.md").write_text("PASS\n", encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "contract.py").write_text("x = 1\n", encoding="utf-8")
         self.configure(plan=str(self.repo / "plan.md"))
 
     def configure(self, **settings) -> None:
@@ -7906,6 +7973,29 @@ class TestBriefCommand(GitRepoTestCase):
         code, _ = self.brief()
         self.assertEqual(code, 0)
         self.assertNotIn("## Constraints", (self.store / "task-3-brief.md").read_text())
+
+    def test_a_constraints_heading_inside_a_code_fence_is_not_the_plans(self):
+        (self.repo / "plan.md").write_text(
+            BRIEF_PLAN.replace("## 4. Constraints\n\n- Keep the public API.\n",
+                               "```\n## 4. Constraints\n\n- Keep the public API.\n```\n"),
+            encoding="utf-8")
+        code, _ = self.brief()
+        self.assertEqual(code, 0)
+        self.assertNotIn("## Constraints", (self.store / "task-3-brief.md").read_text())
+
+    def test_a_task_titled_with_the_word_is_not_the_plans_constraints(self):
+        (self.repo / "plan.md").write_text(
+            BRIEF_PLAN.replace("## 4. Constraints\n\n- Keep the public API.\n\n", "")
+            .replace("### Task 4: read the contract", "### Task 4: check Constraints"),
+            encoding="utf-8")
+        code, _ = self.brief()
+        self.assertEqual(code, 0)
+        self.assertNotIn("## Constraints", (self.store / "task-3-brief.md").read_text())
+
+    def test_an_intent_that_starts_with_a_dash_is_still_the_intent(self):
+        code, _ = self.brief(intent="-v")
+        self.assertEqual(code, 0)
+        self.assertIn("\n-v\n", (self.store / "task-3-brief.md").read_text())
 
     def test_a_task_the_builder_refuses_returns_its_status_and_prints_no_path(self):
         result = self.cli("--task", "5", "--intent", "x", "--coder", "python-coder")
