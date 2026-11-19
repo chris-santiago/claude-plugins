@@ -73,11 +73,11 @@ A wider pattern outside the task's files goes in `cannot_verify` as an `elsewher
 
 Some requirements you can't settle from the task's diff. Each one goes in `cannot_verify` with what would settle it (`needs`), so the ledger routes it and nobody has to judge it:
 
-- **`run`**: a command must pass that you didn't run. When it is the task's own `Verify:` command (the dispatch told you not to run the gate, or it takes too long), write `"command": "gate"`: the commit gate runs it on the final tree, and the item is settled with no one's action. For any other command (a doc build the gate skips, say), write the command itself, as it is typed at the repo root: the ledger runs it and records the result.
+- **`run`**: a command must pass that you didn't run. When it is the task's own `Verify:` command (the dispatch told you not to run the gate, or it takes too long), write `"command": "gate"`: the commit gate runs it on the final tree, and the item is settled with no one's action. For any other command (a doc build the gate skips, say), write the command itself, as it is typed at the repo root: the orchestrator reads it, then has the ledger run it there, through `/bin/sh`, and record the result. So write a command that only checks, never one that fixes, cleans or rewrites anything, and name only programs on that shell's PATH, since a command that names a missing one fails.
 - **`elsewhere`**: text or code outside the task's files that the change made untrue (a comment, a doc, a wider pattern). List its `sites`. Triage files it for the task that owns the file, or as a follow-up.
-- **`read`**: one factual claim that reading named lines of one file would settle, in code you had no reason to read in full. Give the `claim` as a statement that is plainly true or false of the code ("`load` checks `size` before it reads"), the `path`, and the `lines`. Another agent quotes the lines and answers.
+- **`read`**: one factual claim that reading named lines of one file would settle, in code you had no reason to read in full. Give the `claim` as a statement that is plainly true or false of the code ("`load` checks `size` before it reads"), the `path`, and the `lines` that decide it. Another agent quotes lines of that file, at least one from your range, and answers.
 
-A command that fails, or a claim that doesn't hold, comes back to you with its evidence: raise it as a tagged issue and drop the item.
+A command that fails, or a claim that doesn't hold, comes back to you as a re-check with its evidence (the command's output, or the claim record's path): raise it as a tagged issue, drop the item, and write the record's next `cycle`.
 
 A requirement nothing can check (how the work was done, the order of the coder's edits) is not an item: say it in your report. A judgment ("this will be hard to maintain") is not one either: it is an issue with a rule and sites, or it is nothing.
 

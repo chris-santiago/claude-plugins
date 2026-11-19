@@ -41,10 +41,10 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py discard --task N|final|close [--store DIR]
        python3 ledger.py inline --task N|final|close --by coder|orchestrator --note "user ruling: ..." [--store DIR]
        python3 ledger.py inline --task N|final|close --done [--files PATH...] [--store DIR]
-       python3 ledger.py scratch take|release --task N --agent NAME [--store DIR]
+       python3 ledger.py scratch take|release --task N --agent NAME [--wait SECONDS] [--store DIR]
        python3 ledger.py scratch run --task N --agent NAME [--store DIR] -- COMMAND...
        python3 ledger.py scratch limits [--time SECONDS] [--memory GB] [--store DIR]
-       python3 ledger.py resolve <id> [--note "..." | --run] [--store DIR]
+       python3 ledger.py resolve <id> [--note "..." | --run COMMAND] [--store DIR]
        python3 ledger.py path --task N|final|close [--agent NAME] [--kind record|report|brief] [--item ID] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -88,9 +88,11 @@ import signal
 import stat
 import subprocess
 import sys
+import shlex
 import tempfile
+import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1147,7 +1149,8 @@ def _settled_by(entry: dict) -> str:
     if _gate_settles(entry):
         return "run: the commit gate settles it; nothing to do"
     if needs == "run":
-        return f"run: `resolve <id> --run` runs `{entry.get('command')}` and records the result"
+        return (f"run: `resolve <id> --run {shlex.quote(str(entry.get('command')))}` runs that "
+                "command and records the result")
     if needs == "elsewhere":
         return f"elsewhere: {', '.join(map(str, entry.get('sites', [])))}; `triage` files it"
     if needs == "read":
@@ -1642,10 +1645,12 @@ def _close_section(log: list[dict]) -> list[str]:
 
 
 def render_run_state(log: list[dict], records: list[Record],
-                     history: list[dict] | None = None) -> str:
+                     history: list[dict] | None = None,
+                     resolved: set[str] | None = None) -> str:
     """Where the run stands, from the store alone: what a resume reads.
     `history` is the check history, which tells an unanswered inline offer
-    from a round an earlier release finished without one."""
+    from a round an earlier release finished without one. `resolved` is
+    the ids whose resolution stands (`settled_ids`), as for `open`."""
     done = set(completed_task_ids(log))
     in_flight = tasks_in_flight(log, records)
     stages = stage_map(log)
@@ -1691,7 +1696,13 @@ def render_run_state(log: list[dict], records: list[Record],
     lines += ["", "## Open disclosures and questions"]
     lines += [f"- [{n['id']}] {_describe_note(n)}" for n in owned_open_notes(log)] or ["(none)"]
 
-    lines += ["", "## Blocking items", f"{len(_open_lines(log, records))} open (see `open`)"]
+    # `open` also lists the items the commit gate settles, which block nothing.
+    entries = unverified_entries(records)
+    standing = set(resolutions_from_log(log)) if resolved is None else resolved
+    gate_items = sum(1 for item in compute_open_items(records, standing)
+                     if _gate_settles(entries.get(item.id, {})))
+    blocking = len(_open_lines(log, records, standing)) - gate_items
+    lines += ["", "## Blocking items", f"{blocking} open (see `open`)"]
 
     lines += ["", "## Agent handles (valid only in the session that created them)"]
     live = [f"- task {task} {role}: `{entry.get('agent')}`"
@@ -1811,8 +1822,9 @@ def cmd_run_state(store_dir: Path, plan: str | None = None) -> None:
     verdict, action = store_verdict(store_dir, plan)
     print(f"Verdict: {verdict}")
     print(f"Next: {action}")
-    print(render_run_state(load_progress_log(store_dir), load_records(store_dir),
-                           load_history(store_dir)))
+    log = load_progress_log(store_dir)
+    print(render_run_state(log, load_records(store_dir), load_history(store_dir),
+                           settled_ids(store_dir, log)))
 
 
 def cmd_report(store_dir: Path) -> None:
@@ -2213,15 +2225,23 @@ SCRATCH_LOCK = ".lock"
 # A lease nobody used for this long, with no command of its holder running,
 # is a reviewer that ended without releasing: the next one takes it over.
 SCRATCH_IDLE_SECONDS = 20 * 60
-# How long `take` waits for another holder: under a tool call's time limit.
-SCRATCH_WAIT_SECONDS = 480
+# How long `take` waits for another holder by default: under the time a
+# tool call is given when its caller sets none (two minutes).
+SCRATCH_WAIT_SECONDS = 90
 SCRATCH_POLL_SECONDS = 2.0
 SCRATCH_SAMPLE_SECONDS = 1.0
 SCRATCH_KILL_GRACE_SECONDS = 5.0
-SCRATCH_TIME_LIMIT = 900
+# Under the longest a foreground tool call may run (ten minutes), so by
+# default the guard ends a command before the call that waits for it ends.
+SCRATCH_TIME_LIMIT = 540
 SCRATCH_MEMORY_GB = 12.0
 SCRATCH_LIMITS_ENTRY = "scratch_limits"
-SCRATCH_ACTIONS = ("take", "run", "release", "limits")
+# `guard` is `run`'s own second process (`guard_scratch_command`).
+SCRATCH_ACTIONS = ("take", "run", "release", "limits", "guard")
+GUARD_STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+# The guard was told to stop: 128 + SIGTERM, as a shell reports it.
+SCRATCH_STOPPED_EXIT = 143
+GIT_LOCATION_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 SCRATCH_BUSY_EXIT = 3
 # `run` refused to start the command: not a status the command returned.
 SCRATCH_REFUSED_EXIT = 126
@@ -2351,8 +2371,7 @@ def _lease_idle_seconds(lease: dict) -> float:
 def _lease_expired(lease: dict) -> bool:
     """Its holder ended without releasing: no command of it is running and
     none ran for SCRATCH_IDLE_SECONDS. A long build never expires."""
-    return not _process_alive(lease.get("running_pid")) \
-        and _lease_idle_seconds(lease) > SCRATCH_IDLE_SECONDS
+    return not _command_running(lease) and _lease_idle_seconds(lease) > SCRATCH_IDLE_SECONDS
 
 
 def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
@@ -2361,13 +2380,21 @@ def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
     to the working tree as it is now. While another reviewer holds it, wait
     up to `wait` seconds, then raise ScratchBusy naming the holder. The same
     holder may take it again (a re-check), and a lease its holder abandoned
-    (`_lease_expired`) is taken over."""
+    (`_lease_expired`) is taken over. A holder whose own command is still
+    running in the copy is refused: the refresh would rewrite files under
+    it. A take that fails to bring the copy up to date gives up a lease it
+    just took, so the next reviewer doesn't wait for one nobody uses."""
     holder = _scratch_holder(task, agent)
     deadline = time.monotonic() + wait
     while True:
         with _scratch_lock(store_dir):
             lease = read_lease(store_dir)
-            if lease is None or _holds(lease, holder) or _lease_expired(lease):
+            held = _holds(lease, holder)
+            if held and _command_running(lease):
+                raise RecordError("a command of yours is still running in the copy (its guard "
+                                  f"is process {lease['running_pid']}): wait for it to finish "
+                                  "before you take the copy again")
+            if lease is None or held or _lease_expired(lease):
                 now = time.time()
                 _write_lease(store_dir, {**holder, "taken_at": now, "last_used_at": now,
                                          "running_pid": None})
@@ -2377,7 +2404,12 @@ def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
                               f"{lease.get('task')} (idle {int(_lease_idle_seconds(lease))}s); "
                               "call `scratch take` again, and build nowhere else")
         time.sleep(min(SCRATCH_POLL_SECONDS, max(deadline - time.monotonic(), 0.01)))
-    return refresh_scratch(repo, store_dir)
+    try:
+        return refresh_scratch(repo, store_dir)
+    except BaseException:
+        if not held:
+            release_scratch(store_dir, task, agent)
+        raise
 
 
 def refresh_scratch(repo: Path, store_dir: Path) -> Path:
@@ -2401,9 +2433,10 @@ def refresh_scratch(repo: Path, store_dir: Path) -> Path:
     commit = _git(top, "commit-tree", tree, *(["-p", parent] if parent else []),
                   "-m", "scratch copy", env={**os.environ, **SCRATCH_IDENTITY}).strip()
     if not path.is_symlink() and (path / ".git").is_file():
+        inside = _without_git_location(os.environ)
         try:
-            _git(path, "checkout", "--force", "--detach", "-q", commit)
-            _git(path, "clean", "-fdq")
+            _git(path, "checkout", "--force", "--detach", "-q", commit, env=inside)
+            _git(path, "clean", "-fdq", env=inside)
             return path
         except subprocess.CalledProcessError:
             pass  # a copy git can no longer update: make it again below
@@ -2415,23 +2448,32 @@ def refresh_scratch(repo: Path, store_dir: Path) -> Path:
 
 
 def release_scratch(store_dir: Path, task: int | str, agent: str) -> None:
-    """Give the copy back. Releasing a copy you don't hold changes nothing."""
+    """Give the copy back. Releasing a copy you don't hold changes nothing;
+    releasing one a command of yours still runs in is refused, since the
+    next holder's refresh would rewrite files under it."""
     holder = _scratch_holder(task, agent)
     if not _private_scratch_base(store_dir, create=False):
         return
     with _scratch_lock(store_dir):
-        if _holds(read_lease(store_dir), holder):
-            (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
+        lease = read_lease(store_dir)
+        if not _holds(lease, holder):
+            return
+        if _command_running(lease):
+            raise RecordError("a command of yours is still running in the copy (its guard is "
+                              f"process {lease['running_pid']}): release the copy when it has "
+                              "finished")
+        (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
 
 
 def release_task_scratch(store_dir: Path, task: int | str) -> None:
     """Release a lease still held for `task`, whoever holds it: its
-    reviewers are done once it completes."""
+    reviewers are done once it completes. One with a command still running
+    is left to end by itself."""
     if not _private_scratch_base(store_dir, create=False):
         return
     with _scratch_lock(store_dir):
         lease = read_lease(store_dir)
-        if lease is not None and lease.get("task") == str(task):
+        if lease is not None and lease.get("task") == str(task) and not _command_running(lease):
             (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
 
 
@@ -2471,31 +2513,112 @@ def cmd_scratch_limits(store_dir: Path, seconds: float | None, gigabytes: float 
     print(f"time: {seconds:g} s\nmemory: {gigabytes:g} GB")
 
 
-def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[str]) -> int:
+def _without_git_location(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` without the variables that point git at a repository other
+    than the folder a command runs in: with one inherited (from a hook,
+    say), a checkout meant for the copy would move the main checkout."""
+    return {k: v for k, v in env.items() if k not in GIT_LOCATION_VARS}
+
+
+def _command_running(lease: dict | None) -> bool:
+    """A guard of the lease's holder is alive, so a command of the holder
+    may still be running in the copy."""
+    return lease is not None and _process_alive(lease.get("running_pid"))
+
+
+def _holding_lease(store_dir: Path, holder: dict) -> dict:
+    """The lease, when `holder` holds the copy and no command of its own is
+    still running there; a RecordError otherwise. The caller holds the
+    scratch lock."""
+    lease = read_lease(store_dir)
+    if not _holds(lease, holder) or not scratch_copy(store_dir).is_dir():
+        raise RecordError(f"{holder['agent']} doesn't hold the scratch copy for task "
+                          f"{holder['task']}: run `scratch take` first, and run nothing in the "
+                          "copy without it")
+    if _command_running(lease):
+        raise RecordError("an earlier command of yours is still running in the copy (its guard "
+                          f"is process {lease['running_pid']}): wait for it to finish")
+    return lease
+
+
+def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[str],
+                   output: int | None = None) -> int:
     """Run one command at the root of the scratch copy for the reviewer that
     holds it, with the run's build cache set, under the run's time and
-    memory limits. Returns the command's exit status, or SCRATCH_TIME_EXIT
-    or SCRATCH_MEMORY_EXIT when a limit stopped it; either way no process
-    the command started is left running."""
+    memory limits. Returns the command's exit status, SCRATCH_TIME_EXIT or
+    SCRATCH_MEMORY_EXIT when a limit stopped it, or SCRATCH_REFUSED_EXIT
+    when the guard could not start it.
+
+    The guard (`guard_scratch_command`) is a process of its own, in its own
+    session, and this call only waits for it. So ending this call, as a
+    tool's time limit does, never leaves the command running without its
+    limits: a signal this call can catch is passed on and stops the command,
+    and one it can't (SIGKILL) leaves the guard to stop the command at the
+    limit. `output` redirects the command's output (a file descriptor, or
+    `subprocess.DEVNULL`); by default it is this process's own."""
     holder = _scratch_holder(task, agent)
     if not command:
         raise UsageError("scratch run: give the command after `--`")
-    copy = scratch_copy(store_dir)
+    with _scratch_lock(store_dir):
+        _holding_lease(store_dir, holder)
+    program = command[0]
+    found = (scratch_copy(store_dir) / program).exists() if os.sep in program \
+        else shutil.which(program) is not None
+    if not found:
+        raise RecordError(f"scratch run: can't start {program!r}: no such program")
+    guard = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "scratch", "guard", "--task", str(task),
+         "--agent", agent, "--store", str(store_dir), "--", *command],
+        # The guard must find the scratch folder this process uses.
+        env={**os.environ, "TMPDIR": tempfile.gettempdir()}, start_new_session=True,
+        stdout=output, stderr=output)
+
+    def pass_on(signum: int, frame: object) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            guard.send_signal(signal.SIGTERM)
+
+    with _handling(GUARD_STOP_SIGNALS + (signal.SIGINT,), pass_on):
+        return guard.wait()
+
+
+class _GuardStopped(BaseException):
+    """The guard was told to stop while its command ran."""
+
+
+@contextlib.contextmanager
+def _handling(signals: tuple[int, ...], handler: Callable) -> Iterator[None]:
+    """Install `handler` for `signals` for the block, in the main thread
+    (the only one that may); elsewhere the block runs unchanged."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    before = {sig: signal.signal(sig, handler) for sig in signals}
+    try:
+        yield
+    finally:
+        for sig, old in before.items():
+            signal.signal(sig, old)
+
+
+def guard_scratch_command(store_dir: Path, task: int | str, agent: str,
+                          command: list[str]) -> int:
+    """The guard's own process: mark the holder's lease as running, run the
+    command under the run's limits, and clear the mark. Returns the status
+    `run_in_scratch` reports."""
+    holder = _scratch_holder(task, agent)
     seconds, gigabytes = scratch_limits(load_progress_log(store_dir))
     with _scratch_lock(store_dir):
-        lease = read_lease(store_dir)
-        if not _holds(lease, holder) or not copy.is_dir():
-            raise RecordError(f"{agent} doesn't hold the scratch copy for task {task}: run "
-                              "`scratch take` first, and run nothing in the copy without it")
+        lease = _holding_lease(store_dir, holder)
         _write_lease(store_dir, {**lease, "last_used_at": time.time(),
                                  "running_pid": os.getpid()})
-    env = {**os.environ, "CARGO_TARGET_DIR": str(scratch_cache(store_dir) / "cargo")}
+    env = _without_git_location(os.environ)
+    env["CARGO_TARGET_DIR"] = str(scratch_cache(store_dir) / "cargo")
     try:
-        code, stopped = _run_guarded(command, copy, env, seconds, gigabytes)
+        code, stopped = _run_guarded(command, scratch_copy(store_dir), env, seconds, gigabytes)
     finally:
         with _scratch_lock(store_dir):
             lease = read_lease(store_dir)
-            if _holds(lease, holder):
+            if _holds(lease, holder) and lease.get("running_pid") == os.getpid():
                 _write_lease(store_dir, {**lease, "last_used_at": time.time(),
                                          "running_pid": None})
     if stopped:
@@ -2507,26 +2630,36 @@ def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[s
 def _run_guarded(command: list[str], cwd: Path, env: dict, seconds: float,
                  gigabytes: float) -> tuple[int, str | None]:
     """Run `command` in its own process group and stop the whole group when
-    it passes a limit. Returns its exit status and None, or the limit's
-    exit code and what was passed."""
-    try:
-        proc = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
-    except OSError as e:
-        raise RecordError(f"scratch run: can't start {command[0]!r}: {e}") from e
-    started, stopped, code = time.monotonic(), None, None
-    try:
-        while code is None:
-            try:
-                code = proc.wait(timeout=SCRATCH_SAMPLE_SECONDS)
-            except subprocess.TimeoutExpired:
-                used = _group_memory_gb(proc.pid)
-                if time.monotonic() - started > seconds:
-                    code, stopped = SCRATCH_TIME_EXIT, f"ran past the {seconds:g} s time limit"
-                elif used > gigabytes:
-                    code, stopped = SCRATCH_MEMORY_EXIT, (f"used {used:.1f} GB, past the "
-                                                          f"{gigabytes:g} GB memory limit")
-    finally:
-        _kill_group(proc)
+    it passes a limit, or when this process is told to stop. Returns its
+    exit status and None, or the stop's exit code and what caused it.
+    Whatever happens, nothing of the group is left running."""
+    def stop(signum: int, frame: object) -> None:
+        for sig in GUARD_STOP_SIGNALS:  # one stop is enough: finish the cleanup
+            signal.signal(sig, signal.SIG_IGN)
+        raise _GuardStopped
+
+    with _handling(GUARD_STOP_SIGNALS, stop):
+        try:
+            proc = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+        except OSError as e:
+            raise RecordError(f"scratch run: can't start {command[0]!r}: {e}") from e
+        started, stopped, code = time.monotonic(), None, None
+        try:
+            while code is None:
+                try:
+                    code = proc.wait(timeout=SCRATCH_SAMPLE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    used = _group_memory_gb(proc.pid)
+                    if time.monotonic() - started > seconds:
+                        code, stopped = SCRATCH_TIME_EXIT, (f"ran past the {seconds:g} s time "
+                                                            "limit")
+                    elif used > gigabytes:
+                        code, stopped = SCRATCH_MEMORY_EXIT, (f"used {used:.1f} GB, past the "
+                                                              f"{gigabytes:g} GB memory limit")
+        except _GuardStopped:
+            code, stopped = SCRATCH_STOPPED_EXIT, "the call that ran it was ended"
+        finally:
+            _kill_group(proc)
     return code, stopped
 
 
@@ -2852,7 +2985,7 @@ def _git_head() -> str:
         raise RuntimeError("close-round needs a git HEAD to record; run it inside the repo") from e
 
 
-def cmd_resolve(store_dir: Path, resolve_id: str, note: str, run: bool = False) -> None:
+def cmd_resolve(store_dir: Path, resolve_id: str, note: str, run: str | None = None) -> None:
     """Record a resolution — but only for an id that is currently open and
     resolvable. A resolve that matches nothing is not a silent no-op: it
     raises RecordError distinguishing "already resolved" (the id has a
@@ -2860,12 +2993,16 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str, run: bool = False) 
     note) from "never was open" (the id never matched a resolvable item;
     the message lists what's actually open right now). A typed
     `cannot_verify` item is resolved only by what settles its kind
-    (`_typed_resolution`), or by the user's ruling."""
+    (`_typed_resolution`), or by the user's ruling. A `run` item's command
+    was written by a reviewer, so it runs only when `run` repeats it
+    exactly: the caller's own command line then shows what runs, as it
+    does for the gate's commands."""
     with store_lock(store_dir):
         _check_resolvable(store_dir, resolve_id, note)
         entry = unverified_entries(load_records(store_dir)).get(resolve_id, {})
         typed = "needs" in entry and not note.lower().startswith(RULING_PREFIX)
-        if run and not (typed and entry["needs"] == "run" and not _gate_settles(entry)):
+        if run is not None and not (typed and entry["needs"] == "run"
+                                    and not _gate_settles(entry)):
             raise UsageError(f"--run settles a `run` item by running its command; "
                              f"{resolve_id} isn't one")
         if not typed:
@@ -2876,10 +3013,12 @@ def cmd_resolve(store_dir: Path, resolve_id: str, note: str, run: bool = False) 
             _append_progress(store_dir, {"type": "resolution", "resolves": resolve_id,
                                          **_typed_resolution(store_dir, resolve_id, entry)})
             return
-        if not run:
-            raise RecordError(f"{resolve_id} is settled by running `{entry['command']}`: "
-                              f"`ledger.py resolve {resolve_id} --run` runs it and records the "
-                              f"result (or --note \"{RULING_PREFIX} ...\" for the user's ruling)")
+        if run != entry["command"]:
+            raise RecordError(f"{resolve_id} is settled by running its command, which a reviewer "
+                              "wrote: read it, and if it is safe to run here, repeat it exactly: "
+                              f"`ledger.py resolve {shlex.quote(resolve_id)} --run "
+                              f"{shlex.quote(entry['command'])}` (or --note "
+                              f"\"{RULING_PREFIX} ...\" for the user's ruling)")
         top = _store_repo(store_dir)
         if top is None:
             raise RecordError(f"{store_dir} isn't inside a git work tree; nowhere to run "
@@ -3210,7 +3349,8 @@ def _check_claim(path: Path, data: dict) -> None:
     is compared with that line of the item's file in the working tree,
     ignoring the whitespace around it. The quotation is what makes the
     verdict checkable without a second reader, so one the file doesn't
-    hold is refused."""
+    hold is refused, and so is evidence that quotes nothing: a blank line,
+    the same line twice, or no line of the range the item names."""
     store = path.parent
     entry = unverified_entries(load_records(store)).get(data["item"])
     if entry is None or entry.get("needs") != "read":
@@ -3225,10 +3365,25 @@ def _check_claim(path: Path, data: dict) -> None:
                           "can't be checked against the file")
     target = _normalize_path(entry["path"])
     try:
-        lines = (top / target).read_text(encoding="utf-8", errors="replace").splitlines()
+        text = (top / target).read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         raise RecordError(f"{path}: can't read {target}: {e}") from e
+    # Split as an editor numbers lines, on newlines alone: `splitlines` also
+    # breaks on form feeds and other separators, and would number differently.
+    lines = [line.removesuffix("\r") for line in text.split("\n")]
+    numbers = [quoted["line"] for quoted in data["evidence"]]
+    if len(set(numbers)) != len(numbers):
+        raise RecordError(f"{path}: evidence quotes a line more than once: quote each line "
+                          "once")
+    span = LINES_RE.match(entry["lines"])
+    first, last = int(span["start"]), int(span["end"] or span["start"])
+    if numbers and not any(first <= n <= last for n in numbers):
+        raise RecordError(f"{path}: no evidence line is inside {target}:{entry['lines']}, the "
+                          "range the claim is about: quote at least one line from it")
     for idx, quoted in enumerate(data["evidence"]):
+        if not quoted["text"].strip():
+            raise RecordError(f"{path}: evidence[{idx}] quotes a blank line, which shows "
+                              "nothing: quote lines with code or text on them")
         if _normalize_path(quoted["path"]) != target:
             raise RecordError(f"{path}: evidence[{idx}] quotes {quoted['path']}, but the claim "
                               f"is about {target}: quote that file")
@@ -4349,13 +4504,18 @@ def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                    and (s.get("cycle") or 0) >= due for s in states)
 
 
-def _inline_ruling(log: list[dict], task: int | str, baseline: dict) -> dict | None:
-    """The user's latest answer on who fixes the round from `baseline`. The
-    cycle is part of the key: a round that changed no code leaves the next
-    round the same tree."""
-    due = _due_cycle(baseline)
-    answers = [e for e in log if e.get("type") == INLINE_RULING_ENTRY and e.get("task") == task
-               and e.get("baseline") == baseline["tree"] and e.get("cycle") == due]
+def _inline_ruling(log: list[dict], task: int | str) -> dict | None:
+    """The user's latest answer on who fixes the scope's latest round: one
+    logged after that round's triage entry. An answer belongs to the round
+    it was given for by its place in the log, never by the round's tree or
+    cycle, which a round that was ruled off before any code changed shares
+    with the round after it."""
+    at = max((i for i, e in enumerate(log) if e.get("type") == TRIAGE_ENTRY
+              and e.get("task") == task), default=None)
+    if at is None:
+        return None
+    answers = [e for e in log[at + 1:]
+               if e.get("type") == INLINE_RULING_ENTRY and e.get("task") == task]
     return answers[-1] if answers else None
 
 
@@ -4363,17 +4523,21 @@ def _offer_state(log: list[dict], task: int | str, baseline: dict | None,
                  history: list[dict]) -> str | None:
     """Where the scope's latest round stands as an inline offer: None when
     triage didn't mark it inline, else who the user said fixes it (`coder`
-    or `orchestrator`), or OFFER_UNANSWERED. Only a fix that passed `check`
-    (the history) stands in for an answer, which is a round an earlier
-    release finished without asking: a coder record merely on disk
-    doesn't, since `check` refuses one for an unanswered offer."""
+    or `orchestrator`), or OFFER_UNANSWERED. A round an earlier release
+    finished without asking needs no answer: one with an inline fix logged,
+    or a coder's fix that passed `check` (the history). A coder record
+    merely on disk doesn't count, since `check` refuses one for an
+    unanswered offer."""
     latest = latest_triage(log, task)
     if baseline is None or latest is None or not latest.get("inline"):
         return None
-    ruling = _inline_ruling(log, task, baseline)
+    ruling = _inline_ruling(log, task)
     if ruling is not None:
         return ruling.get("by")
     due, scope = _due_cycle(baseline), scope_prefix(log, task)
+    if any(e.get("baseline") == baseline["tree"] and (e.get("cycle") or 0) >= due
+           for e in _inline_entries(log, task)):
+        return None
     finished = any(e.get("role") == "coder" and _scope(str(e.get("record"))) == scope
                    and e.get("status") in DIAGNOSIS_STATUSES
                    and e.get("baseline") == baseline["tree"] and (e.get("cycle") or 0) >= due
@@ -4558,7 +4722,7 @@ def cmd_inline(store_dir: Path, task: int | str, files: list[str]) -> None:
         log = load_progress_log(store_dir)
         baseline = _open_offer(store_dir, log, task)
         top = _store_repo(store_dir)
-        ruling = _inline_ruling(log, task, baseline)
+        ruling = _inline_ruling(log, task)
         if ruling is None:
             raise RecordError(f"the user hasn't said who fixes {_scope_name(task)}'s round: ask, "
                               f"then log the answer with {_offer_command(task)}")
@@ -4665,8 +4829,12 @@ def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
     earlier release logged, so every field but the kind is optional."""
     lines = []
     if OFFER_ANSWER_WAIT in waits:
-        lines.append(f"ASK THE USER FIRST who fixes this round, you or the coder (every finding "
-                     f"below is one site of S3 or less), then log the answer: "
+        # A task's offer waits for its stage's batched question; `final` and
+        # the close have no stage to wait for.
+        when = ("PARK THIS TASK: in the stage's batched question, ask the user"
+                if isinstance(entry["task"], int) else "ASK THE USER NOW")
+        lines.append(f"{when} who fixes this round, you or the coder (every finding below is "
+                     f"one site of S3 or less), then log the answer: "
                      f"{_offer_command(entry['task'])}. Until then `baseline` and the coder's "
                      "`check` refuse this round.")
     lines.append(f"{_scope_name(entry['task'])} triage: {entry['kind']} "
@@ -4754,10 +4922,12 @@ def _stage_footprint(top: Path, files: list[str]) -> None:
         _git(top, "add", "-A", "--", *present)
 
 
-# The shell's own report that it found no program by a name: bash and sh
-# ("sh: line 1: rg: command not found"), dash ("sh: 1: rg: not found").
+# The gate shell's own report that it found no program by a name: bash as
+# sh ("/bin/sh: line 1: rg: command not found") and dash ("/bin/sh: 1: rg:
+# not found"). Only that shell's own prefix: a script the command runs may
+# meet a missing program and handle it, and reports it under its own name.
 MISSING_PROGRAM_RE = re.compile(
-    r"^\S*sh: (?:line \d+: |\d+: )?(?P<program>.+?): (?:command )?not found$", re.M)
+    r"^/bin/sh: (?:line \d+: |\d+: )?(?P<program>.+?): (?:command )?not found$", re.M)
 
 
 def _run_shell(top: Path, command: str) -> tuple[bool, str]:
@@ -5694,9 +5864,9 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="record a resolution for an open item")
     p_resolve.add_argument("id")
     p_resolve.add_argument("--note", default="")
-    p_resolve.add_argument("--run", action="store_true",
-                           help="a `run` cannot_verify item: run its command now and record "
-                                "the result, which settles it on exit 0")
+    p_resolve.add_argument("--run", metavar="COMMAND",
+                           help="a `run` cannot_verify item: its command, repeated exactly, to "
+                                "run now at the repo root; exit 0 settles the item")
 
     p_clear = sub.add_parser("clear", parents=[store_parent],
                               help="remove records matching the naming convention "
@@ -5755,12 +5925,16 @@ def cmd_scratch(store_dir: Path, args: argparse.Namespace, command: list[str]) -
         except ScratchBusy as e:
             print(f"busy: {e}", file=sys.stderr)
             return SCRATCH_BUSY_EXIT
+        seconds, gigabytes = scratch_limits(load_progress_log(store_dir))
+        script, store = shlex.quote(str(Path(__file__).resolve())), shlex.quote(str(store_dir))
         print(path)
-        print(f"run every build and test in it with: python3 {Path(__file__).resolve()} scratch "
-              f"run --task {args.task} --agent {args.agent} --store {store_dir} -- <command>")
+        print(f"run every build and test in it with: python3 {script} scratch run --task "
+              f"{args.task} --agent {args.agent} --store {store} -- <command>")
+        print(f"limits on each command: {seconds:g} s, {gigabytes:g} GB")
         return 0
+    run = guard_scratch_command if args.action == "guard" else run_in_scratch
     try:
-        return run_in_scratch(store_dir, args.task, args.agent, command)
+        return run(store_dir, args.task, args.agent, command)
     except RecordError as e:
         print(f"not run: {e}", file=sys.stderr)
         return SCRATCH_REFUSED_EXIT

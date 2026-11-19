@@ -4,7 +4,7 @@ chris-code ships 15 dedicated agents — the layer superpowers doesn't have. The
 
 ## Typed records
 
-Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents, and the close's gates (the design reviewers, `intent-reviewer`, `mutation-tester`) — writes its JSON record to a dispatch-supplied path, never one it computes itself. The orchestrator takes every such path from `ledger.py path` (see [Ledger commands](ledger.md)). Records are keyed by scope and by the agent's registered name rather than its role, so same-role agents (e.g. the Python and Rust quality reviewers on one task) never collide, whole-change gate records carry `"task": "final"`, and the close's records `"task": "close"`. The dispatch-supplied path defines record identity; an agent never works it out on its own. Each role's payload contract is documented under its own section, below.
+Every record-writing agent — coders, `spec-reviewer`, the quality reviewers, the review-lite agents, `claim-checker`, and the close's gates (the design reviewers, `intent-reviewer`, `mutation-tester`) — writes its JSON record to a dispatch-supplied path, never one it computes itself. The orchestrator takes every such path from `ledger.py path` (see [Ledger commands](ledger.md)). Records are keyed by scope and by the agent's registered name rather than its role, so same-role agents (e.g. the Python and Rust quality reviewers on one task) never collide, whole-change gate records carry `"task": "final"`, and the close's records `"task": "close"`. The dispatch-supplied path defines record identity; an agent never works it out on its own. Each role's payload contract is documented under its own section, below.
 
 ## Shared review disciplines
 
@@ -162,14 +162,14 @@ Because it breaks committed state, the gate assumes the branch work is committed
 
 ## Grounding agent
 
-Dispatched by `subagent-driven-development` to settle a spec-reviewer `cannot_verify` item of kind `read`, without the orchestrator reading the changed code itself. It writes a typed record (role `claim-checker`): its answer as the status, 3 to 10 quoted lines, and one sentence tying them to the claim. `ledger.py check` compares each quoted line with the file, and `resolve` settles the item only on a checked `holds` record, so the orchestrator can't settle one by its own note. Its answer is quotation, not a verdict on the change.
+Dispatched by `subagent-driven-development` to settle a spec-reviewer `cannot_verify` item of kind `read`, without the orchestrator reading the changed code itself. It writes a typed record (role `claim-checker`), at a path named for the item it answers (`<scope>-claim-<digest>.json`): its answer as the status, 3 to 10 quoted lines (fewer, or none, when reading can't decide the claim), and one sentence tying them to the claim. `ledger.py check` compares each quoted line with the file, and `resolve` settles the item only on a checked `holds` record, so the orchestrator can't settle one by its own note. Its answer is quotation, not a verdict on the change.
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
 | `claim-checker` | haiku | any (read-only on code) | Answers one decidable claim and quotes the lines that settle it, in a record `check` verifies against the file |
 
-It returns `holds`, `does-not-hold`, or `not-decidable-by-reading`, always with 3 to 10 verbatim lines. Evidence is mandatory: a bare verdict word would be another laundering channel, which is the failure the agent exists to close. It forms no opinion about quality, correctness, or design, never suggests a fix, and never rates severity, so grounding informs how a finding is acted on without ever overturning it.
+It answers `holds`, `does-not-hold`, or `not-decidable-by-reading`, and a verdict either way rests on 3 to 10 verbatim lines. Evidence is mandatory: a bare verdict word would be another laundering channel, which is the failure the agent exists to close. It forms no opinion about quality, correctness, or design, never suggests a fix, and never rates severity, so grounding informs how a finding is acted on without ever overturning it.
 
-Its answer terminates the chain because it is quotation rather than conclusion, and raw evidence needs no grounding of its own. It is also the only agent whose read-only status is enforced rather than promised: its grant is `Read`, `Grep`, `Glob`, with no `Bash`, so unlike every other review agent it genuinely cannot write.
+Its answer terminates the chain because it is quotation rather than conclusion, and raw evidence needs no grounding of its own. Its one write is that record, and its one command is `ledger.py check` on it.
 
 See [Scope dispatch & models](scope-dispatch.md) for how exclusive vs. additive vs. explicit dispatch resolves.

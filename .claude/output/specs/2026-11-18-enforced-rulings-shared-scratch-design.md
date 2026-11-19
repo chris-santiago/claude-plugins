@@ -54,7 +54,9 @@ Three parts of subagent-driven-development ask for a behavior in prose that noth
 
 **Guarded commands.** Every command that builds or runs code in the copy goes through `scratch run`, which requires the caller's lease, runs in the copy with the shared cache set for the build tool, and enforces the run's time and memory limits over the command's whole process group. On a breach it kills the group and exits 124 (time) or 125 (memory) with a line naming the limit. Otherwise it passes the command's output and exit status through. The take prints the `scratch run` form and no cache variable, so the guarded path is the only documented one.
 
-**Limits.** Defaults: 900 seconds; 12 GB or half of physical memory, whichever is less. The orchestrator may set the run's limits once per run or change them later with a logged command; a reviewer cannot pass limits to `scratch run`.
+**Limits.** Defaults: 540 seconds, which is under the ten minutes a foreground tool call may run; 12 GB or half of physical memory, whichever is less. The orchestrator may set the run's limits once per run or change them later with a logged command; a reviewer cannot pass limits to `scratch run`.
+
+**The guard is its own process.** `scratch run` starts the guard in its own session and only waits for it. A call that is terminated passes the signal on, and the guard stops the command (exit 143). A call that is killed outright leaves the guard running, so the command stays under its limits until it ends, and the lease shows a command running until then: the holder can neither take, run nor release, and nobody else takes the copy over.
 
 **A stopped break.** A break whose command the guard stopped is neither caught nor a surviving test. The reviewer reports it as stopped, with the limit, never reruns it, and raises no finding from it.
 
@@ -65,7 +67,7 @@ A spec reviewer's item states what would settle it (§6.3). A requirement nothin
 | `needs` | Meaning | Settled by |
 |---|---|---|
 | `run`, command `gate` | "The task's Verify command passes on the final tree", which the reviewer was told not to run | The scope's commit: it never blocks `ready`, and is settled when the scope completes |
-| `run`, a command | A command the gate does not run must pass | `resolve --run` executes it and records the exit status, output tail and tree; settled on exit 0 |
+| `run`, a command | A command the gate does not run must pass | `resolve --run COMMAND` executes it and records the exit status, output tail and tree; settled on exit 0. A reviewer wrote the command, so it runs only when the caller repeats it exactly |
 | `elsewhere` | Text or code outside the scope's files that the change made untrue | Triage files it: a task-note when an unfinished task's footprint holds a site, a follow-up otherwise; settled by the filing |
 | `read` | One factual claim about named lines | A checked `claim-checker` record whose verdict is `holds` |
 
@@ -118,7 +120,7 @@ ledger.py scratch release --task N --agent NAME
 ledger.py scratch limits  [--time SECONDS] [--memory GB]
 ```
 
-- `take`: exit 0 and the copy's path on success; exit 3 and the holder (agent, task, idle seconds) when still held after the wait. Default wait 480 seconds.
+- `take`: exit 0 and three lines on success (the copy's path, the `scratch run` form, the run's limits); exit 3 and the holder (agent, task, idle seconds) when still held after the wait. Default wait 90 seconds, under the two minutes a tool call gets by default. A take that fails to refresh the copy gives back a lease it just took.
 - `run`: exit status of the command; 124 on the time limit, 125 on the memory limit; refused with exit 126 without the caller's lease, since 1 and 2 are statuses the command itself returns.
 - `release`: idempotent.
 - `limits`: with no flag prints the run's limits; with a flag logs `{"type": "scratch_limits", "time", "memory", "at"}`.
@@ -148,12 +150,12 @@ Path: `ledger.py path --task N --agent claim-checker --item <item id>`, which is
  "because": "one sentence"}
 ```
 
-The verdict is the record's `status`, as every role's is. `check` requires: `item` is a `read` item of the store, and the record sits at that item's path; `holds` and `does-not-hold` carry 3 to 10 evidence lines; every evidence line quotes the item's file and equals that line of it in the working tree, ignoring the whitespace around it; `because` is non-empty. `resolve` runs the same check again, so a record written by hand settles nothing. The dispatch gives the agent the claim, the path and lines, the item id and the record path, and nothing of the reviewer's reasoning.
+The verdict is the record's `status`, as every role's is. `check` requires: `item` is a `read` item of the store, and the record sits at that item's path; `holds` and `does-not-hold` carry 3 to 10 evidence lines; every evidence line quotes the item's file and equals that line of it in the working tree, ignoring the whitespace around it; `because` is non-empty. `resolve` runs the same check again, so a record edited after its check, or whose quotes no longer match the file, settles nothing. The dispatch gives the agent the claim, the path and lines, the item id and the record path, and nothing of the reviewer's reasoning.
 
 ### 6.5 Resolve
 
 ```
-ledger.py resolve <item id> --run
+ledger.py resolve <item id> --run COMMAND        # COMMAND repeats the item's command exactly
 ledger.py resolve <item id>                      # a read item with a checked `holds` record
 ledger.py resolve <item id> --note "user ruling: ..."
 ```
@@ -180,7 +182,10 @@ A run resolution's log entry adds `{"exit": 0, "tree": <snapshot>, "tail": <last
 - **The answer is logged before the fix,** not with it. The old closing call recorded the ruling after the work, so nothing could refuse a round that skipped the question.
 - **One copy and cache per run** (user's choice) over one per language or project-named folders. A fixed copy path keeps the build tool's cache valid across tasks, so disk use is one build. Cost: reviewers queue.
 - **A lease with idle expiry,** not a process lock: reviewers are separate short-lived commands, and a reviewer that dies must not hold the copy forever. Expiry looks at a live command, so a long build is never taken over.
-- **Take waits inside the call** rather than returning at once, so a reviewer needs no sleep loop; the wait stays under a tool call's limit.
+- **Take waits inside the call** rather than returning at once, so a reviewer needs no sleep loop; the default wait stays under a tool call's default limit.
+- **The guard is a separate process, not the call itself.** A tool call has a time limit of its own, and ending the call must not end the guarding. A build left running with no limits is the failure this whole part exists to prevent.
+- **`--run` repeats the command.** The command comes from a reviewer's record. Making the caller type it puts it on the orchestrator's own command line, where the user's permission prompt and the transcript show it, as they show the gate's commands.
+- **An answer belongs to its round by its place in the log,** after that round's triage entry, not by the round's tree and cycle: a round ruled off before any code changed shares both with the round after it.
 - **Refresh through git** rather than a file sync. Git rewrites only what differs and stamps it now, which is exactly what the build tool's freshness check needs; a time-preserving sync is what produced stale binaries.
 - **Limits are the run's, set by the orchestrator,** not flags on `run`. A cold build can legitimately need more than the default, but the party that raises a limit must not be the agent it constrains.
 - **A stopped break is undecided,** not a surviving test. A break that hangs or exhausts memory says nothing about the test.
@@ -204,7 +209,9 @@ Scratch:
 - Two takes for different tasks give the same copy path and cache; the second, made while the first is held, exits 3 naming the holder.
 - A take after the checkout changed holds the new tree, without a break a previous holder left; a file restored or refreshed has a newer modification time than before.
 - `run` without the lease is refused. A command that sleeps past the time limit exits 124, one that allocates past the memory limit exits 125, and in both cases no process it started survives, including a grandchild.
-- A lease idle past 20 minutes is taken over; one with a live command is not, however old.
+- A lease idle past 20 minutes is taken over; one with a live command is not, however old. A holder whose own command is still running is refused `take`, `run` and `release`.
+- A `scratch run` call that is terminated stops its command and exits 143; one that is killed outright leaves the command running under its limits, with the lease still showing it, until the guard ends it.
+- An answer given for a round that was then ruled off does not answer the next round, even from the same tree.
 - `limits` changes apply to the next `run`; `run` accepts no limit flag.
 - A task's commit keeps the copy and cache and releases that task's lease; `clear` deletes all three.
 - The checkout's status is unchanged after any sequence of scratch operations.
@@ -212,9 +219,9 @@ Scratch:
 `cannot_verify`:
 - `check` refuses an untyped or under-specified entry in a new record.
 - A `gate` item never appears among `ready`'s blockers, takes no resolution by hand, and is logged settled, with the gate's commands, when its scope completes.
-- `resolve --run` on a passing command settles the item and records exit, tail and tree; on a failing command it settles nothing; after a file of the scope changes, the item is open again.
+- `resolve --run COMMAND` runs nothing unless `COMMAND` equals the item's command; on a passing command it settles the item and records exit, tail and tree; on a failing command it settles nothing; after a file of the scope changes, the item is open again.
 - Triage files an `elsewhere` item as a task-note when an unfinished task's footprint holds a site and as a follow-up otherwise, and the item is then settled.
-- A claim record with an evidence line that differs from the file, quotes another file, or names a line past the file's end is refused by `check`, and again by `resolve`. `resolve` settles a `read` item only with a checked `holds` record, refuses on `does-not-hold`, and for `not-decidable-by-reading` accepts only a user ruling.
+- A claim record with an evidence line that differs from the file, quotes another file, names a line past the file's end, is blank or repeated, or with no line inside the item's range, is refused by `check`, and again by `resolve`. `resolve` settles a `read` item only with a checked `holds` record, refuses on `does-not-hold`, and for `not-decidable-by-reading` accepts only a user ruling.
 - `resolve --note` without the user-ruling prefix is refused for every typed item and still works for an untyped item from an older record.
 
 Defects:

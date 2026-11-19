@@ -34,9 +34,9 @@ Write this JSON record to the dispatch-supplied record path. Never compute the p
 }
 ```
 
-- `task`: the task number from your dispatch (`"final"` or `"close"` when the dispatch names that scope).
+- `task`: the scope at the front of the item id: the number for a task (`task-5-spec-reviewer#...` is `5`), or `"final"` or `"close"`.
 - `status`: your answer. Lowercase always.
-- `evidence`: 3 to 10 lines of the file your dispatch names, each with its line number and its text. `not-decidable-by-reading` may carry fewer, or none.
+- `evidence`: 3 to 10 different lines of the file your dispatch names, each with its line number and its text. None is a blank line, and at least one is inside the line range you were given. `not-decidable-by-reading` may carry fewer, or none.
 - `because`: one sentence. It connects the lines to the claim and says nothing else.
 
 Then run `python3 <scripts-path>/ledger.py check <your-record-path>` and fix the record until it exits 0. `check` compares each quoted line with that line of the file, so a line you retyped from memory or numbered wrong is refused: read the file again and copy it.

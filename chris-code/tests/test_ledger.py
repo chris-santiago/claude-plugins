@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -4612,6 +4613,11 @@ class TestGate(TriageStoreTestCase):
         self.stage_fix()
         self.assertEqual(self.gate(test="! grep -q nothing-like-this a.py")[0], 0)
 
+    def test_a_script_that_handles_its_own_missing_program_passes(self):
+        self.stage_fix()
+        (self.repo / "opt.sh").write_text("no-such-tool-xyz || true\n", encoding="utf-8")
+        self.assertEqual(self.gate(test="sh ./opt.sh")[0], 0)
+
     def test_a_failing_test_becomes_one_serious_local_finding(self):
         self.stage_fix()
         code, record = self.gate(test="exit 1")
@@ -6125,13 +6131,13 @@ class TestInlineOffer(TriageStoreTestCase):
 
     def test_the_offer_is_the_first_line_triage_prints(self):
         first = self.offered().splitlines()[0]
-        self.assertIn("ASK THE USER FIRST", first)
+        self.assertIn("PARK THIS TASK: in the stage's batched question, ask the user", first)
         self.assertIn("ledger.py inline --task 3 --by coder|orchestrator", first)
 
     def test_an_unanswered_offer_is_reprinted_and_starts_no_round(self):
         self.offered()
         again = self.triage()
-        self.assertIn("ASK THE USER FIRST", again.splitlines()[0])
+        self.assertIn("PARK THIS TASK", again.splitlines()[0])
         self.assertIn("waiting for: the user's answer on who fixes this round", again)
         self.assertEqual(len(self.entries()), 1)
 
@@ -6204,7 +6210,7 @@ class TestInlineOffer(TriageStoreTestCase):
 
     def test_a_round_triage_did_not_mark_takes_no_answer(self):
         self.spec(_finding(severity=4))
-        self.assertNotIn("ASK THE USER", self.triage())
+        self.assertNotIn("who fixes this round", self.triage())
         with self.assertRaisesRegex(ledger.RecordError, "isn't one triage marked"):
             self.answer("orchestrator")
         self.baseline()
@@ -6229,10 +6235,43 @@ class TestInlineOffer(TriageStoreTestCase):
         self.assertNotIn("the user's answer", out)
         self.assertIn("a re-check from task-3-spec-reviewer", out)
 
+    def test_an_answer_does_not_carry_to_a_later_round_on_the_same_tree(self):
+        # The first round is ruled off before any code changes, so the next
+        # round starts from the same tree at the same cycle.
+        self.coder()
+        self.offered()
+        self.answer("orchestrator")
+        _rule(self.store, self.sent[0], "drop", "user ruling: drop it")
+        self.triage()
+        self.spec(_finding(severity=2, rule="a clearer name"))
+        first = self.triage().splitlines()[0]
+        self.assertEqual([e["kind"] for e in self.entries()][-1], "polish")
+        self.assertIn("PARK THIS TASK", first)
+        with self.assertRaisesRegex(ledger.RecordError, "user's answer"):
+            self.baseline()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        with self.assertRaisesRegex(ledger.RecordError, "hasn't said"):
+            self.done()
+
+    def test_a_round_an_earlier_release_fixed_inline_needs_no_answer(self):
+        self.coder()
+        self.offered()
+        snapshot = _snapshot(self.store, 3)
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        ledger._append_progress(self.store, {
+            "type": "inline", "task": 3, "baseline": snapshot["tree"],
+            "cycle": snapshot["fix_cycle"], "files": ["a.py"],
+            "note": "user ruling: fix it inline"})
+        self.assertFalse(any("inline offer" in b for b in ledger.ready_blockers(self.store, 3)))
+        self.baseline()
+        out = self.triage()
+        self.assertNotIn("the user's answer", out)
+        self.assertIn("a re-check from task-3-spec-reviewer", out)
+
     def test_the_offer_holds_at_final_too(self):
         self.write("final-python-review-lite.json",
                    _review_lite(task="final", status="block", findings=[_finding()]))
-        self.assertIn("ASK THE USER FIRST", self.triage("final").splitlines()[0])
+        self.assertIn("ASK THE USER NOW", self.triage("final").splitlines()[0])
         with self.assertRaisesRegex(ledger.RecordError, "user's answer"):
             with contextlib.redirect_stdout(io.StringIO()):
                 ledger.cmd_baseline(self.store, _baseline(self.store, "final"), "final")
@@ -6248,7 +6287,7 @@ class TestCloseInlineOffer(CloseStoreTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             ledger.cmd_rule(self.store, [self.fid("close-python-design-reviewer", s2)], "fix",
                             "user ruling: fix it")
-        self.assertIn("ASK THE USER FIRST", self.triage().splitlines()[0])
+        self.assertIn("ASK THE USER NOW", self.triage().splitlines()[0])
         self.assertIn("waiting for: the user's answer", self.triage())
         with self.assertRaisesRegex(ledger.RecordError, "hasn't said"):
             ledger.cmd_inline(self.store, "close", ["a.py"])
@@ -6332,7 +6371,7 @@ class TestUnverifiedItems(TriageStoreTestCase):
     def blocked(self) -> bool:
         return any("cannot_verify" in b for b in ledger.ready_blockers(self.store, 3))
 
-    def resolve(self, rid: str, note: str = "", run: bool = False) -> str:
+    def resolve(self, rid: str, note: str = "", run: str | None = None) -> str:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_resolve(self.store, rid, note, run)
@@ -6371,56 +6410,71 @@ class TestUnverifiedItems(TriageStoreTestCase):
 
     def test_a_gate_item_takes_no_resolution_by_hand(self):
         [rid] = self.items(GATE_ITEM)
-        for note, run in (("the gate will run it", False), ("", False)):
+        for note in ("the gate will run it", ""):
             with self.subTest(note=note), self.assertRaisesRegex(ledger.RecordError, "commit gate"):
-                self.resolve(rid, note, run)
+                self.resolve(rid, note)
         with self.assertRaises(ledger.UsageError):
-            self.resolve(rid, run=True)
+            self.resolve(rid, run="gate")
 
     # --- run: a command ---
 
     def test_a_command_item_blocks_until_its_command_passes(self):
-        [rid] = self.items(_unverified("run", command="test -f lib.py && echo documented"))
+        command = "test -f lib.py && echo documented"
+        [rid] = self.items(_unverified("run", command=command))
         self.triage()
         self.assertTrue(self.blocked())
-        self.resolve(rid, run=True)
+        self.resolve(rid, run=command)
         self.assertFalse(self.blocked())
         entry = self.resolution(rid)
         self.assertEqual((entry["exit"], entry["tree"], entry["tail"]),
                          (0, ledger.snapshot_tree(self.repo), "documented"))
 
     def test_a_failing_command_settles_nothing_and_shows_its_output(self):
-        [rid] = self.items(_unverified("run", command="echo two warnings; exit 3"))
-        with self.assertRaisesRegex(ledger.RecordError, "two warnings"):
-            self.resolve(rid, run=True)
+        command = "echo two warnings; exit 3"
+        [rid] = self.items(_unverified("run", command=command))
+        with self.assertRaisesRegex(ledger.RecordError, "failed, so .* stays open\\b[\\s\\S]*two warnings"):
+            self.resolve(rid, run=command)
         self.assertIn(rid, self.open_ids())
 
+    def test_a_command_runs_only_when_the_caller_repeats_it_exactly(self):
+        marker = self.repo / "ran.txt"
+        [rid] = self.items(_unverified("run", command="touch ran.txt"))
+        for given in ("touch ran.txt ", "touch other.txt", ""):
+            with self.subTest(given=given), self.assertRaisesRegex(ledger.RecordError,
+                                                                   "repeat it exactly"):
+                self.resolve(rid, run=given)
+        self.assertFalse(marker.exists())
+        self.assertIn(rid, self.open_ids())
+        self.resolve(rid, run="touch ran.txt")
+        self.assertTrue(marker.exists())
+
     def test_a_command_naming_a_missing_program_settles_nothing(self):
-        [rid] = self.items(_unverified("run", command="! no-such-program-xyz lib.py"))
-        with self.assertRaisesRegex(ledger.RecordError, "not found"):
-            self.resolve(rid, run=True)
+        command = "! no-such-program-xyz lib.py"
+        [rid] = self.items(_unverified("run", command=command))
+        with self.assertRaisesRegex(ledger.RecordError, "not found by the shell"):
+            self.resolve(rid, run=command)
 
     def test_a_command_item_is_not_settled_by_a_note(self):
         [rid] = self.items(_unverified("run", command="true"))
-        with self.assertRaisesRegex(ledger.RecordError, "--run"):
+        with self.assertRaisesRegex(ledger.RecordError, "--run true"):
             self.resolve(rid, "the coder says it passes")
         self.assertIn(rid, self.open_ids())
 
     def test_a_result_goes_stale_when_a_file_of_the_scope_changes(self):
         [rid] = self.items(_unverified("run", command="true"))
-        self.resolve(rid, run=True)
+        self.resolve(rid, run="true")
         (self.repo / "lib.py").write_text(self.LIB + "# not in task 3\n", encoding="utf-8")
         self.assertNotIn(rid, self.open_ids())
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         self.assertIn(rid, self.open_ids())
         self.triage()
         self.assertTrue(self.blocked())
-        self.resolve(rid, run=True)  # not "already resolved": the old result is stale
+        self.resolve(rid, run="true")  # not "already resolved": the old result is stale
         self.assertNotIn(rid, self.open_ids())
 
     def test_a_completed_scopes_result_stands_when_its_files_change_later(self):
         [rid] = self.items(_unverified("run", command="true"))
-        self.resolve(rid, run=True)
+        self.resolve(rid, run="true")
         ledger._append_progress(self.store, {"type": "complete", "task": 3, "note": "n"})
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         self.assertNotIn(rid, self.open_ids())
@@ -6502,6 +6556,28 @@ class TestUnverifiedItems(TriageStoreTestCase):
             with self.subTest(label), self.assertRaises(ledger.RecordError):
                 ledger.cmd_check(str(self.claim(rid, evidence=evidence)))
 
+    def test_evidence_that_shows_nothing_about_the_claimed_lines_is_refused(self):
+        (self.repo / "lib.py").write_text(self.LIB + "\n", encoding="utf-8")  # line 6 is blank
+        [rid] = self.items(_unverified("read", claim="c", path="lib.py", lines="2-3"))
+
+        def line(n: int) -> dict:
+            return {"path": "lib.py", "line": n, "text": (self.LIB + "\n").split("\n")[n - 1]}
+
+        cases = {"more than once": [line(2), line(2), line(3)],
+                 "no evidence line is inside lib.py:2-3": [line(1), line(4), line(5)],
+                 "blank line": [line(2), line(3), line(6)]}
+        for message, evidence in cases.items():
+            with self.subTest(message), self.assertRaisesRegex(ledger.RecordError, message):
+                ledger.cmd_check(str(self.claim(rid, evidence=evidence)))
+        ledger.cmd_check(str(self.claim(rid, evidence=[line(1), line(2), line(4)])))
+
+    def test_lines_are_numbered_as_an_editor_numbers_them(self):
+        (self.repo / "ff.py").write_text("a = 1\n\x0cb = 2\r\nc = 3\nd = 4\n", encoding="utf-8")
+        [rid] = self.items(_unverified("read", claim="c", path="ff.py", lines="1-4"))
+        evidence = [{"path": "ff.py", "line": n, "text": text}
+                    for n, text in ((2, "b = 2"), (3, "c = 3"), (4, "d = 4"))]
+        ledger.cmd_check(str(self.claim(rid, evidence=evidence)))
+
     def test_a_quote_may_lose_the_whitespace_around_it(self):
         [rid] = self.items(READ_ITEM)
         stripped = [{"path": "./lib.py", "line": n, "text": self.LIB.splitlines()[n - 1].strip()}
@@ -6572,9 +6648,12 @@ class TestUnverifiedItems(TriageStoreTestCase):
     def test_open_says_what_settles_each_item(self):
         self.items(GATE_ITEM, _unverified("run", command="cargo doc"),
                    _unverified("elsewhere", sites=["docs/arch.md"]), READ_ITEM)
+        state = ledger.render_run_state(ledger.load_progress_log(self.store),
+                                        ledger.load_records(self.store))
+        self.assertIn("## Blocking items\n3 open", state)  # the gate's own item blocks nothing
         lines = "\n".join(ledger._open_lines(ledger.load_progress_log(self.store),
                                              ledger.load_records(self.store)))
-        for expected in ("the commit gate settles it", "--run` runs `cargo doc`",
+        for expected in ("the commit gate settles it", "--run 'cargo doc'` runs that command",
                          "docs/arch.md; `triage` files it", "claim-checker", "lib.py:1-5"):
             self.assertIn(expected, lines)
 
@@ -6612,8 +6691,7 @@ class ScratchTestCase(GitRepoTestCase):
         ledger.release_scratch(self.store, task, agent)
 
     def run_in(self, *command: str, task: int | str = 3, agent: str = REVIEWER) -> int:
-        with contextlib.redirect_stderr(io.StringIO()):
-            return ledger.run_in_scratch(self.store, task, agent, list(command))
+        return ledger.run_in_scratch(self.store, task, agent, list(command), subprocess.DEVNULL)
 
     def limits(self, seconds: float | None = None, gigabytes: float | None = None) -> None:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -6746,6 +6824,16 @@ class TestScratchCopy(ScratchTestCase):
         self.assertEqual(ledger.snapshot_tree(self.repo), tree)
         self.assertFalse((self.repo / "made.txt").exists())
 
+    def test_git_variables_of_the_caller_do_not_point_the_refresh_at_the_checkout(self):
+        branch = self._git("symbolic-ref", "--short", "HEAD")
+        copy = self.take()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(self.repo / ".git")}):
+            self.take()
+        self.assertEqual(self._git("symbolic-ref", "--short", "HEAD"), branch)
+        self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 2\n")
+        self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 2\n")
+
     def test_a_left_over_folder_git_no_longer_knows_is_replaced(self):
         stray = self.take()
         shutil.rmtree(stray)
@@ -6847,6 +6935,27 @@ class TestScratchLease(ScratchTestCase):
         with self.assertRaises(ledger.ScratchBusy):
             self.take(4, "b")
 
+    def test_a_holder_with_a_command_running_can_neither_retake_nor_release_nor_run(self):
+        ledger.ensure_store(self.store)
+        self.take(3, "a")
+        self.age_lease(running_pid=os.getpid(), last_used_at=time.time())
+        for act in (lambda: self.take(3, "a"), lambda: self.release(3, "a"),
+                    lambda: self.run_in("true", task=3, agent="a")):
+            with self.subTest(act=act), self.assertRaisesRegex(ledger.RecordError, "still running"):
+                act()
+        self.assertEqual(ledger.read_lease(self.store)["agent"], "a")
+
+    def test_a_take_that_cannot_refresh_gives_back_only_a_lease_it_just_took(self):
+        broken = mock.patch.object(ledger, "refresh_scratch",
+                                   side_effect=ledger.RecordError("no tree"))
+        with broken, self.assertRaisesRegex(ledger.RecordError, "no tree"):
+            self.take(3, "a")
+        self.assertIsNone(ledger.read_lease(self.store))
+        self.take(3, "a")
+        with broken, self.assertRaisesRegex(ledger.RecordError, "no tree"):
+            self.take(3, "a")
+        self.assertEqual(ledger.read_lease(self.store)["agent"], "a")
+
     def test_a_lease_file_that_cannot_be_read_holds_nothing(self):
         self.take(3, "a")
         (ledger.scratch_root(self.store) / ledger.SCRATCH_LEASE).write_text("{", encoding="utf-8")
@@ -6937,6 +7046,69 @@ class TestScratchRun(ScratchTestCase):
             self.limits(seconds=0)
 
 
+class TestScratchGuardOutlivesItsCaller(ScratchTestCase):
+    """The guard is its own process, so ending the call that waits for it
+    never leaves the command running without its limits."""
+
+    COMMAND = ("sh", "-c", "echo $$ > child.pid; exec sleep 300")
+
+    def setUp(self):
+        super().setUp()
+        ledger.ensure_store(self.store)
+        self.copy = self.take()
+
+    def start(self) -> subprocess.Popen:
+        """`scratch run` as a reviewer's tool call makes it."""
+        caller = subprocess.Popen(
+            [sys.executable, str(LEDGER_PY), "scratch", "run", "--task", "3", "--agent",
+             self.REVIEWER, "--store", str(self.store), "--", *self.COMMAND],
+            cwd=self.repo, env={**os.environ, "TMPDIR": str(self.temp)},
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(caller.wait)
+        self.addCleanup(caller.kill)
+        return caller
+
+    def command_pid(self) -> int:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            with contextlib.suppress(OSError, ValueError):
+                return int((self.copy / "child.pid").read_text())
+            time.sleep(0.05)
+        self.fail("the command never started")
+
+    def wait_until(self, condition, seconds: float = 30) -> bool:
+        deadline = time.monotonic() + seconds
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        return condition()
+
+    def test_a_call_that_is_terminated_stops_its_command(self):
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sig=sig):
+                (self.copy / "child.pid").unlink(missing_ok=True)
+                caller = self.start()
+                pid = self.command_pid()
+                caller.send_signal(sig)
+                self.assertEqual(caller.wait(timeout=30), ledger.SCRATCH_STOPPED_EXIT)
+                self.assertTrue(self.wait_until(lambda: not ledger._process_alive(pid)))
+                self.assertIsNone(ledger.read_lease(self.store)["running_pid"])
+
+    def test_a_call_killed_outright_leaves_the_guard_to_stop_the_command_at_the_limit(self):
+        self.limits(seconds=6)
+        caller = self.start()
+        pid = self.command_pid()
+        caller.kill()
+        caller.wait()
+        self.assertTrue(ledger._process_alive(pid))  # still running, still guarded
+        with self.assertRaises(ledger.ScratchBusy):  # and the lease knows it
+            self.take(4, "rust-quality-reviewer")
+        with self.assertRaisesRegex(ledger.RecordError, "still running"):
+            self.take()
+        self.assertTrue(self.wait_until(lambda: not ledger._process_alive(pid)))
+        self.assertTrue(self.wait_until(
+            lambda: ledger.read_lease(self.store)["running_pid"] is None))
+
+
 class TestScratchCLI(ScratchTestCase):
     def _cli(self, *args, cwd=None):
         return subprocess.run([sys.executable, str(LEDGER_PY), "scratch", *args],
@@ -6949,9 +7121,10 @@ class TestScratchCLI(ScratchTestCase):
     def test_take_prints_the_copy_and_the_run_form_and_no_cache_variable(self):
         result = self._cli("take", *self.who())
         self.assertEqual(result.returncode, 0, result.stderr)
-        path, how = result.stdout.splitlines()
+        path, how, limits = result.stdout.splitlines()
         self.assertTrue(Path(path).is_dir())
         self.assertIn("scratch run --task 2 --agent rust-quality-reviewer", how)
+        self.assertIn(f"{ledger.SCRATCH_TIME_LIMIT} s", limits)
         self.assertNotIn("CARGO_TARGET_DIR", result.stdout)
 
     def test_run_passes_the_commands_own_options_and_exit_status(self):

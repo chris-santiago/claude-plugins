@@ -602,7 +602,7 @@
       <div class="arole"><div class="r-top"><h3>Conformance pair</h3><span class="tag assure">assure · 2</span></div><p>Code↔spec per task; spec-blind behavior↔intent at completion.</p><div class="chips"><span class="chip assure">spec-reviewer</span><span class="chip assure">intent-reviewer</span></div></div>
       <div class="arole"><div class="r-top"><h3>Campaign</h3><span class="tag assure">assure · 1</span></div><p>Adversarial edge-case test writer, one per subsystem. Never fixes.</p><div class="chips"><span class="chip assure">bug-hunter</span></div></div>
       <div class="arole"><div class="r-top"><h3>Mutation gate</h3><span class="tag assure">assure · 1</span></div><p>Mutation testing in an isolated worktree; gates trivial tests at the final gate when you choose it, advisory on-demand.</p><div class="chips"><span class="chip assure">mutation-tester</span></div></div>
-      <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles a spec reviewer's cannot-verify item by quoting the code; never judges, never writes.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
+      <div class="arole"><div class="r-top"><h3>Grounding</h3><span class="tag assure">assure · 1</span></div><p>Settles a spec reviewer's claim about code by quoting it, in a record the ledger checks against the file; never judges.</p><div class="chips"><span class="chip assure">claim-checker</span></div></div>
     </div>
   </div>
 </section>
@@ -638,7 +638,7 @@
     <div class="two">
       <div class="usecard" style="border-top:4px solid var(--navy)">
         <h4>Findings route by tags; doubts settle by dispatch</h4>
-        <p style="font-size:14.5px; color:#37424f; margin:0">The hub makes no call on a finding's merits: reviewers tag each finding with a severity and a reach that <span class="mono">ledger.py triage</span> routes, and a coder who thinks a finding is wrong contests it with the reviewer that raised it. The one judgment left, a spec reviewer's “cannot verify,” is never resolved on trust or re-read by the hub. It states one decidable claim and dispatches <span class="mono">claim-checker</span>, which answers with a verdict word <em>plus verbatim quoted lines</em>. Evidence is mandatory, and quotation terminates the chain.</p>
+        <p style="font-size:14.5px; color:#37424f; margin:0">The hub makes no call on a finding's merits: reviewers tag each finding with a severity and a reach that <span class="mono">ledger.py triage</span> routes, and a coder who thinks a finding is wrong contests it with the reviewer that raised it. A spec reviewer's “cannot verify” item says what would settle it, and the ledger accepts only that: the commit gate or a command it runs and records, a filed note, or, for a claim about code, <span class="mono">claim-checker</span>, which answers with a verdict word <em>plus verbatim quoted lines</em> that the ledger compares with the file. The hub's own note settles nothing, and quotation terminates the chain.</p>
       </div>
       <div class="usecard" style="border-top:4px solid var(--assure)">
         <h4>State survives context loss</h4>
