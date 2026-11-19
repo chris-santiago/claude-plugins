@@ -3476,8 +3476,8 @@ def _plan_has_constraints(plan: Path) -> bool:
     import task_brief
     try:
         section = task_brief.extract_section(plan.read_text(encoding="utf-8"), "Constraints")
-    except (OSError, task_brief.UsageError):
-        return False
+    except (OSError, UnicodeDecodeError, task_brief.UsageError):
+        return False  # a plan that can't be read is the builder's to refuse
     return not TASK_HEADING_RE.match(section)
 
 

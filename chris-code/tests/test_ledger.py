@@ -7992,6 +7992,12 @@ class TestBriefCommand(GitRepoTestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("## Constraints", (self.store / "task-3-brief.md").read_text())
 
+    def test_a_plan_that_is_not_text_is_refused_by_the_builder_not_a_crash(self):
+        (self.repo / "plan.md").write_bytes(b"\xff\xfe not utf-8 \xff")
+        result = self.cli("--task", "3", "--intent", "x")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_an_intent_that_starts_with_a_dash_is_still_the_intent(self):
         code, _ = self.brief(intent="-v")
         self.assertEqual(code, 0)
