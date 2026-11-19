@@ -7475,5 +7475,450 @@ class TestScratchLifetime(TriageStoreTestCase):
         self.assertIn("busy", out.getvalue())
 
 
+def _printed(call, *args, **kwargs) -> str:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        call(*args, **kwargs)
+    return out.getvalue()
+
+
+class TestRunConfig(TriageStoreTestCase):
+    """The run's settings are recorded once and read by every later command."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("plan.md", "spec.md"):
+            (self.repo / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    def config(self) -> dict:
+        return ledger.run_config(ledger.load_progress_log(self.store))
+
+    def set(self, **settings) -> str:
+        return _printed(ledger.cmd_run_config, self.store, **settings)
+
+    def test_settings_are_kept_and_printed(self):
+        out = self.set(plan=str(self.repo / "plan.md"), spec=str(self.repo / "spec.md"),
+                       test="pytest -q", lint="ruff check .")
+        self.assertEqual(self.config(), {"plan": "plan.md", "spec": "spec.md",
+                                         "test": "pytest -q", "lint": "ruff check ."})
+        self.assertEqual(out.splitlines(), ["plan: plan.md", "spec: spec.md", "test: pytest -q",
+                                            "lint: ruff check ."])
+
+    def test_with_nothing_given_it_only_prints(self):
+        before = ledger.load_progress_log(self.store)
+        self.assertEqual(self.set().splitlines(), ["plan: (not set)", "spec: (not set)",
+                                                   "test: (not set)", "lint: (not set)"])
+        self.assertEqual(ledger.load_progress_log(self.store), before)
+
+    def test_a_later_value_replaces_its_own_key_alone(self):
+        self.set(test="pytest -q", lint="ruff check .")
+        self.set(test="pytest -x")
+        self.assertEqual(self.config(), {"test": "pytest -x", "lint": "ruff check ."})
+
+    def test_an_empty_value_unsets_a_key(self):
+        self.set(test="pytest -q", lint="ruff check .", spec=str(self.repo / "spec.md"))
+        self.set(lint="", spec="")
+        self.assertEqual(self.config(), {"test": "pytest -q"})
+
+    def test_a_plan_or_spec_that_is_not_a_file_is_refused_and_nothing_is_kept(self):
+        for key in ("plan", "spec"):
+            with self.subTest(key=key), self.assertRaises(ledger.UsageError):
+                self.set(**{key: str(self.repo / "nope.md"), "test": "pytest"})
+        self.assertEqual(self.config(), {})
+
+    def test_the_plan_is_recorded_as_the_runs_plan(self):
+        self.set(plan=str(self.repo / "plan.md"))
+        self.assertEqual(ledger.recorded_plans(ledger.load_progress_log(self.store)), ["plan.md"])
+
+    def test_a_plan_given_relative_to_another_folder_is_stored_relative_to_the_repo(self):
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "plan.md").write_text("# plan\n", encoding="utf-8")
+        old = os.getcwd()
+        os.chdir(self.repo / "docs")
+        self.addCleanup(os.chdir, old)
+        self.set(plan="plan.md")
+        log = ledger.load_progress_log(self.store)
+        self.assertEqual(ledger.run_config(log)["plan"], "docs/plan.md")
+        self.assertEqual(ledger.recorded_plans(log), ["docs/plan.md"])
+
+    def test_run_state_lists_the_settings_only_once_some_are_set(self):
+        def state() -> str:
+            return ledger.render_run_state(ledger.load_progress_log(self.store),
+                                           ledger.load_records(self.store))
+        self.assertNotIn("## Settings", state())
+        self.set(test="pytest -q")
+        self.assertIn("## Settings\n- test: pytest -q\n", state())
+
+
+class TestStageExtend(TriageStoreTestCase):
+    """`stage --extend` grows a task's recorded footprint instead of
+    restating it."""
+
+    def extend(self, *paths: str, task: int | str = 3, stage: int | None = None) -> str:
+        return _printed(ledger.cmd_stage, self.store, task, stage, None, list(paths))
+
+    def staged(self, task: int = 3) -> dict:
+        return ledger.stage_map(ledger.load_progress_log(self.store))[task]
+
+    def test_the_coders_changed_files_join_the_footprint_and_the_stage_is_kept(self):
+        self.coder(changed_files=["a.py", "tests/test_a.py"])
+        out = self.extend()
+        self.assertEqual((self.staged()["stage"], self.staged()["files"]),
+                         (1, ["a.py", "tests/test_a.py"]))
+        self.assertEqual(out.strip(), "task 3 footprint: +tests/test_a.py")
+
+    def test_named_paths_join_it_too(self):
+        self.coder(changed_files=["a.py", "b.py"])
+        self.extend("./c.py")
+        self.assertEqual(self.staged()["files"], ["a.py", "b.py", "c.py"])
+
+    def test_nothing_new_is_reported_as_unchanged(self):
+        self.assertEqual(self.extend().strip(), "task 3 footprint: unchanged")
+        self.assertEqual(self.staged()["files"], ["a.py"])
+
+    def test_a_stage_given_with_it_moves_the_task(self):
+        self.extend("b.py", stage=2)
+        self.assertEqual((self.staged()["stage"], self.staged()["files"]), (2, ["a.py", "b.py"]))
+
+    def test_a_task_with_no_footprint_has_nothing_to_extend(self):
+        with self.assertRaisesRegex(ledger.UsageError, "no recorded footprint"):
+            self.extend("b.py", task=4)
+
+    def test_final_and_the_close_are_refused(self):
+        for scope in ("final", "close"):
+            with self.subTest(scope=scope), self.assertRaisesRegex(ledger.UsageError, "numbered"):
+                self.extend("b.py", task=scope)
+
+    def test_files_and_extend_are_one_or_the_other(self):
+        for files, extend in ((["a.py"], ["b.py"]), (None, None)):
+            with self.subTest(files=files), self.assertRaises(ledger.UsageError):
+                ledger.cmd_stage(self.store, 3, 1, files, extend)
+
+    def test_a_path_another_task_in_the_stage_claims_is_still_refused(self):
+        ledger.cmd_stage(self.store, 4, 1, ["b.py"])
+        with self.assertRaisesRegex(ledger.RecordError, "both touch"):
+            self.extend("b.py")
+        self.assertEqual(self.staged()["files"], ["a.py"])
+
+    def test_the_commit_that_refuses_an_outside_file_names_the_command(self):
+        self.spec()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_triage(self.store, 3)
+        self.coder(changed_files=["a.py", "b.py"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_triage(self.store, 3)
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        (self.repo / "b.py").write_text("b = 1\n", encoding="utf-8")
+        with self.assertRaisesRegex(ledger.RecordError, r"stage --task 3 --extend"):
+            ledger.cmd_commit(self.store, 3, "msg", "true", None)
+        self.extend()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_commit(self.store, 3, "msg", "true", None), 0)
+
+
+class TestGateCommands(TriageStoreTestCase):
+    """A gate with no command given runs the recorded one, and keeps
+    everything a command printed."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+
+    def gate(self, test: str | None = None, lint: str | None = None,
+             task: int | str = 3) -> tuple[int, dict, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_gate(self.store, task, test, lint)
+        prefix = "task-3" if task == 3 else "final"
+        return code, json.loads((self.store / f"{prefix}-gate.json").read_text()), out.getvalue()
+
+    @staticmethod
+    def ran(record: dict) -> dict:
+        return {c["kind"]: c["command"] for c in record["commands"] if c["kind"] != "labels"}
+
+    def test_a_task_runs_the_verify_command_its_brief_recorded(self):
+        ledger.record_brief_inputs(self.store, 3, "why", "test -f a.py")
+        code, record, _ = self.gate()
+        self.assertEqual((code, self.ran(record)), (0, {"test": "test -f a.py"}))
+
+    def test_a_task_with_no_verify_command_on_record_needs_a_test(self):
+        for verify in (None, ""):
+            ledger.record_brief_inputs(self.store, 3, "why", verify)
+            with self.subTest(verify=verify), self.assertRaisesRegex(ledger.UsageError, "--test"):
+                self.gate()
+        self.assertFalse((self.store / "task-3-gate.json").exists())
+
+    def test_a_task_never_falls_back_to_the_runs_full_suite(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, test="true")
+        with self.assertRaises(ledger.UsageError):
+            self.gate()
+
+    def test_final_runs_the_runs_full_suite(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, test="test -f a.py")
+        ledger.record_brief_inputs(self.store, 3, "why", "false")
+        code, record, _ = self.gate(task="final")
+        self.assertEqual((code, self.ran(record)), (0, {"test": "test -f a.py"}))
+
+    def test_final_with_no_suite_on_record_needs_a_test(self):
+        with self.assertRaisesRegex(ledger.UsageError, "run-config --test"):
+            self.gate(task="final")
+
+    def test_a_given_command_wins_over_the_recorded_one(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, lint="false")
+        ledger.record_brief_inputs(self.store, 3, "why", "false")
+        code, record, _ = self.gate(test="true", lint="true")
+        self.assertEqual((code, self.ran(record)), (0, {"lint": "true", "test": "true"}))
+
+    def test_the_runs_lint_command_runs_unless_an_empty_one_is_given(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, lint="false")
+        code, record, _ = self.gate(test="true")
+        self.assertEqual((code, self.ran(record)), (1, {"lint": "false", "test": "true"}))
+        code, record, _ = self.gate(test="true", lint="")
+        self.assertEqual((code, self.ran(record)), (0, {"test": "true"}))
+
+    def test_everything_a_failing_command_printed_is_kept_and_its_path_printed(self):
+        code, record, out = self.gate(test="seq 1 100; exit 1")
+        [test] = [c for c in record["commands"] if c["kind"] == "test"]
+        log = self.store / "task-3-gate-test.log"
+        self.assertEqual((code, test["log"]), (1, str(log)))
+        self.assertEqual(log.read_text().split(), [str(n) for n in range(1, 101)])
+        self.assertEqual(test["excerpt"].split(), [str(n) for n in range(81, 101)])
+        self.assertIn(f"full output: {log}", out)
+
+    def test_a_passing_commands_output_is_kept_and_not_printed(self):
+        code, _, out = self.gate(test="echo ran", lint="echo linted")
+        self.assertEqual(code, 0)
+        self.assertEqual((self.store / "task-3-gate-test.log").read_text(), "ran\n")
+        self.assertEqual((self.store / "task-3-gate-lint.log").read_text(), "linted\n")
+        self.assertNotIn("full output", out)
+
+    def test_a_failure_above_the_last_lines_leads_the_excerpt(self):
+        failures = ["test parse::size ... FAILED", "error[E0308]: mismatched types",
+                    "thread 'main' panicked at src/lib.rs:3", "E   AssertionError: 1 != 2",
+                    "FAILED tests/test_a.py::test_size - AssertionError"]
+        script = "; ".join(f"echo \"{line}\"" for line in failures)
+        _, record, out = self.gate(test=f"{script}; echo ok; seq 1 30; exit 1")
+        [test] = [c for c in record["commands"] if c["kind"] == "test"]
+        lines = test["excerpt"].splitlines()
+        self.assertEqual(lines[:6], [*failures, "[...]"])
+        self.assertEqual(lines[6:], [str(n) for n in range(11, 31)])
+        self.assertIn("test parse::size ... FAILED", out)
+
+    def test_a_failure_already_among_the_last_lines_is_not_repeated(self):
+        _, record, _ = self.gate(test="seq 1 30; echo 'test x ... FAILED'; exit 1")
+        [test] = [c for c in record["commands"] if c["kind"] == "test"]
+        self.assertEqual(test["excerpt"].count("FAILED"), 1)
+        self.assertNotIn("[...]", test["excerpt"])
+
+    def test_a_passing_commands_excerpt_is_its_last_lines_alone(self):
+        _, record, _ = self.gate(test="echo 'test x ... FAILED'; seq 1 30")
+        [test] = [c for c in record["commands"] if c["kind"] == "test"]
+        self.assertEqual(test["excerpt"].split(), [str(n) for n in range(11, 31)])
+
+    def test_a_gate_record_with_its_log_passes_check(self):
+        self.gate(test="true")
+        ledger.cmd_check(str(self.store / "task-3-gate.json"))
+
+    def test_clearing_the_store_deletes_the_gate_logs(self):
+        self.gate(test="true", lint="true")
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_clear(self.store, discard_open=True)
+        self.assertEqual(sorted(p.name for p in self.store.glob("*gate*")), [])
+
+
+class TestCommitCommands(TriageStoreTestCase):
+    """`commit` with no test given runs the recorded one."""
+
+    def ready(self) -> None:
+        self.spec()
+        self.triage()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+
+    def test_a_task_commits_on_the_verify_command_its_brief_recorded(self):
+        ledger.record_brief_inputs(self.store, 3, "why", "test -f a.py")
+        self.ready()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, 3, "msg", None, None)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("test: pass  test -f a.py", out.getvalue())
+
+    def test_a_task_with_no_command_on_record_stops_with_nothing_staged(self):
+        self.ready()
+        with self.assertRaisesRegex(ledger.UsageError, "--test"):
+            ledger.cmd_commit(self.store, 3, "msg", None, None)
+        self.assertEqual(self._git("diff", "--cached", "--name-only"), "")
+
+    def test_a_blocker_is_reported_before_a_missing_command(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_commit(self.store, 3, "msg", None, None)
+        self.assertEqual(code, 1)
+        self.assertIn("no triage entry", out.getvalue())
+
+
+BRIEF_PLAN = """# Plan
+
+Spec coverage: spec.md — pass (coverage.md)
+
+## 4. Constraints
+
+- Keep the public API.
+
+## 5. Tasks
+
+### Task 3: guard size
+
+- Cases: size=0 → ValueError
+- [ ] Verify: `python3 -m pytest tests/test_size.py`
+
+### Task 4: read the contract
+
+- Consumes: contract from spec §6 → `a.py`
+- Cases: n/a — reads only
+- [ ] Verify: `true`
+
+### Task 5: no cases
+- [ ] Verify: `true`
+"""
+
+
+class TestBriefCommand(GitRepoTestCase):
+    """`brief` builds a task's brief from the run's settings and prints the
+    paths its dispatches need."""
+
+    def setUp(self):
+        super().setUp()
+        self.store = ledger.ensure_store(self.repo / ".sdd")
+        (self.repo / "plan.md").write_text(BRIEF_PLAN, encoding="utf-8")
+        (self.repo / "spec.md").write_text("# Spec\n\n## 6. Interfaces\n\nText.\n",
+                                           encoding="utf-8")
+        (self.repo / "coverage.md").write_text("PASS\n", encoding="utf-8")
+        self.configure(plan=str(self.repo / "plan.md"))
+
+    def configure(self, **settings) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_run_config(self.store, **settings)
+
+    def brief(self, task: int = 3, intent: str | None = "refuse an empty grid",
+              coders: tuple[str, ...] = ("python-coder",)) -> tuple[int, list[str]]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ledger.cmd_brief(self.store, task, intent, list(coders))
+        return code, out.getvalue().splitlines()
+
+    def cli(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(LEDGER_PY), "brief", *args, "--store",
+                               str(self.store)], cwd=self.repo, capture_output=True, text=True)
+
+    def test_it_builds_the_brief_and_prints_every_path_a_dispatch_needs(self):
+        code, lines = self.brief()
+        store = self.store.resolve()
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [
+            f"brief: {store / 'task-3-brief.md'}",
+            f"python-coder record: {self.store / 'task-3-python-coder.json'}",
+            f"python-coder report: {self.store / 'task-3-python-coder-report.md'}",
+            f"spec-reviewer record: {self.store / 'task-3-spec-reviewer.json'}",
+            f"spec-reviewer report: {self.store / 'task-3-spec-reviewer-report.md'}",
+            f"python-quality-reviewer record: {self.store / 'task-3-python-quality-reviewer.json'}",
+            f"python-quality-reviewer report: "
+            f"{self.store / 'task-3-python-quality-reviewer-report.md'}"])
+        text = (self.store / "task-3-brief.md").read_text()
+        for part in ("### Task 3: guard size", "refuse an empty grid", "Keep the public API."):
+            self.assertIn(part, text)
+
+    def test_the_printed_paths_are_the_ones_path_names(self):
+        _, lines = self.brief(coders=("rust-coder",))
+        log = ledger.load_progress_log(self.store)
+        for line in lines[1:]:
+            label, path = line.split(": ", 1)
+            agent, kind = label.split(" ")
+            self.assertEqual(path, str(ledger.handoff_path(self.store, log, 3, agent, kind)))
+
+    def test_two_coders_get_a_quality_reviewer_each_and_one_spec_reviewer(self):
+        _, lines = self.brief(coders=("python-coder", "rust-coder"))
+        self.assertEqual([line.split(" record: ")[0] for line in lines if " record: " in line],
+                         ["python-coder", "rust-coder", "spec-reviewer",
+                          "python-quality-reviewer", "rust-quality-reviewer"])
+
+    def test_a_coder_with_no_quality_reviewer_gets_the_spec_reviewer_alone(self):
+        _, lines = self.brief(coders=("general-purpose",))
+        self.assertEqual([line.split(" record: ")[0] for line in lines if " record: " in line],
+                         ["general-purpose", "spec-reviewer"])
+
+    def test_no_coder_prints_the_brief_path_and_the_spec_reviewers(self):
+        _, lines = self.brief(coders=())
+        self.assertEqual([line.split(": ")[0] for line in lines],
+                         ["brief", "spec-reviewer record", "spec-reviewer report"])
+
+    def test_a_rebuild_reuses_the_intent_the_last_brief_was_built_with(self):
+        self.brief()
+        (self.store / "task-3-brief.md").unlink()
+        code, _ = self.brief(intent=None)
+        self.assertEqual(code, 0)
+        self.assertIn("refuse an empty grid", (self.store / "task-3-brief.md").read_text())
+
+    def test_a_first_build_with_no_intent_is_refused(self):
+        with self.assertRaisesRegex(ledger.UsageError, "--intent"):
+            self.brief(intent=None)
+
+    def test_no_plan_on_record_is_refused(self):
+        self.configure(plan="")
+        with self.assertRaisesRegex(ledger.UsageError, "run-config --plan"):
+            self.brief()
+
+    def test_an_agent_name_that_is_not_a_plain_name_is_refused_before_anything_is_built(self):
+        with self.assertRaises(ledger.UsageError):
+            self.brief(coders=("../x",))
+        self.assertFalse((self.store / "task-3-brief.md").exists())
+
+    def test_the_build_records_the_tasks_verify_command_for_its_gate(self):
+        self.brief()
+        log = ledger.load_progress_log(self.store)
+        self.assertEqual(ledger.gate_commands(log, 3, None, None),
+                         ("python3 -m pytest tests/test_size.py", None))
+
+    def test_the_recorded_spec_reaches_the_builder(self):
+        self.assertEqual(self.cli("--task", "4", "--intent", "x").returncode, 2)
+        self.configure(spec=str(self.repo / "spec.md"))
+        code, _ = self.brief(task=4)
+        self.assertEqual(code, 0)
+
+    def test_it_builds_from_any_directory(self):
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        old = os.getcwd()
+        os.chdir(elsewhere.name)
+        self.addCleanup(os.chdir, old)
+        self.configure(spec=str(self.repo / "spec.md"))
+        code, _ = self.brief(task=4)  # its Consumes: pointer resolves at the repo root
+        self.assertEqual(code, 0)
+
+    def test_a_plan_without_a_constraints_section_still_builds(self):
+        (self.repo / "plan.md").write_text(
+            BRIEF_PLAN.replace("## 4. Constraints\n\n- Keep the public API.\n\n", ""),
+            encoding="utf-8")
+        code, _ = self.brief()
+        self.assertEqual(code, 0)
+        self.assertNotIn("## Constraints", (self.store / "task-3-brief.md").read_text())
+
+    def test_a_task_the_builder_refuses_returns_its_status_and_prints_no_path(self):
+        result = self.cli("--task", "5", "--intent", "x", "--coder", "python-coder")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("Cases", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_the_command_line_builds_a_brief(self):
+        result = self.cli("--task", "3", "--intent", "refuse an empty grid", "--coder",
+                          "python-coder")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 7)
+
+
 if __name__ == "__main__":
     unittest.main()

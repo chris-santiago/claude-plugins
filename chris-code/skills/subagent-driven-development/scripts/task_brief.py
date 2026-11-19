@@ -651,6 +651,17 @@ def validate_verify(task_entry: str, task_n: str) -> None:
                 "`! rg -q '<pattern>' <paths>`)")
 
 
+def verify_command(task_entry: str) -> str | None:
+    """The task's `Verify:` command, when its `Verify:` lines (outside code
+    fences) name exactly one between them; None otherwise. A line can
+    backtick more than its command (a file name, an expected value), so
+    with several spans nothing here can say which one the gate should run."""
+    commands = [c.strip() for line, in_fence in _iter_fence_aware(task_entry.splitlines())
+                if not in_fence and (m := VERIFY_LINE_RE.match(line))
+                for c in BACKTICK_SPAN_RE.findall(m.group(2)) if c.strip()]
+    return commands[0] if len(commands) == 1 else None
+
+
 def rigor_line(task_entry: str) -> str | None:
     """The level the entry's first task-level `Rigor:` line names (see
     rigor.level_word), or None without one. Lines in a code fence and
@@ -804,6 +815,8 @@ def run(request: BriefRequest) -> Path:
         ledger.record_delivery(store_dir, int(request.task_n), [n["id"] for n in required],
                                "brief")
         ledger.record_plan(store_dir, str(plan_path))
+        ledger.record_brief_inputs(store_dir, int(request.task_n), intent,
+                                   verify_command(task_entry))
     except OSError as e:
         raise UsageError(f"wrote {out_path} but could not log its delivery: {e}") from e
 

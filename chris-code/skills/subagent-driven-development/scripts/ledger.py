@@ -28,7 +28,12 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py append --type progress|complete --task N|final|run --note "..." [--store DIR]
        python3 ledger.py note --kind KIND --text "..." [--for N] [--owner N|close] [--from N|final|run] [--store DIR]
        python3 ledger.py notes --task N [--deliver | --waive ID --reason "..."] [--store DIR]
+       python3 ledger.py run-config [--plan PLAN] [--spec SPEC] [--test CMD] [--lint CMD] [--store DIR]
+       python3 ledger.py brief --task N [--intent "..."] [--coder NAME...] [--store DIR]
        python3 ledger.py stage --task N --stage K --files PATH... [--store DIR]
+       python3 ledger.py stage --task N --extend [PATH...] [--store DIR]
+       python3 ledger.py gate --task N|final [--test CMD] [--lint CMD] [--store DIR]
+       python3 ledger.py commit --task N|final|close --message "..." [--test CMD] [--lint CMD] [--store DIR]
        python3 ledger.py handle --task N|final --role NAME --agent ID [--store DIR]
        python3 ledger.py close-round --note "..." [--store DIR]
        python3 ledger.py triage --task N|final|close [--store DIR]
@@ -1387,6 +1392,87 @@ def record_plan(store_dir: Path, plan: str) -> None:
             _append_progress(store_dir, {"type": "plan", "path": key, "at": _now()})
 
 
+# --- run settings: what the orchestrator would otherwise retype on every call ---
+
+RUN_CONFIG_ENTRY = "run_config"
+# The plan and spec every brief is built from, the project's full test
+# suite (the test command at `final` and the close) and its lint command.
+RUN_CONFIG_KEYS = ("plan", "spec", "test", "lint")
+BRIEF_ENTRY = "brief"
+
+
+def run_config(log: list[dict]) -> dict[str, str]:
+    """The run's settings: for each key, the latest value logged. A key
+    logged as empty is unset."""
+    config: dict[str, str] = {}
+    for entry in log:
+        if entry.get("type") == RUN_CONFIG_ENTRY:
+            config.update({k: entry[k] for k in RUN_CONFIG_KEYS if isinstance(entry.get(k), str)})
+    return {k: v for k, v in config.items() if v.strip()}
+
+
+def cmd_run_config(store_dir: Path, plan: str | None = None, spec: str | None = None,
+                   test: str | None = None, lint: str | None = None) -> None:
+    """Print the run's settings, after logging a change to them. The plan
+    and the spec are stored as `plan_key` stores a plan, so a later command
+    finds them from any directory."""
+    given: dict[str, str] = {}
+    for key, path in (("plan", plan), ("spec", spec)):
+        if path:
+            if not Path(path).is_file():
+                raise UsageError(f"--{key} {path}: no such file")
+            given[key] = plan_key(store_dir, path)
+        elif path is not None:
+            given[key] = ""
+    given.update({k: v for k, v in (("test", test), ("lint", lint)) if v is not None})
+    if given:
+        with store_lock(store_dir):
+            _append_progress(store_dir, {"type": RUN_CONFIG_ENTRY, **given, "at": _now()})
+        if plan:
+            record_plan(store_dir, plan)
+    config = run_config(load_progress_log(store_dir))
+    for key in RUN_CONFIG_KEYS:
+        print(f"{key}: {config.get(key, '(not set)')}")
+
+
+def brief_inputs(log: list[dict], task: int | str) -> dict:
+    """What task `task`'s latest brief was built with: its `intent`, and
+    its `verify` command (None when its `Verify:` lines don't name exactly
+    one). Empty when no brief of it was built by a release that logs them."""
+    return next((e for e in reversed(log)
+                 if e.get("type") == BRIEF_ENTRY and e.get("task") == task), {})
+
+
+def record_brief_inputs(store_dir: Path, task: int, intent: str, verify: str | None) -> None:
+    """Log what a brief of `task` was built with, once per change, so a
+    rebuild needs no intent and the task's gate needs no test command."""
+    with store_lock(store_dir):
+        latest = brief_inputs(load_progress_log(store_dir), task)
+        if (latest.get("intent"), latest.get("verify")) != (intent, verify) or not latest:
+            _append_progress(store_dir, {"type": BRIEF_ENTRY, "task": task, "intent": intent,
+                                         "verify": verify, "at": _now()})
+
+
+def gate_commands(log: list[dict], task: int | str, test: str | None,
+                  lint: str | None) -> tuple[str, str | None]:
+    """The test and lint commands a gate of `task` runs: the ones given, or
+    else the task's own `Verify:` command as its brief recorded it (at
+    `final` and the close, the run's full suite) and the run's lint
+    command. An empty `lint` runs none."""
+    config = run_config(log)
+    if test is None:
+        test = brief_inputs(log, task).get("verify") if isinstance(task, int) \
+            else config.get("test")
+    if not test:
+        raise UsageError(
+            f"task {task} has no one `Verify:` command on record (its brief predates this "
+            "release, or its `Verify:` lines name several commands): pass --test"
+            if isinstance(task, int) else
+            f"{task} needs the project's full test suite: pass --test, or record it once "
+            "with `run-config --test`")
+    return test, config.get("lint") if lint is None else lint
+
+
 def store_verdict(store_dir: Path, plan: str | None) -> tuple[str, str]:
     """`store_state.classify`'s verdict and next action for `plan` (default:
     the latest recorded plan), from the facts the progress log holds."""
@@ -1578,11 +1664,40 @@ def _normalize_path(path: str) -> str:
     return posixpath.normpath(path.strip().replace("\\", "/"))
 
 
-def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[str]) -> None:
+def extended_footprint(store_dir: Path, log: list[dict], task: int | str,
+                       extra: list[str]) -> tuple[int, set[str], list[str]]:
+    """A task's stage, its recorded footprint, and that footprint grown by
+    `extra` and by every file its coders' records list as changed, which is
+    what `commit` holds the footprint to."""
+    entry = stage_map(log).get(task) if isinstance(task, int) else None
+    if entry is None:
+        raise UsageError(
+            f"task {task} has no recorded footprint to extend: record it with "
+            "`stage --task N --stage K --files ...`" if isinstance(task, int) else
+            f"--extend is for a numbered task: at {task}, `--files` already adds to the "
+            "footprint, and a coder's changed files join it on their own")
+    recorded = set(entry.get("files", []))
+    changed = _coder_changed_files(_scope_records(store_dir, scope_prefix(log, task)).coders)
+    return entry["stage"], recorded, sorted(
+        recorded | changed | {_normalize_path(f) for f in extra if f.strip()})
+
+
+def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[str] | None,
+              extend: list[str] | None = None) -> None:
     """Record `task`'s stage and file footprint. Tasks in one stage run in
     parallel on one working tree, so a footprint sharing a path with another
     unfinished task in the same stage is refused. `final` takes no stage: its
-    files join the whole-change gate's footprint (a fix outside every task)."""
+    files join the whole-change gate's footprint (a fix outside every task).
+    `extend` grows a task's recorded footprint instead of restating it
+    (`extended_footprint`), keeping its stage unless one is given."""
+    if (files is None) == (extend is None):
+        raise UsageError("stage: give --files (the whole footprint) or --extend (paths to add "
+                         "to the recorded one), not both")
+    recorded: set[str] | None = None
+    if files is None:
+        kept_stage, recorded, files = extended_footprint(
+            store_dir, load_progress_log(store_dir), task, extend or [])
+        stage = stage if stage is not None else kept_stage
     footprint = sorted({_normalize_path(f) for f in files if f.strip()})
     if not footprint or "." in footprint:
         raise RecordError(f"--files: got {files!r}, expected the paths task {task} will touch")
@@ -1608,6 +1723,9 @@ def cmd_stage(store_dir: Path, task: int | str, stage: int | None, files: list[s
         _append_progress(store_dir,
                       {"type": "stage", "task": task, "stage": stage, "files": footprint,
                        "at": _now()})
+    if recorded is not None:
+        added = sorted(set(footprint) - recorded)
+        print(f"task {task} footprint: " + (", ".join(f"+{f}" for f in added) or "unchanged"))
 
 
 def cmd_handle(store_dir: Path, task: int | str, role: str, agent: str) -> None:
@@ -1660,7 +1778,12 @@ def render_run_state(log: list[dict], records: list[Record],
             return "complete"
         return "in flight" if task in in_flight else "not started"
 
-    lines = ["# Run state", "", "## Stages"]
+    lines = ["# Run state", ""]
+    config = run_config(log)
+    if config:
+        lines += ["## Settings", *(f"- {key}: {config[key]}" for key in RUN_CONFIG_KEYS
+                                  if key in config), ""]
+    lines.append("## Stages")
     for stage in sorted({e.get("stage") for e in stages.values()}):
         lines.append(f"- stage {stage}:")
         lines += [f"  - task {task} ({state(task)}): {', '.join(entry.get('files', []))}"
@@ -3284,7 +3407,7 @@ def _check_note_resolvable(log: list[dict], resolve_id: str, note: str) -> None:
 # reviewers read their own report path as their prior verdict, so these
 # must not outlive the run that wrote them.
 HANDOFF_FILE_PATTERNS = ("task-*-*.md", "final-*.md", "close-*.md", "gate-*-report.md",
-                         "intent-issue.md",
+                         "*-gate-*.log", "intent-issue.md",
                          "review-*.diff",
                          # names from before `path` named every report
                          "design-review-*.md", "intent-recheck.md", "mutation-review.md")
@@ -3323,6 +3446,55 @@ def handoff_path(store_dir: Path, log: list[dict], scope: int | str, agent: str 
 def cmd_path(store_dir: Path, scope: int | str, agent: str | None, kind: str = "record",
              item: str | None = None) -> None:
     print(handoff_path(store_dir, load_progress_log(store_dir), scope, agent, kind, item))
+
+
+# Each coder's quality reviewer (the SDD skill's *Review Agents*). A coder
+# with no entry has none, and its task gets the spec review alone.
+QUALITY_REVIEWER_OF = {"python-coder": "python-quality-reviewer",
+                       "pytorch-coder": "pytorch-quality-reviewer",
+                       "rust-coder": "rust-quality-reviewer"}
+SPEC_REVIEWER = "spec-reviewer"
+CONSTRAINTS_HEADING_RE = re.compile(r"^#{1,6}\s+.*\bConstraints\b", re.M)
+
+
+def task_agents(coders: list[str]) -> list[str]:
+    """Who works on a task whose coders are `coders`: the coders, the spec
+    reviewer, and each coder's quality reviewer."""
+    reviewers = [QUALITY_REVIEWER_OF[c] for c in coders if c in QUALITY_REVIEWER_OF]
+    return list(dict.fromkeys([*coders, SPEC_REVIEWER, *reviewers]))
+
+
+def cmd_brief(store_dir: Path, task: int, intent: str | None, coders: list[str]) -> int:
+    """Build task `task`'s brief from the run's plan and spec (`run-config`)
+    and print its path, then the record and report path of everyone
+    `coders` names (`task_agents`). The intent is the one given, or the one
+    the task's last brief was built with. `task_brief.py` does the building,
+    as its own process at the repo root, and its exit status is returned
+    when it refuses."""
+    log = load_progress_log(store_dir)
+    config = run_config(log)
+    if "plan" not in config:
+        raise UsageError("no plan on record: run `run-config --plan PLAN [--spec SPEC]` first")
+    intent = intent if intent is not None else brief_inputs(log, task).get("intent")
+    if not intent:
+        raise UsageError(f"task {task} has no intent on record: pass --intent \"...\"")
+    paths = [(agent, kind, handoff_path(store_dir, log, task, agent, kind))
+             for agent in task_agents(coders) for kind in ("record", "report")]
+    repo = _store_repo(store_dir) or Path.cwd()
+    plan = repo / config["plan"]
+    command = [sys.executable, str(Path(__file__).resolve().with_name("task_brief.py")),
+               str(plan), str(task), "--intent", intent, "--store", str(store_dir.resolve())]
+    if "spec" in config:
+        command += ["--spec", str(repo / config["spec"])]
+    if plan.is_file() and CONSTRAINTS_HEADING_RE.search(plan.read_text(encoding="utf-8")):
+        command += ["--constraints-from", str(plan)]
+    built = subprocess.run(command, cwd=repo, stdout=subprocess.PIPE, text=True, errors="replace")
+    if built.returncode != 0:
+        return built.returncode
+    print(f"brief: {built.stdout.strip()}")
+    for agent, kind, path in paths:
+        print(f"{agent} {kind}: {path}")
+    return 0
 
 
 def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
@@ -5048,14 +5220,15 @@ MISSING_PROGRAM_RE = re.compile(
     r"^/bin/sh: (?:line \d+: |\d+: )?(?P<program>.+?): (?:command )?not found$", re.M)
 
 
-def _run_shell(top: Path, command: str) -> tuple[bool, str]:
+def _shell_output(top: Path, command: str) -> tuple[bool, list[str]]:
     """Run a gate command through the shell (Verify lines use `!` and
-    `&&`); it passes only on exit 0, and never when the shell found no
-    program by a name the command uses: `! rg -q x` exits 0 where `rg` is
-    only a function of the interactive shell, having searched nothing. The
-    command is the plan's own Verify or lint line, given on the
-    orchestrator's command line, so it runs with the same trust as typing
-    it in the terminal."""
+    `&&`) and return whether it passed and every line it printed. It passes
+    only on exit 0, and never when the shell found no program by a name the
+    command uses: `! rg -q x` exits 0 where `rg` is only a function of the
+    interactive shell, having searched nothing. The command is the plan's
+    own Verify line or the project's lint or test command, given on the
+    orchestrator's command line or recorded from one (`gate_commands`), so
+    it runs with the same trust as typing it in the terminal."""
     done = subprocess.run(command, shell=True, cwd=top, capture_output=True, text=True,
                           errors="replace")
     output = (done.stdout + done.stderr).strip().splitlines()
@@ -5064,18 +5237,60 @@ def _run_shell(top: Path, command: str) -> tuple[bool, str]:
         output.append(f"{', '.join(missing)}: not found by the shell that ran this command "
                       "(/bin/sh), so the command didn't run as written; name a program on "
                       "that shell's PATH")
-    return done.returncode == 0 and not missing, "\n".join(output[-GATE_EXCERPT_LINES:])
+    return done.returncode == 0 and not missing, output
 
 
-def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> int:
+def _run_shell(top: Path, command: str) -> tuple[bool, str]:
+    """`_shell_output`, keeping only the last lines printed."""
+    passed, output = _shell_output(top, command)
+    return passed, "\n".join(output[-GATE_EXCERPT_LINES:])
+
+
+# What a failing test or build usually prints where it fails, which a long
+# run can leave far above its last lines (cargo's `test x ... FAILED`,
+# pytest's `FAILED path::test` and `E   ...`, a compiler's `error:`).
+GATE_FAILURE_RE = re.compile(
+    r"\bFAILED\b|\bFAIL\b|^\s*error\b|panicked at|^E\s|Traceback \(most recent call last\)")
+GATE_FAILURE_LINES = 15
+
+
+def _failure_excerpt(output: list[str]) -> str:
+    """A failed command's excerpt: its last lines, under the first lines
+    above them that look like the failure itself."""
+    tail = output[-GATE_EXCERPT_LINES:]
+    earlier = list(dict.fromkeys(line for line in output[:-GATE_EXCERPT_LINES]
+                                 if GATE_FAILURE_RE.search(line)))[:GATE_FAILURE_LINES]
+    return "\n".join([*earlier, "[...]", *tail] if earlier else tail)
+
+
+def _gate_log_path(store_dir: Path, log: list[dict], task: int | str, kind: str) -> Path:
+    return store_dir / f"{scope_prefix(log, task)}-gate-{kind}.log"
+
+
+def _run_gate_command(store_dir: Path, log: list[dict], task: int | str, top: Path, kind: str,
+                      command: str) -> dict:
+    """Run one of the gate's commands and keep everything it printed in the
+    store: the record holds an excerpt, which a long run's failure can fall
+    outside."""
+    passed, output = _shell_output(top, command)
+    path = _gate_log_path(store_dir, log, task, kind)
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    excerpt = "\n".join(output[-GATE_EXCERPT_LINES:]) if passed else _failure_excerpt(output)
+    return {"kind": kind, "command": command, "passed": passed, "excerpt": excerpt,
+            "log": str(path)}
+
+
+def cmd_gate(store_dir: Path, task: int | str, test: str | None, lint: str | None) -> int:
     """Run labels on the staged added lines of the scope's files, then lint,
-    then the task's Verify command; write the gate record and return the
-    exit code (0 on pass, 1 on fail). A failing test is a serious local
-    finding for triage; labels and lint failures go back to the coder.
-    The store stays unlocked while lint and the tests run, since parallel
-    tasks' agents write it meanwhile."""
+    then the task's Verify command (`gate_commands` supplies either when
+    none is given); write the gate record and return the exit code (0 on
+    pass, 1 on fail). A failing test is a serious local finding for triage;
+    labels and lint failures go back to the coder. The store stays unlocked
+    while lint and the tests run, since parallel tasks' agents write it
+    meanwhile."""
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
+        test, lint = gate_commands(log, task, test, lint)
         footprint = scope_footprint(store_dir, log, task)
         if not footprint:
             raise RecordError(f"task {task!r} has no recorded footprint; record it with "
@@ -5102,9 +5317,7 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
                                       for h in hits)}]
     for kind, command in (("lint", lint), ("test", test)):
         if command:
-            passed, excerpt = _run_shell(top, command)
-            commands.append({"kind": kind, "command": command, "passed": passed,
-                             "excerpt": excerpt})
+            commands.append(_run_gate_command(store_dir, log, task, top, kind, command))
     record = _gate_record(task, tree, commands, files)
     validate_record(record)
     with store_lock(store_dir):
@@ -5113,17 +5326,20 @@ def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> i
         print(f"{command['kind']}: {'pass' if command['passed'] else 'FAIL'}  {command['command']}")
         if not command["passed"] and command["excerpt"]:
             print(command["excerpt"])
+        if not command["passed"] and command.get("log"):
+            print(f"full output: {command['log']}")
     print(f"gate: {record['status']}")
     return 0 if record["status"] == "pass" else 1
 
 
-def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: str | None,
-               light: bool = False) -> int:
+def cmd_commit(store_dir: Path, task: int | str, message: str, test: str | None,
+               lint: str | None, light: bool = False) -> int:
     """Take a ready scope from staging to a completed commit: `ready`, the
     footprint check, staging, the gate (skipped when the last passing gate
     checked these very files), `git commit` of the footprint alone, then
     `complete`. Returns 1, printing why, at the first step that stops it;
-    a commit already made is never undone."""
+    a commit already made is never undone. `gate_commands` supplies the
+    test and lint commands when none is given."""
     if not message.strip():
         raise RecordError("--message is empty: give the commit its message")
     log = load_progress_log(store_dir)
@@ -5142,6 +5358,7 @@ def cmd_commit(store_dir: Path, task: int | str, message: str, test: str, lint: 
             print(f"- {blocker}")
         print(f"{_scope_name(task)}: not committed")
         return 1
+    test, lint = gate_commands(log, task, test, lint)
     if final_fix:
         log = _log_fix_files(store_dir, task)
     footprint = scope_footprint(store_dir, log, task)
@@ -5264,7 +5481,8 @@ def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | 
                      - footprint)
     if outside:
         raise RecordError(f"task {task}'s coders changed {', '.join(outside)}, outside its "
-                          "recorded footprint: re-issue `ledger.py stage` with those files")
+                          f"recorded footprint: add them with `ledger.py stage --task {task} "
+                          "--extend`")
 
 
 def _gate_passed_on_staged(store_dir: Path, log: list[dict], task: int | str, top: Path,
@@ -5844,8 +6062,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage.add_argument("--task", required=True, type=_task_arg,
                          help="a task number, or 'final' to add files to the whole-change "
                               "gate's footprint")
-    p_stage.add_argument("--stage", type=_positive_int, help="the stage (a task number needs it)")
-    p_stage.add_argument("--files", required=True, nargs="+")
+    p_stage.add_argument("--stage", type=_positive_int,
+                         help="the stage (a task number needs it, except with --extend)")
+    p_stage.add_argument("--files", nargs="+", help="the whole footprint")
+    p_stage.add_argument("--extend", nargs="*", metavar="PATH",
+                         help="add to a task's recorded footprint: these paths, and every "
+                              "file its coders' records list as changed")
+
+    p_config = sub.add_parser("run-config", parents=[store_parent],
+                              help="print the run's settings, after recording any given: the "
+                                   "plan and spec briefs are built from, the full test suite "
+                                   "and the lint command")
+    p_config.add_argument("--plan", help="the plan file")
+    p_config.add_argument("--spec", help="the spec file the plan's §-refs point into")
+    p_config.add_argument("--test", help="the project's full test suite (the gate's test at "
+                                         "final and the close)")
+    p_config.add_argument("--lint", help="the project's lint command")
+
+    p_brief = sub.add_parser("brief", parents=[store_parent],
+                             help="build a task's brief from the run's plan and spec, and "
+                                  "print its path and its agents' record and report paths")
+    p_brief.add_argument("--task", required=True, type=_positive_int)
+    p_brief.add_argument("--intent", help="the outcome the task must produce (a rebuild "
+                                          "reuses the last one)")
+    p_brief.add_argument("--coder", nargs="+", default=[], metavar="NAME",
+                         help="the task's coder or coders; prints their paths, the spec "
+                              "reviewer's and their quality reviewers'")
 
     p_handle = sub.add_parser("handle", parents=[store_parent],
                                help="record the agent id behind a task's role, for "
@@ -5889,9 +6131,11 @@ def build_parser() -> argparse.ArgumentParser:
                             help="run labels, lint and the task's Verify command on the staged "
                                  "task files; write the gate record; exit 1 on a failure")
     p_gate.add_argument("--task", required=True, type=_task_arg)
-    p_gate.add_argument("--test", required=True,
-                        help="the task's Verify: command; passes only on exit 0")
-    p_gate.add_argument("--lint", help="the project's lint command; passes only on exit 0")
+    p_gate.add_argument("--test",
+                        help="the task's Verify: command; passes only on exit 0 (default: the "
+                             "one its brief recorded, or at final the run's full suite)")
+    p_gate.add_argument("--lint", help="the project's lint command; passes only on exit 0 "
+                                       "(default: the run's)")
 
     p_path = sub.add_parser("path", parents=[store_parent],
                             help="print a handoff file's path: a record or report for an "
@@ -5909,9 +6153,10 @@ def build_parser() -> argparse.ArgumentParser:
                                    "first step that stops it")
     p_commit.add_argument("--task", required=True, type=_task_arg)
     p_commit.add_argument("--message", required=True, help="the commit message, verbatim")
-    p_commit.add_argument("--test", required=True,
-                          help="the task's Verify: command (the full suite at final)")
-    p_commit.add_argument("--lint", help="the project's lint command")
+    p_commit.add_argument("--test",
+                          help="the task's Verify: command (default: the one its brief "
+                               "recorded, or at final the run's full suite)")
+    p_commit.add_argument("--lint", help="the project's lint command (default: the run's)")
     p_commit.add_argument("--light", action="store_true",
                           help="executing-plans' light path: no triage")
 
@@ -6121,7 +6366,11 @@ def main() -> None:
         elif args.command == "notes":
             cmd_notes(store_dir, args.task, args.deliver, args.waive, args.reason)
         elif args.command == "stage":
-            cmd_stage(store_dir, args.task, args.stage, args.files)
+            cmd_stage(store_dir, args.task, args.stage, args.files, args.extend)
+        elif args.command == "run-config":
+            cmd_run_config(store_dir, args.plan, args.spec, args.test, args.lint)
+        elif args.command == "brief":
+            sys.exit(cmd_brief(store_dir, args.task, args.intent, args.coder))
         elif args.command == "handle":
             cmd_handle(store_dir, args.task, args.role, args.agent)
         elif args.command == "snapshot":

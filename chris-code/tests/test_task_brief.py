@@ -855,6 +855,69 @@ class TestBriefNotes(TaskBriefTestCase):
         self.assertFalse(any(self.store.rglob("*brief*")))
 
 
+class TestVerifyCommand(unittest.TestCase):
+    """The one command a task's `Verify:` lines name, or None."""
+
+    def test_one_backticked_command_is_the_command(self):
+        for line in ("- [ ] Verify: `make check`", "Verify: run `make check` and see it pass",
+                     "- **Verify:** `make check`"):
+            with self.subTest(line=line):
+                self.assertEqual(task_brief.verify_command(f"### Task 2: x\n{line}\n"),
+                                 "make check")
+
+    def test_several_spans_name_no_one_command(self):
+        for entry in ("- Verify: `make check` writes `out.json`\n",
+                      "- Verify: `make check`\n- Verify: `make lint`\n"):
+            with self.subTest(entry=entry):
+                self.assertIsNone(task_brief.verify_command(entry))
+
+    def test_no_verify_line_names_none(self):
+        self.assertIsNone(task_brief.verify_command("- [ ] run `make check`\n"))
+
+    def test_a_verify_line_inside_a_code_fence_is_not_the_tasks(self):
+        entry = "```\nVerify: `rm -rf x`\n```\n- Verify: `make check`\n"
+        self.assertEqual(task_brief.verify_command(entry), "make check")
+
+
+class TestBriefInputsRecorded(TaskBriefTestCase):
+    """A built brief logs its intent and its task's Verify command, which a
+    rebuild and the task's gate read back."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan_path.write_text(_plan_with_pointer("nothing"), encoding="utf-8")
+
+    def inputs(self) -> list[dict]:
+        return [e for e in ledger.load_progress_log(self.store) if e.get("type") == "brief"]
+
+    def test_the_intent_and_the_verify_command_are_logged(self):
+        task_brief.run(self._args())
+        [entry] = self.inputs()
+        self.assertEqual((entry["task"], entry["intent"], entry["verify"]),
+                         (2, "make the thing work", "make check"))
+
+    def test_a_rebuild_with_the_same_inputs_logs_nothing_more(self):
+        task_brief.run(self._args())
+        task_brief.run(self._args())
+        self.assertEqual(len(self.inputs()), 1)
+
+    def test_a_changed_intent_or_command_is_logged_and_read_back(self):
+        task_brief.run(self._args())
+        task_brief.run(self._args(intent="a sharper intent"))
+        self.plan_path.write_text(
+            _plan_with_pointer("nothing").replace("`make check`", "`make check` or `tox`"),
+            encoding="utf-8")
+        task_brief.run(self._args(intent="a sharper intent"))
+        self.assertEqual(len(self.inputs()), 3)
+        latest = ledger.brief_inputs(ledger.load_progress_log(self.store), 2)
+        self.assertEqual((latest["intent"], latest["verify"]), ("a sharper intent", None))
+
+    def test_a_refused_brief_logs_nothing(self):
+        with self.assertRaises(task_brief.BriefValidationError):
+            task_brief.run(self._args(intent=" "))
+        self.assertEqual(self.inputs(), [])
+
+
 class TestRunEndToEnd(TaskBriefTestCase):
     def test_missing_intent_exits_nonzero_and_writes_nothing(self):
         # Acceptance criterion 1.
