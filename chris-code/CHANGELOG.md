@@ -8,6 +8,24 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-18
+
+Three things the skills asked for in prose and nothing enforced are now enforced by the ledger.
+
+### Changed
+- **An inline offer waits for your answer.** When `triage` marks a small fix round `inline`, the round does not move until your answer on who fixes it is logged with the new `ledger.py inline --task N|final|close --by coder|orchestrator --note "user ruling: ..."`. Until then triage's first line says to ask you, `baseline` refuses the round, `check` refuses a coder's fix for it, `ready` lists it, and the task is parked for its stage's batched question. The orchestrator logs its finished fix with `inline --task N --done`, which is refused unless you chose the orchestrator; a coder's fix is refused when you did. You can change your answer until the fix finishes. Before, the offer was the last line of triage's output and one sentence in the skill, and an orchestrator could dispatch the coder without asking.
+- **A run has one break-check copy and one build cache.** `ledger.py scratch` now lends the run's single copy to one quality reviewer at a time: `scratch take --task N --agent <name>` gives it to you and brings it to the working tree as it is now, and `scratch release` gives it back. A second reviewer waits, then is told who holds the copy (exit 3); a copy left unreleased with nothing running is taken over after 20 minutes. The copy is refreshed through git, which rewrites only the files that differ and stamps them as new, so a build tool rebuilds exactly what changed and never runs a stale binary. `clear` deletes the copy and the cache; a task's commit keeps them and releases that task's lease. Before, every task and reviewer had its own copy and build cache, which on a large compiled project is a full build each, so orchestrators told reviewers to build elsewhere.
+- **A `cannot_verify` item says what settles it, and only that settles it.** A spec reviewer tags each item with `needs`. `run` names a command: `gate` for the task's own `Verify:` command, which the commit gate settles with no one's action, or another command, which `ledger.py resolve <id> --run` runs and records (the result goes stale when a file of the task changes). `elsewhere` lists sites outside the task's files, which `triage` files as a task-note or a follow-up. `read` gives one claim and a line range for `claim-checker`. `check` refuses an item with no `needs`, and `resolve` refuses to close a typed item on the orchestrator's note; your ruling still settles any of them. Before, the orchestrator closed every item with a note of its own, and `claim-checker` fit only a few of them.
+- **`claim-checker` writes a record the ledger verifies.** Its answer goes to `path --task N --agent claim-checker --item <id>` as a typed record with 3 to 10 quoted lines, and `check` compares each quoted line with the file. `resolve` settles a `read` item only on a checked `holds` record. Before, it answered inline, and nothing compared its quotes with the code.
+
+### Added
+- **Break builds run under a time and memory limit.** Every command in the scratch copy goes through `ledger.py scratch run --task N --agent <name> -- <command>`, which sets the run's build cache and stops the command's whole process group when it passes a limit (exit 124 for time, 125 for memory). The defaults are 900 seconds, and 12 GB or half the machine's memory. The orchestrator changes them for the run with `scratch limits --time S --memory GB`; a reviewer can't. A break the guard stopped is reported as stopped and never rerun. Before, a break that made code loop or allocate without end ran until the machine did.
+
+### Fixed
+- **`commit` commits both sides of a rename.** A footprint that moved a file is committed with the old path deleted. Before, git reported the rename by its new path alone, the deletion stayed behind in the index, and the task didn't complete.
+- **A gate command that names a missing program fails.** The gate and `resolve --run` fail a command when the shell that runs it (`/bin/sh`) reports a program not found, whatever the command exits with. Before, `! rg -q pattern` passed without searching where `rg` existed only as a function of the interactive shell.
+- **A tests-first `n/a` entry needs no `test`.** `check` no longer raises on an `n/a` entry that names no test (only the `existing` category names one).
+
 ## [0.18.0] - 2026-11-14
 
 ### Added

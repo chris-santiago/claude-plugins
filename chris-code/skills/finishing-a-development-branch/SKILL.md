@@ -161,7 +161,7 @@ git branch -D <feature-branch>
 
 First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` and give the user its open follow-ups and landed disclosures in your summary: removing the store destroys them. `SDD_SCRIPTS` is `<this skill's base directory>/../subagent-driven-development/scripts`, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`, or the session's `--store` override.
 
-Then, for the same SDD run, clear it, which also deletes the break-check copies and build caches its reviewers left in the system temp folder (deleting the store's folder alone would leave them):
+Then, for the same SDD run, clear it, which also deletes the run's break-check copy and build cache from the system temp folder (deleting the store's folder alone would leave them):
 
 ```bash
 python3 "$SDD_SCRIPTS/ledger.py" clear --store "$STORE"
@@ -177,7 +177,7 @@ rm -rf "$(git rev-parse --show-toplevel)/.sdd"   # per-worktree: toplevel resolv
 
 If the session resolved its store with a `--store` override directory, remove that directory too — it holds the same records, progress log, briefs, and reports, and the disposable-store invariant applies to it exactly as it does to the default location.
 
-In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case. Run `clear` either way: the copies and caches live outside the worktree.
+In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case. Run `clear` either way: the copy and the cache live outside the worktree.
 
 ```bash
 GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)

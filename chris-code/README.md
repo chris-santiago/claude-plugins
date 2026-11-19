@@ -62,7 +62,7 @@ chris-code adds **fifteen dedicated agents** with frontmatter scoping. The right
 A more recent pass hardens *assurance* — what the gates actually prove:
 
 - **The conformance pair.** `spec-reviewer` (code↔spec) is joined by a spec-blind `intent-reviewer` that re-checks shipped behavior against a **frozen intent ledger** — ≤7 observable acceptance statements captured in the user's words during brainstorming. It catches the one failure no conformance gate can: a spec that itself drifted from the original ask.
-- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. Before resolving a spec reviewer's "cannot verify" item, it states a decidable claim and dispatches `claim-checker`, which reads the code and answers with verbatim quoted lines — evidence mandatory, so the grounding costs the orchestrator no context and the quotation terminates the chain. Everything else routes by its tags through `triage`.
+- **Integrator grounding.** "Do Not Trust the Report" is turned back on the orchestrator. A spec reviewer's "cannot verify" item says what would settle it, and the ledger accepts only that: the commit gate's run or a command the ledger runs and records, a note filed for text outside the task's files, or, for a claim about code, a `claim-checker` dispatch. The checker reads the code and answers with verbatim quoted lines that `ledger.py check` compares with the file, so the grounding costs the orchestrator no context and the quotation terminates the chain. The orchestrator's own note settles none of them. Everything else routes by its tags through `triage`.
 - **Honest gates.** The pipeline states plainly that more passes raise *recall*, not residual assurance: only a few axes are truly independent (a deterministic linter, a spec-blind check, and the mutation gate and quality reviewers' break check, which break the code and run the real tests), so diversity is weighted over repetition, and checklists are treated as a floor, not a ceiling.
 
 ### 4. Parallelism is a feature, not a footgun
@@ -125,13 +125,13 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | Agents | Role |
 |---|---|
 | `python-coder`, `pytorch-coder`, `rust-coder` | One coder per task (per language when it spans two), most-specific wins by scope + dependencies. |
-| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Quality review, dispatched alongside the spec reviewer: each language a task touches gets the reviewer paired with its coder. Each break-checks a sample of the task's new or changed tests in a throwaway copy. |
+| `python-quality-reviewer`, `pytorch-quality-reviewer`, `rust-quality-reviewer` | Quality review, dispatched alongside the spec reviewer: each language a task touches gets the reviewer paired with its coder. Each break-checks a sample of the task's new or changed tests in the run's one scratch copy, which the reviewers take in turn and where every command runs under a time and memory limit. |
 | `python-review-lite`, `rust-review-lite` | Whole-change idiom/lint gate (also usable standalone pre-commit) returning clean / block / escalate. |
 | `python-design-reviewer`, `rust-design-reviewer` | Senior read-only cohesion/API-design review at the verification gate; PASS/CONCERNS. |
 | `spec-reviewer`, `intent-reviewer` | Language-agnostic conformance pair: spec↔code per task, and spec-blind behavior↔intent at completion. |
 | `bug-hunter` | Adversarial edge-case test writer dispatched by `bug-hunt`; never fixes. |
 | `mutation-tester` | Polyglot mutation gate in an isolated worktree; gates the verification close on tests that don't detect changes when you choose to run it, and runs advisory on-demand. |
-| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, so the orchestrator can resolve a `cannot_verify` item without reading the code; forms no verdict. |
+| `claim-checker` | Settles one decidable factual claim about code with verbatim quoted lines, which `check` compares with the file, so a `read` `cannot_verify` item is settled without the orchestrator reading the code or ruling on it; forms no verdict. |
 
 ---
 
@@ -207,11 +207,11 @@ Backported from superpowers **v6.0.0** and adapted to chris-code's agent layer, 
 - **Pre-flight plan review.** Before Task 1, the plan is scanned once for internal conflicts, plan-mandated defects, `Cases:` rows that state no result, and `open:` rows (behavior the planner couldn't decide), raised as one batched question whose answers are written into the plan.
 - **Durable progress ledger.** Each task is committed and appended to the store's `progress.jsonl` by one `ledger.py commit` (called through `$SDD_SCRIPTS`, the skill's absolute scripts directory), which refuses a commit that doesn't match what the gate passed; a controller that loses context after compaction resumes from `ledger.py run-state --plan`, whose verdict says whether the store is fresh, this run's to resume, a close in progress, finished, or another plan's, instead of re-running finished work. TodoWrite stays the live view.
 - **Run notes.** The orchestrator's cross-task knowledge is typed notes in the same store (`ledger.py note`): notes for later tasks and standing rules that briefs carry automatically, disclosures and questions that block their owner task or the close, follow-ups, its own judgment calls, and checkpoints. Completion refuses a task with an undelivered note, and `ledger.py report` builds the completion report from the store. Every command that writes the store holds a lock on it, and `clear` won't drop open follow-ups, disclosures or questions unless you confirm the loss.
-- **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation; a quality reviewer's break check edits only its own throwaway copy), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
+- **Reviewer integrity.** Reviewers are read-only on the checkout (no tree/index/HEAD/branch mutation; a quality reviewer's break check edits only the run's scratch copy, while it holds it), treat an implementer's rationale as a claim that never downgrades a finding, and the orchestrator never coaches a reviewer to suppress or pre-rate findings.
 - **The disciplined fix loop.** Spec and quality reviewers run together and every verdict accumulates before one triage.
   - **Tags route the fix.** Reviewers tag each finding with a severity (1-5), a reach (`local`, `class` or `contract`), the rule it breaks and its sites, and `ledger.py triage` computes the step from the tags alone: S1-S2 findings are notes (fixed or skipped by the coder and never re-reviewed, or deferred to the close at contract reach), S3+ local or class findings get a patch round, and S3+ contract findings or a coder's `root cause:` concern get a holistic round, where an opus `remediating-issues` research agent writes one task-wide decision doc (a typed record `ledger.py check` verifies, with a site, a named test and an expected result for every case) and the sonnet coder implements it case by case.
   - **Two rounds, then you.** A task gets at most two patch or holistic rounds, then it parks for one batched question per stage with a recommended answer for every item, so "accept all" settles it. The orchestrator makes no trivial or non-trivial call and keeps no fix counter.
-  - **A small round can be fixed inline.** When every finding a patch, polish or ruling step sends is one site of S3 or less, and the findings are the round's whole work, triage marks the step `inline` and the orchestrator asks whether it should fix the round itself instead of dispatching the coder. The round, its re-checks and the two-round limit are unchanged.
+  - **A small round can be fixed inline.** When every finding a patch, polish or ruling step sends is one site of S3 or less, and the findings are the round's whole work, triage marks the step `inline` and the round waits for your answer on who fixes it, the orchestrator or the coder: the ledger serves the round to nobody and refuses a coder's fix for it until that answer is logged. The round, its re-checks and the two-round limit are unchanged.
   - **What a fix must show.** Each fix sweeps its finding's rule (every site as a row mapped to a hunk, with the search recorded), writes a failing test first for S3+ findings, declares behavior the brief left undefined as an `open` choice that cites a precedent, justifies any edit to a pre-existing test, and contests a finding it believes is wrong instead of fixing it: the raising reviewer answers `concede` or `hold`.
   - **Re-checks and baselines.** Re-checks go only to the reviewers `triage` names, over the fix diff and its consumers. Fixes go back to the original coder (`SendMessage`) when it's reachable, from the baseline `triage` takes and prints, and `ledger.py check` holds each finished fix to its round (`hunk_map`, `consumers_checked`, a `diagnosis` from cycle 2).
   - **One command commits.** The commit path is one command: `ledger.py commit` stops at anything that blocks the commit, stages the task's files, gates them (labels, lint and the task's `Verify:` command, each must exit 0), commits them with the orchestrator's message and appends the completion entry. `ledger.py path` names every record, report and brief.
@@ -358,7 +358,7 @@ Language-agnostic, dispatched by name from `subagent-driven-development`. Read-o
 
 | Agent | Model | Scope | Role |
 |-------|-------|-------|------|
-| `claim-checker` | haiku | one claim per dispatch | Settles one decidable factual claim about code (holds / does-not-hold / not-decidable-by-reading) with verbatim quoted lines, resolving a spec-reviewer `cannot_verify` item without the orchestrator reading the code |
+| `claim-checker` | haiku | one claim per dispatch | Settles one decidable factual claim about code (holds / does-not-hold / not-decidable-by-reading) in a record of verbatim quoted lines that `check` compares with the file, settling a spec-reviewer `read` `cannot_verify` item without the orchestrator reading the code |
 
 ### Campaign Agent
 
@@ -389,7 +389,7 @@ All agents and review skills match by `scope.extensions` and `scope.require_depe
 | `*-review` skills (standalone refactor) | **Additive** — all matching fire | `python-review` + `rust-review` |
 | `spec-reviewer`, `intent-reviewer` | **Explicit** — language-agnostic, dispatched by name | `spec-reviewer` per task; `intent-reviewer` at completion |
 | `mutation-tester` | **Explicit** — language-agnostic, dispatched by name | `mutation-tester` at completion (Step 5), in an isolated worktree |
-| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to resolve a spec reviewer's `cannot_verify` item |
+| `claim-checker` | **Explicit** — language-agnostic, dispatched by name | one decidable claim per dispatch, to settle a spec reviewer's `read` `cannot_verify` item |
 
 When additive reviewers produce conflicting findings, the more domain-specific agent/skill takes precedence.
 

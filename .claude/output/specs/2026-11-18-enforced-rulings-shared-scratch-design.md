@@ -119,7 +119,7 @@ ledger.py scratch limits  [--time SECONDS] [--memory GB]
 ```
 
 - `take`: exit 0 and the copy's path on success; exit 3 and the holder (agent, task, idle seconds) when still held after the wait. Default wait 480 seconds.
-- `run`: exit status of the command; 124 on the time limit, 125 on the memory limit; refused (exit 2) without the caller's lease.
+- `run`: exit status of the command; 124 on the time limit, 125 on the memory limit; refused with exit 126 without the caller's lease, since 1 and 2 are statuses the command itself returns.
 - `release`: idempotent.
 - `limits`: with no flag prints the run's limits; with a flag logs `{"type": "scratch_limits", "time", "memory", "at"}`.
 - Lease: `{"agent", "task", "taken_at", "last_used_at", "running_pid"}`. Idle means no live `running_pid` and `last_used_at` older than 20 minutes.
@@ -138,16 +138,17 @@ ledger.py scratch limits  [--time SECONDS] [--memory GB]
 
 ### 6.4 Claim record
 
-Path: `ledger.py path --task N --agent claim-checker --item <item id>`.
+Path: `ledger.py path --task N --agent claim-checker --item <item id>`, which is `<scope>-claim-<the item's digest>.json`.
 
 ```json
-{"agent": "claim-checker", "task": 4, "item": "<item id>",
- "verdict": "holds | does-not-hold | not-decidable-by-reading",
+{"schema": 2, "agent": "claim-checker", "role": "claim-checker", "task": 4,
+ "status": "holds | does-not-hold | not-decidable-by-reading",
+ "item": "<item id>",
  "evidence": [{"path": "src/a.rs", "line": 51, "text": "<the line, verbatim>"}],
  "because": "one sentence"}
 ```
 
-`check` requires: `item` is an open `read` item; `holds` and `does-not-hold` carry 3 to 10 evidence lines; every evidence line equals that line of that file in the working tree, ignoring trailing whitespace; `because` is non-empty. The dispatch gives the agent the claim, the path and lines, the item id and the record path, and nothing of the reviewer's reasoning.
+The verdict is the record's `status`, as every role's is. `check` requires: `item` is a `read` item of the store, and the record sits at that item's path; `holds` and `does-not-hold` carry 3 to 10 evidence lines; every evidence line quotes the item's file and equals that line of it in the working tree, ignoring the whitespace around it; `because` is non-empty. `resolve` runs the same check again, so a record written by hand settles nothing. The dispatch gives the agent the claim, the path and lines, the item id and the record path, and nothing of the reviewer's reasoning.
 
 ### 6.5 Resolve
 
@@ -210,10 +211,10 @@ Scratch:
 
 `cannot_verify`:
 - `check` refuses an untyped or under-specified entry in a new record.
-- A `gate` item never appears among `ready`'s blockers and is not open once its scope completes.
+- A `gate` item never appears among `ready`'s blockers, takes no resolution by hand, and is logged settled, with the gate's commands, when its scope completes.
 - `resolve --run` on a passing command settles the item and records exit, tail and tree; on a failing command it settles nothing; after a file of the scope changes, the item is open again.
 - Triage files an `elsewhere` item as a task-note when an unfinished task's footprint holds a site and as a follow-up otherwise, and the item is then settled.
-- A claim record with an evidence line that differs from the file is refused by `check`. `resolve` settles a `read` item only with a checked `holds` record, refuses on `does-not-hold`, and for `not-decidable-by-reading` accepts only a user ruling.
+- A claim record with an evidence line that differs from the file, quotes another file, or names a line past the file's end is refused by `check`, and again by `resolve`. `resolve` settles a `read` item only with a checked `holds` record, refuses on `does-not-hold`, and for `not-decidable-by-reading` accepts only a user ruling.
 - `resolve --note` without the user-ruling prefix is refused for every typed item and still works for an untyped item from an older record.
 
 Defects:

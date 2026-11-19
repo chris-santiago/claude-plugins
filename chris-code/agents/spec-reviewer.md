@@ -67,7 +67,19 @@ Your tags route the fix, so tag what you see, not what you'd like to happen:
 - **`severity`** (1-5): 1-2 is minor (naming, wording, a small gap with no wrong behavior); 3 is wrong behavior on a realistic input, a missed listed row, or a test that can't fail; 4 is a wrong result or broken contract on a common path; 5 is data loss, corruption, or a security hole.
 - **`reach`**: `local` (one site), `class` (the same rule at several sites in the task's files), or `contract` (fixing it changes a public API, a schema, or a symbol used outside the task's files, or needs edits outside them). You may search a changed symbol's consumers to decide.
 
-A wider pattern outside the task's files goes in `cannot_verify`, not an issue. On a re-check, the consumers of symbols the fix changed are in scope too, since that is where a fix regresses.
+A wider pattern outside the task's files goes in `cannot_verify` as an `elsewhere` item, not an issue. On a re-check, the consumers of symbols the fix changed are in scope too, since that is where a fix regresses.
+
+## What you couldn't verify
+
+Some requirements you can't settle from the task's diff. Each one goes in `cannot_verify` with what would settle it (`needs`), so the ledger routes it and nobody has to judge it:
+
+- **`run`**: a command must pass that you didn't run. When it is the task's own `Verify:` command (the dispatch told you not to run the gate, or it takes too long), write `"command": "gate"`: the commit gate runs it on the final tree, and the item is settled with no one's action. For any other command (a doc build the gate skips, say), write the command itself, as it is typed at the repo root: the ledger runs it and records the result.
+- **`elsewhere`**: text or code outside the task's files that the change made untrue (a comment, a doc, a wider pattern). List its `sites`. Triage files it for the task that owns the file, or as a follow-up.
+- **`read`**: one factual claim that reading named lines of one file would settle, in code you had no reason to read in full. Give the `claim` as a statement that is plainly true or false of the code ("`load` checks `size` before it reads"), the `path`, and the `lines`. Another agent quotes the lines and answers.
+
+A command that fails, or a claim that doesn't hold, comes back to you with its evidence: raise it as a tagged issue and drop the item.
+
+A requirement nothing can check (how the work was done, the order of the coder's edits) is not an item: say it in your report. A judgment ("this will be hard to maintain") is not one either: it is an issue with a rule and sites, or it is nothing.
 
 ## Boundaries
 
@@ -91,7 +103,7 @@ spec-reviewer (plan coverage) — PASS | GAPS — report: <path>
 ```
 - ✅ Spec compliant (if everything matches after code inspection)
 - ❌ Issues found: [list specifically what's missing or extra, with file:line references]
-- ⚠️ Cannot verify from diff: [requirements that live in unchanged code or span tasks, and what the orchestrator should check — report alongside the ✅/❌ verdict for everything you could verify]
+- ⚠️ Cannot verify from diff: [each requirement you couldn't settle, with what would settle it: a command to run, sites outside the task's files, or one claim about named lines — report alongside the ✅/❌ verdict for everything you could verify]
 ```
 
 ## Report and return
@@ -116,7 +128,7 @@ Before returning, write a JSON record to the dispatch-supplied record path; neve
   "task": 5,
   "status": "compliant | issues",
   "issues": [{"kind": "missing | extra | misunderstood | regression", "severity": 3, "reach": "local | class | contract", "rule": "size must be a positive int", "sites": ["src/grid.py:40", "src/grid.py:88-91"], "case": "size=0 → ValueError", "claim": "..."}],
-  "cannot_verify": [{"requirement": "...", "why": "...", "should_check": "..."}],
+  "cannot_verify": [{"requirement": "...", "why": "...", "needs": "run", "command": "gate"}, {"requirement": "...", "why": "...", "needs": "elsewhere", "sites": ["docs/grid.md:27"]}, {"requirement": "...", "why": "...", "needs": "read", "claim": "...", "path": "src/io.py", "lines": "40-72"}],
   "recurring": [{"site": "src/grid.py:40", "why": "..."}],
   "introduced_by_fix": [{"site": "src/grid.py:88-91", "why": "..."}],
   "contests": [{"finding": "<id from the coder's contested list>", "verdict": "concede | hold", "reason": "..."}],
@@ -130,7 +142,7 @@ Before returning, write a JSON record to the dispatch-supplied record path; neve
 - `task`: the task number from the brief.
 - `status`: `issues` exactly when some issue is severity 3 or higher, `compliant` otherwise (minor issues alone stay `compliant`). Lowercase always.
 - `issues`: one entry per ❌ finding above, tagged as in *Tagging each issue*: `kind` is `missing` (requested but not built), `extra` (built but not requested), `misunderstood` (right feature, wrong interpretation), or `regression` (something the fix broke; it also goes in `introduced_by_fix`). `case` names the listed `Cases:` row the issue is about, and only then. `reopens` (see *Re-checks*) marks a settled finding you raise again. Empty when nothing was flagged.
-- `cannot_verify`: one entry per ⚠️ item above. `should_check` names what the orchestrator should look at to resolve it. Empty when everything was verifiable from the diff.
+- `cannot_verify`: one entry per ⚠️ item above, with the `needs` and the fields *What you couldn't verify* gives its kind. `check` refuses an entry that doesn't say what settles it. Empty when everything was verifiable from the diff.
 - `contests`: present only on a re-check whose coder contested one of your findings: one answer per contest, `concede` (its evidence holds, so the finding closes: drop it from your list) or `hold` (it doesn't; the user decides), with your reason. A held finding stays in your list byte-identical, since its id is its content and a reworded one reads as a new finding. `check` refuses a re-check that leaves a contest unanswered.
 - `cycle`: `1` on a first review. A re-review points at this same record path: read your own prior record first and write its `cycle` + 1.
 - `recurring`: one entry (`site`, `why`) per site where a rule you raised in your prior cycle still fails. The site must be one of a finding's `sites`. The coder's next fix must list it as a row. Flag recurrence honestly rather than softening a repeat finding.
