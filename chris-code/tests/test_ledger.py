@@ -3236,6 +3236,13 @@ class TestFixChecks(TriageStoreTestCase):
                                     "old": "test_x", "new": "", "reason": "r"}])
         self.assertIn("doesn't touch", str(ctx.exception))
 
+    def test_an_n_a_entry_that_names_no_test_passes(self):
+        sent = self.review()
+        tree = self.snapshot()
+        self.edit()
+        self.fix(tree, sent, tests_first=[{"finding": sent[0], "n/a": "docs",
+                                           "reason": "a comment-only fix"}])
+
     def test_a_patch_finding_without_tests_first_is_refused(self):
         sent = self.review()
         tree = self.snapshot()
@@ -4563,6 +4570,23 @@ class TestGate(TriageStoreTestCase):
         code, record = self.gate(lint="false")
         self.assertEqual((code, record["status"], record["findings"]), (1, "fail", []))
 
+    def test_a_test_naming_a_missing_program_fails_though_it_exits_zero(self):
+        self.stage_fix()
+        code, record = self.gate(test="! no-such-program-xyz -q pattern .")
+        self.assertEqual((code, record["status"]), (1, "fail"))
+        [test] = [c for c in record["commands"] if c["kind"] == "test"]
+        self.assertIn("no-such-program-xyz", test["excerpt"])
+        self.assertIn("not found", test["excerpt"])
+
+    def test_a_lint_naming_a_missing_program_fails_though_it_exits_zero(self):
+        self.stage_fix()
+        code, record = self.gate(lint="no-such-lint-xyz . || true")
+        self.assertEqual((code, record["status"], record["findings"]), (1, "fail", []))
+
+    def test_a_negated_check_whose_program_exists_passes(self):
+        self.stage_fix()
+        self.assertEqual(self.gate(test="! grep -q nothing-like-this a.py")[0], 0)
+
     def test_a_failing_test_becomes_one_serious_local_finding(self):
         self.stage_fix()
         code, record = self.gate(test="exit 1")
@@ -4731,6 +4755,18 @@ class TestCommit(TriageStoreTestCase):
         self.assertEqual(code, 1)
         self.assertIn("no triage entry", out)
         self.assertEqual((self.head(), self._git("diff", "--cached", "--name-only")), (before, ""))
+
+    def test_a_renamed_file_commits_its_deletion_with_its_addition(self):
+        ledger.cmd_stage(self.store, 3, 1, ["a.py", "p.py", "q.py"])
+        (self.repo / "p.py").rename(self.repo / "q.py")
+        self.ready_to_commit()
+        code, out = self.commit()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(
+            self._git("show", "--name-status", "--no-renames", "--format=", "HEAD").split(),
+            ["M", "a.py", "D", "p.py", "A", "q.py"])
+        self.assertEqual(self._git("diff", "--cached", "--name-only"), "")
+        self.assertEqual(len(self.completes()), 1)
 
     def test_a_coder_file_outside_the_footprint_is_refused_by_name(self):
         self.ready_to_commit()

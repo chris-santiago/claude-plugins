@@ -2702,9 +2702,11 @@ def _check_fix_round(path: Path, data: dict, repo: Path | None) -> None:
                               f"{row['hunk']}, which the fix didn't change")
     _check_flagged_rows(path, data, {f["id"] for f in sent} - _left_unfixed(data))
     for test in data.get("tests_first", []):
+        if "n/a" in test:
+            continue  # no test was written: only `existing` names one
         # A deleted or renamed-away file is marked WHOLE_FILE: it holds no new test.
         lines = changed.get(test["test"].split("::")[0], set())
-        if "n/a" not in test and not lines - {WHOLE_FILE}:
+        if not lines - {WHOLE_FILE}:
             raise RecordError(f"{path}: tests_first names {test['test']}, which the fix diff "
                               "doesn't touch; write the failing test as part of the fix")
     _check_test_changes(path, data, diff)
@@ -3986,8 +3988,11 @@ def _git_paths(top: Path, *args: str) -> list[str]:
 
 
 def _staged_scope(top: Path, files: list[str]) -> list[str]:
+    """Every staged path among `files`. --no-renames: git otherwise lists a
+    detected rename by its new path alone, and a commit of the listed paths
+    would leave the old path's deletion behind in the index."""
     return sorted(_git_paths(top, "diff", "--cached", "--name-only", "-z", "--no-relative",
-                             "HEAD", "--", *files))
+                             "--no-renames", "HEAD", "--", *files))
 
 
 def scope_footprint(store_dir: Path, log: list[dict], task: int | str) -> set[str] | None:
@@ -4012,15 +4017,29 @@ def _stage_footprint(top: Path, files: list[str]) -> None:
         _git(top, "add", "-A", "--", *present)
 
 
+# The shell's own report that it found no program by a name: bash and sh
+# ("sh: line 1: rg: command not found"), dash ("sh: 1: rg: not found").
+MISSING_PROGRAM_RE = re.compile(
+    r"^\S*sh: (?:line \d+: |\d+: )?(?P<program>.+?): (?:command )?not found$", re.M)
+
+
 def _run_shell(top: Path, command: str) -> tuple[bool, str]:
     """Run a gate command through the shell (Verify lines use `!` and
-    `&&`); it passes only on exit 0. The command is the plan's own Verify
-    or lint line, given on the orchestrator's command line, so it runs
-    with the same trust as typing it in the terminal."""
+    `&&`); it passes only on exit 0, and never when the shell found no
+    program by a name the command uses: `! rg -q x` exits 0 where `rg` is
+    only a function of the interactive shell, having searched nothing. The
+    command is the plan's own Verify or lint line, given on the
+    orchestrator's command line, so it runs with the same trust as typing
+    it in the terminal."""
     done = subprocess.run(command, shell=True, cwd=top, capture_output=True, text=True,
                           errors="replace")
     output = (done.stdout + done.stderr).strip().splitlines()
-    return done.returncode == 0, "\n".join(output[-GATE_EXCERPT_LINES:])
+    missing = sorted({m["program"] for m in MISSING_PROGRAM_RE.finditer(done.stderr)})
+    if missing:
+        output.append(f"{', '.join(missing)}: not found by the shell that ran this command "
+                      "(/bin/sh), so the command didn't run as written; name a program on "
+                      "that shell's PATH")
+    return done.returncode == 0 and not missing, "\n".join(output[-GATE_EXCERPT_LINES:])
 
 
 def cmd_gate(store_dir: Path, task: int | str, test: str, lint: str | None) -> int:
