@@ -2398,7 +2398,12 @@ def _current_lease(store_dir: Path) -> dict | None:
     lease = read_lease(store_dir)
     if lease is None or lease.get("running_pid") is None or _command_running(lease):
         return lease
-    _end_orphaned_group(lease.get("command_pgid"), lease.get("command_started"))
+    # Only a group whose leader is still the recorded process is ended. Once
+    # the leader is gone the group's id can pass to another process, so
+    # members it left behind can't be told from a stranger's.
+    pgid = lease.get("command_pgid")
+    if _same_process(pgid, lease.get("command_started")):
+        _end_group(pgid)
     if lease.get("release_when_done"):
         (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
         return None
@@ -2407,22 +2412,6 @@ def _current_lease(store_dir: Path) -> dict | None:
     lease = {**lease, **dict.fromkeys(RUNNING_FIELDS)}
     _write_lease(store_dir, lease)
     return lease
-
-
-def _end_orphaned_group(pgid: object, started: object) -> None:
-    """End the command group a dead guard recorded (`pgid`, whose leader
-    started at `started`), unless that id now belongs to another process.
-
-    The system gives a group's id to no new process while the group has a
-    member. So a live process with this id and another start time means the
-    recorded group is gone and the id was handed on: nothing is ended. No
-    live process with this id means whatever the group still holds is the
-    command's own (a server its leader started and left, say)."""
-    if not isinstance(pgid, int) or isinstance(pgid, bool) or pgid <= 1:
-        return
-    now = _process_started(pgid)
-    if now is None or now == started:
-        _end_group(pgid)
 
 
 def _lease_idle_seconds(lease: dict) -> float:
@@ -2858,6 +2847,8 @@ def _stop_scratch_command(store_dir: Path) -> None:
             raise RecordError("a command is still running in the scratch copy (its guard is "
                               f"process {lease['running_pid']}) and didn't stop when asked")
         time.sleep(SCRATCH_SIGNAL_POLL_SECONDS)
+    with _scratch_lock(store_dir):
+        _current_lease(store_dir)  # a guard that died instead of stopping left its command
 
 
 def _remove_copy(top: Path, path: Path) -> None:

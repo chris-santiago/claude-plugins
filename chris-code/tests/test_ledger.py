@@ -7031,17 +7031,19 @@ class TestScratchLease(ScratchTestCase):
         self.age_lease(running_pid=os.getpid(), running_started="Thu Jan  1 00:00:00 1970",
                        command_pgid=pgid, command_started=started, last_used_at=time.time())
 
-    def test_what_a_dead_guards_command_left_running_is_ended_after_its_leader_exited(self):
+    def test_a_group_whose_leader_is_gone_is_left_alone(self):
+        # Its id may be another process's by now, so its members can't be
+        # told from a stranger's.
         self.take(3, "a")
         leader = self.orphan_group("sleep 300 & echo $! > child.pid; wait")
         started = ledger._process_started(leader.pid)
         child = self.pid_written(self.temp / "child.pid")
         leader.kill()
         leader.wait()
-        self.assertTrue(self.alive(child))
         self.dead_guard_left(leader.pid, started)
         self.take(3, "a")
-        self.assertFalse(self.alive(child))
+        self.assertIsNone(ledger.read_lease(self.store)["command_pgid"])
+        self.assertTrue(self.alive(child))
 
     def test_a_dead_guards_reused_group_id_is_never_ended(self):
         self.take(3, "a")
