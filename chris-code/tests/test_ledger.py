@@ -6698,8 +6698,17 @@ class ScratchTestCase(GitRepoTestCase):
             ledger.cmd_scratch_limits(self.store, seconds, gigabytes)
 
     def age_lease(self, **fields) -> None:
+        """Rewrite the lease as last used long ago. A `running_pid` is marked
+        as a guard marks it, with that process's start time, unless the
+        test gives another."""
+        if "running_pid" in fields:
+            fields.setdefault("running_started", ledger._process_started(fields["running_pid"]))
         lease = {**ledger.read_lease(self.store), "last_used_at": 0.0, **fields}
         ledger._write_lease(self.store, lease)
+
+    @staticmethod
+    def alive(pid: int) -> bool:
+        return ledger._process_started(pid) is not None
 
 
 class TestScratchCopy(ScratchTestCase):
@@ -6834,6 +6843,14 @@ class TestScratchCopy(ScratchTestCase):
         self.assertEqual((self.repo / "a.py").read_text(encoding="utf-8"), "x = 2\n")
         self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 2\n")
 
+    def test_a_callers_git_index_variable_does_not_reach_the_copys_first_checkout(self):
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        staged = self._git("ls-files", "-s", "a.py")
+        with mock.patch.dict(os.environ, {"GIT_INDEX_FILE": str(self.repo / ".git" / "index")}):
+            copy = self.take()
+        self.assertEqual(self._git("ls-files", "-s", "a.py"), staged)
+        self.assertEqual((copy / "a.py").read_text(encoding="utf-8"), "x = 2\n")
+
     def test_a_left_over_folder_git_no_longer_knows_is_replaced(self):
         stray = self.take()
         shutil.rmtree(stray)
@@ -6956,6 +6973,30 @@ class TestScratchLease(ScratchTestCase):
             self.take(3, "a")
         self.assertEqual(ledger.read_lease(self.store)["agent"], "a")
 
+    def test_a_dead_guards_reused_process_id_does_not_read_as_a_running_command(self):
+        ledger.ensure_store(self.store)
+        self.take(3, "a")
+        # This test's own process stands in for whatever now has the old id.
+        self.age_lease(running_pid=os.getpid(), running_started="Thu Jan  1 00:00:00 1970",
+                       last_used_at=time.time())
+        self.take(3, "a")
+        self.assertIsNone(ledger.read_lease(self.store)["running_pid"])
+        self.age_lease(running_pid=os.getpid(), running_started="Thu Jan  1 00:00:00 1970")
+        self.take(4, "b")
+        self.assertEqual(ledger.read_lease(self.store)["agent"], "b")
+
+    def test_a_commit_while_a_command_runs_releases_the_lease_when_it_ends(self):
+        self.take(3, "a")
+        self.age_lease(running_pid=os.getpid(), last_used_at=time.time())
+        ledger.release_task_scratch(self.store, 3)
+        self.assertTrue(ledger.read_lease(self.store)["release_when_done"])
+        with self.assertRaises(ledger.ScratchBusy):
+            self.take(4, "b")
+        # The command ends without its guard clearing the mark.
+        self.age_lease(running_started="Thu Jan  1 00:00:00 1970", last_used_at=time.time())
+        self.take(4, "b")
+        self.assertEqual(ledger.read_lease(self.store)["agent"], "b")
+
     def test_a_lease_file_that_cannot_be_read_holds_nothing(self):
         self.take(3, "a")
         (ledger.scratch_root(self.store) / ledger.SCRATCH_LEASE).write_text("{", encoding="utf-8")
@@ -7017,18 +7058,18 @@ class TestScratchRun(ScratchTestCase):
         self.assertEqual(code, ledger.SCRATCH_TIME_EXIT)
         child = int((copy / "child.pid").read_text())
         deadline = time.monotonic() + 5
-        while ledger._process_alive(child) and time.monotonic() < deadline:
+        while self.alive(child) and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertFalse(ledger._process_alive(child))
+        self.assertFalse(self.alive(child))
 
     def test_a_command_that_finishes_leaves_no_background_process(self):
         copy = self.take()
         self.assertEqual(self.run_in("sh", "-c", "sleep 63 & echo $! > child.pid"), 0)
         child = int((copy / "child.pid").read_text())
         deadline = time.monotonic() + 5
-        while ledger._process_alive(child) and time.monotonic() < deadline:
+        while self.alive(child) and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertFalse(ledger._process_alive(child))
+        self.assertFalse(self.alive(child))
 
     def test_a_program_that_does_not_exist_is_refused_by_name(self):
         self.take()
@@ -7090,7 +7131,7 @@ class TestScratchGuardOutlivesItsCaller(ScratchTestCase):
                 pid = self.command_pid()
                 caller.send_signal(sig)
                 self.assertEqual(caller.wait(timeout=30), ledger.SCRATCH_STOPPED_EXIT)
-                self.assertTrue(self.wait_until(lambda: not ledger._process_alive(pid)))
+                self.assertTrue(self.wait_until(lambda: not self.alive(pid)))
                 self.assertIsNone(ledger.read_lease(self.store)["running_pid"])
 
     def test_a_call_killed_outright_leaves_the_guard_to_stop_the_command_at_the_limit(self):
@@ -7099,14 +7140,40 @@ class TestScratchGuardOutlivesItsCaller(ScratchTestCase):
         pid = self.command_pid()
         caller.kill()
         caller.wait()
-        self.assertTrue(ledger._process_alive(pid))  # still running, still guarded
+        self.assertTrue(self.alive(pid))  # still running, still guarded
         with self.assertRaises(ledger.ScratchBusy):  # and the lease knows it
             self.take(4, "rust-quality-reviewer")
         with self.assertRaisesRegex(ledger.RecordError, "still running"):
             self.take()
-        self.assertTrue(self.wait_until(lambda: not ledger._process_alive(pid)))
+        self.assertTrue(self.wait_until(lambda: not self.alive(pid)))
         self.assertTrue(self.wait_until(
             lambda: ledger.read_lease(self.store)["running_pid"] is None))
+
+    def test_a_guard_killed_outright_has_its_command_ended_by_the_next_take(self):
+        caller = self.start()
+        pid = self.command_pid()
+        self.assertTrue(self.wait_until(
+            lambda: ledger.read_lease(self.store).get("command_pgid") == pid))
+        os.kill(ledger.read_lease(self.store)["running_pid"], signal.SIGKILL)
+        self.assertEqual(caller.wait(timeout=30), ledger.SCRATCH_STOPPED_EXIT)
+        self.assertTrue(self.alive(pid))  # running with no guard and no limits
+        self.take()                       # the holder's next take settles it
+        self.assertTrue(self.wait_until(lambda: not self.alive(pid)))
+        lease = ledger.read_lease(self.store)
+        self.assertEqual([lease[name] for name in ledger.RUNNING_FIELDS], [None] * 4)
+
+    def test_another_reviewer_can_take_over_once_a_killed_guards_lease_goes_idle(self):
+        caller = self.start()
+        pid = self.command_pid()
+        self.assertTrue(self.wait_until(
+            lambda: ledger.read_lease(self.store).get("command_pgid") == pid))
+        os.kill(ledger.read_lease(self.store)["running_pid"], signal.SIGKILL)
+        caller.wait(timeout=30)
+        with self.assertRaises(ledger.ScratchBusy):  # settled, but used a moment ago
+            self.take(4, "rust-quality-reviewer")
+        self.assertTrue(self.wait_until(lambda: not self.alive(pid)))
+        self.age_lease()
+        self.take(4, "rust-quality-reviewer")
 
 
 class TestScratchCLI(ScratchTestCase):

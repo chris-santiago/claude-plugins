@@ -48,7 +48,7 @@ Three parts of subagent-driven-development ask for a behavior in prose that noth
 
 **One per run.** A store has one scratch copy and one build cache, at fixed paths in the user-private temp folder. They live until the store is cleared or the branch is finished; a task's commit deletes neither.
 
-**Lease.** A reviewer takes the copy for one task before touching it. Taking refreshes the copy to the working tree as it is now and records the holder. While held, another reviewer's take waits a bounded time inside the call, then reports busy with the holder's agent, task and idle time; the reviewer calls again and never builds anywhere else. The holder releases the copy when its break check ends. The same holder may take again (a re-check), which refreshes. A lease with no command running and none for 20 minutes is idle and may be taken over. A task's commit releases a lease still held for that task, unless a command is still running in the copy.
+**Lease.** A reviewer takes the copy for one task before touching it. Taking refreshes the copy to the working tree as it is now and records the holder. While held, another reviewer's take waits a bounded time inside the call, then reports busy with the holder's agent, task and idle time; the reviewer calls again and never builds anywhere else. The holder releases the copy when its break check ends. The same holder may take again (a re-check), which refreshes. A lease with no command running and none for 20 minutes is idle and may be taken over. A task's commit releases a lease still held for that task; one with a command still running is released when that command ends.
 
 **Refresh.** The copy is brought to the current tree through git inside the copy: every edit left in it is discarded, only files that differ are rewritten, and each rewritten file gets a new modification time. Restoring a break with git inside the copy does the same. Git-ignored files in the copy (build outputs a reviewer copied in) survive a refresh.
 
@@ -121,10 +121,10 @@ ledger.py scratch limits  [--time SECONDS] [--memory GB]
 ```
 
 - `take`: exit 0 and three lines on success (the copy's path, the `scratch run` form, the run's limits); exit 3 and the holder (agent, task, idle seconds) when still held after the wait. Default wait 90 seconds, under the two minutes a tool call gets by default. A take that fails to refresh the copy gives back a lease it just took.
-- `run`: exit status of the command; 124 on the time limit, 125 on the memory limit; 143 when the call was terminated and the guard stopped the command. Exit 126 means nothing ran: no lease, an earlier command of the holder still running, or a command that can't start. It is not 1 or 2, which the command itself may return.
+- `run`: exit status of the command; 124 on the time limit, 125 on the memory limit; 143 when the call was terminated and the guard stopped the command, or when the guard itself was killed. Exit 126 means nothing ran: no lease, an earlier command of the holder still running, or a command that can't start. It is not 1 or 2, which the command itself may return.
 - `release`: a no-op for a non-holder; refused while the holder's command still runs.
 - `limits`: with no flag prints the run's limits; with a flag logs `{"type": "scratch_limits", "time", "memory", "at"}`.
-- Lease: `{"agent", "task", "taken_at", "last_used_at", "running_pid"}`. Idle means no live `running_pid` and `last_used_at` older than 20 minutes.
+- Lease: `{"agent", "task", "taken_at", "last_used_at", "running_pid", "running_started", "command_pgid", "command_started"}`, plus `release_when_done` once a task's commit found a command still running. A guard marks itself and then its command's process group, each with its start time, since a process id alone is reused. Idle means the marked guard is not running and `last_used_at` is older than 20 minutes. A mark whose guard is gone is settled by the next scratch command that reads the lease: a command still running without its guard is ended, and the mark is cleared.
 - Memory is the summed resident size of the command's process group, sampled at least once a second.
 
 ### 6.3 `cannot_verify` entry (spec reviewer record)

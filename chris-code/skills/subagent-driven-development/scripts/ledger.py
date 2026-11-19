@@ -2230,6 +2230,8 @@ SCRATCH_IDLE_SECONDS = 20 * 60
 SCRATCH_WAIT_SECONDS = 90
 SCRATCH_POLL_SECONDS = 2.0
 SCRATCH_SAMPLE_SECONDS = 1.0
+# How often a waiting `scratch run` looks for a stop signal to pass on.
+SCRATCH_SIGNAL_POLL_SECONDS = 0.2
 SCRATCH_KILL_GRACE_SECONDS = 5.0
 # Under the longest a foreground tool call may run (ten minutes), so by
 # default the guard ends a command before the call that waits for it ends.
@@ -2239,7 +2241,8 @@ SCRATCH_LIMITS_ENTRY = "scratch_limits"
 # `guard` is `run`'s own second process (`guard_scratch_command`).
 SCRATCH_ACTIONS = ("take", "run", "release", "limits", "guard")
 GUARD_STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
-# The guard was told to stop: 128 + SIGTERM, as a shell reports it.
+# The command was stopped with its guard, or its guard ended without a
+# verdict: 128 + SIGTERM, as a shell reports it.
 SCRATCH_STOPPED_EXIT = 143
 GIT_LOCATION_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
 SCRATCH_BUSY_EXIT = 3
@@ -2351,16 +2354,58 @@ def _holds(lease: dict | None, holder: dict) -> bool:
     return lease is not None and all(lease.get(k) == v for k, v in holder.items())
 
 
-def _process_alive(pid: object) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+def _process_started(pid: object) -> str | None:
+    """When the live process `pid` started, as `ps` prints it, or None when
+    no such process is running (a zombie is not). A pid alone doesn't name a
+    process for long, since the system hands a dead one's number to the
+    next; a pid and its start time do."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    listing = subprocess.run(["ps", "-o", "stat=", "-o", "lstart=", "-p", str(pid)],
+                             capture_output=True, text=True)
+    state, _, started = listing.stdout.strip().partition(" ")
+    if listing.returncode != 0 or not started.strip() or state.startswith("Z"):
+        return None
+    return started.strip()
+
+
+def _same_process(pid: object, started: object) -> bool:
+    """The process the lease recorded (`pid`, started at `started`) is
+    still running."""
+    return isinstance(started, str) and bool(started) and _process_started(pid) == started
+
+
+def _command_running(lease: dict | None) -> bool:
+    """The guard the lease marks is alive, so its command may still be
+    running in the copy."""
+    return lease is not None and _same_process(lease.get("running_pid"),
+                                               lease.get("running_started"))
+
+
+# The lease fields a guard sets while its command runs, and clears after.
+RUNNING_FIELDS = ("running_pid", "running_started", "command_pgid", "command_started")
+
+
+def _current_lease(store_dir: Path) -> dict | None:
+    """The lease as it truly stands, read under the scratch lock. A guard
+    that died without clearing its mark (killed outright, with no chance to)
+    is settled first: the command it left running has no limits any more, so
+    its group is ended, the mark is cleared, and a release the lease was
+    waiting to make is made."""
+    lease = read_lease(store_dir)
+    if lease is None or lease.get("running_pid") is None or _command_running(lease):
+        return lease
+    pgid = lease.get("command_pgid")
+    if _same_process(pgid, lease.get("command_started")):
+        _end_group(pgid)
+    if lease.get("release_when_done"):
+        (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
+        return None
+    # `last_used_at` stays: when the dead guard's holder last used the copy
+    # is what decides whether another reviewer may take it over.
+    lease = {**lease, **dict.fromkeys(RUNNING_FIELDS)}
+    _write_lease(store_dir, lease)
+    return lease
 
 
 def _lease_idle_seconds(lease: dict) -> float:
@@ -2388,7 +2433,7 @@ def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
     deadline = time.monotonic() + wait
     while True:
         with _scratch_lock(store_dir):
-            lease = read_lease(store_dir)
+            lease = _current_lease(store_dir)
             held = _holds(lease, holder)
             if held and _command_running(lease):
                 raise RecordError("a command of yours is still running in the copy (its guard "
@@ -2397,7 +2442,7 @@ def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
             if lease is None or held or _lease_expired(lease):
                 now = time.time()
                 _write_lease(store_dir, {**holder, "taken_at": now, "last_used_at": now,
-                                         "running_pid": None})
+                                         **dict.fromkeys(RUNNING_FIELDS)})
                 break
         if time.monotonic() >= deadline:
             raise ScratchBusy(f"the scratch copy is held by {lease.get('agent')} on task "
@@ -2422,28 +2467,29 @@ def refresh_scratch(repo: Path, store_dir: Path) -> Path:
     updated in place through git, which rewrites only the files that differ
     and stamps each one now: a build tool that judges freshness by file
     time then rebuilds exactly what changed. Files git ignores (build
-    outputs a reviewer copied in) are kept."""
+    outputs a reviewer copied in) are kept. Every git command here runs
+    without the caller's git location variables (`_without_git_location`)."""
     path = scratch_copy(store_dir)
     top = _toplevel(repo)
     _private_scratch_base(store_dir, create=True)
     _check_scratch_ignored(top, path)
     tree = snapshot_tree(top)
-    parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top,
+    env = _without_git_location(os.environ)
+    parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top, env=env,
                             capture_output=True, text=True).stdout.strip()
     commit = _git(top, "commit-tree", tree, *(["-p", parent] if parent else []),
-                  "-m", "scratch copy", env={**os.environ, **SCRATCH_IDENTITY}).strip()
+                  "-m", "scratch copy", env={**env, **SCRATCH_IDENTITY}).strip()
     if not path.is_symlink() and (path / ".git").is_file():
-        inside = _without_git_location(os.environ)
         try:
-            _git(path, "checkout", "--force", "--detach", "-q", commit, env=inside)
-            _git(path, "clean", "-fdq", env=inside)
+            _git(path, "checkout", "--force", "--detach", "-q", commit, env=env)
+            _git(path, "clean", "-fdq", env=env)
             return path
         except subprocess.CalledProcessError:
             pass  # a copy git can no longer update: make it again below
     _remove_copy(top, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # --force: a copy deleted by hand leaves its registration behind.
-    _git(top, "worktree", "add", "--force", "--detach", "-q", str(path), commit)
+    _git(top, "worktree", "add", "--force", "--detach", "-q", str(path), commit, env=env)
     return path
 
 
@@ -2455,7 +2501,7 @@ def release_scratch(store_dir: Path, task: int | str, agent: str) -> None:
     if not _private_scratch_base(store_dir, create=False):
         return
     with _scratch_lock(store_dir):
-        lease = read_lease(store_dir)
+        lease = _current_lease(store_dir)
         if not _holds(lease, holder):
             return
         if _command_running(lease):
@@ -2468,12 +2514,16 @@ def release_scratch(store_dir: Path, task: int | str, agent: str) -> None:
 def release_task_scratch(store_dir: Path, task: int | str) -> None:
     """Release a lease still held for `task`, whoever holds it: its
     reviewers are done once it completes. One with a command still running
-    is left to end by itself."""
+    is marked instead, and released when that command ends."""
     if not _private_scratch_base(store_dir, create=False):
         return
     with _scratch_lock(store_dir):
-        lease = read_lease(store_dir)
-        if lease is not None and lease.get("task") == str(task) and not _command_running(lease):
+        lease = _current_lease(store_dir)
+        if lease is None or lease.get("task") != str(task):
+            return
+        if _command_running(lease):
+            _write_lease(store_dir, {**lease, "release_when_done": True})
+        else:
             (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
 
 
@@ -2520,17 +2570,11 @@ def _without_git_location(env: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in env.items() if k not in GIT_LOCATION_VARS}
 
 
-def _command_running(lease: dict | None) -> bool:
-    """A guard of the lease's holder is alive, so a command of the holder
-    may still be running in the copy."""
-    return lease is not None and _process_alive(lease.get("running_pid"))
-
-
 def _holding_lease(store_dir: Path, holder: dict) -> dict:
     """The lease, when `holder` holds the copy and no command of its own is
     still running there; a RecordError otherwise. The caller holds the
     scratch lock."""
-    lease = read_lease(store_dir)
+    lease = _current_lease(store_dir)
     if not _holds(lease, holder) or not scratch_copy(store_dir).is_dir():
         raise RecordError(f"{holder['agent']} doesn't hold the scratch copy for task "
                           f"{holder['task']}: run `scratch take` first, and run nothing in the "
@@ -2541,13 +2585,41 @@ def _holding_lease(store_dir: Path, holder: dict) -> dict:
     return lease
 
 
+class _StopRequested:
+    """Whether a stop signal has arrived. The handler only notes it, and the
+    loop that waits acts on it, so no signal can land between two steps and
+    skip a cleanup."""
+
+    def __init__(self) -> None:
+        self.asked = False
+
+    def __call__(self, signum: int, frame: object) -> None:
+        self.asked = True
+
+
+@contextlib.contextmanager
+def _handling(signals: tuple[int, ...], handler: Callable) -> Iterator[None]:
+    """Install `handler` for `signals` for the block, in the main thread
+    (the only one that may); elsewhere the block runs unchanged."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    before = {sig: signal.signal(sig, handler) for sig in signals}
+    try:
+        yield
+    finally:
+        for sig, old in before.items():
+            signal.signal(sig, old)
+
+
 def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[str],
                    output: int | None = None) -> int:
     """Run one command at the root of the scratch copy for the reviewer that
     holds it, with the run's build cache set, under the run's time and
-    memory limits. Returns the command's exit status, SCRATCH_TIME_EXIT or
-    SCRATCH_MEMORY_EXIT when a limit stopped it, or SCRATCH_REFUSED_EXIT
-    when the guard could not start it.
+    memory limits. Returns the command's exit status; SCRATCH_TIME_EXIT or
+    SCRATCH_MEMORY_EXIT when a limit stopped it; SCRATCH_STOPPED_EXIT when
+    this call was told to stop, or the guard ended without a verdict; and
+    SCRATCH_REFUSED_EXIT when the guard could not start it.
 
     The guard (`guard_scratch_command`) is a process of its own, in its own
     session, and this call only waits for it. So ending this call, as a
@@ -2566,100 +2638,110 @@ def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[s
         else shutil.which(program) is not None
     if not found:
         raise RecordError(f"scratch run: can't start {program!r}: no such program")
-    guard = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "scratch", "guard", "--task", str(task),
-         "--agent", agent, "--store", str(store_dir), "--", *command],
-        # The guard must find the scratch folder this process uses.
-        env={**os.environ, "TMPDIR": tempfile.gettempdir()}, start_new_session=True,
-        stdout=output, stderr=output)
-
-    def pass_on(signum: int, frame: object) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            guard.send_signal(signal.SIGTERM)
-
-    with _handling(GUARD_STOP_SIGNALS + (signal.SIGINT,), pass_on):
-        return guard.wait()
-
-
-class _GuardStopped(BaseException):
-    """The guard was told to stop while its command ran."""
-
-
-@contextlib.contextmanager
-def _handling(signals: tuple[int, ...], handler: Callable) -> Iterator[None]:
-    """Install `handler` for `signals` for the block, in the main thread
-    (the only one that may); elsewhere the block runs unchanged."""
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    before = {sig: signal.signal(sig, handler) for sig in signals}
-    try:
-        yield
-    finally:
-        for sig, old in before.items():
-            signal.signal(sig, old)
+    stop = _StopRequested()
+    with _handling(GUARD_STOP_SIGNALS + (signal.SIGINT,), stop):
+        try:
+            guard = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "scratch", "guard", "--task",
+                 str(task), "--agent", agent, "--store", str(store_dir), "--", *command],
+                # The guard must find the scratch folder this process uses.
+                env={**os.environ, "TMPDIR": tempfile.gettempdir()}, start_new_session=True,
+                stdout=output, stderr=output)
+        except OSError as e:
+            raise RecordError(f"scratch run: can't start the guard: {e}") from e
+        passed_on = False
+        while True:
+            if stop.asked and not passed_on:
+                with contextlib.suppress(ProcessLookupError):
+                    guard.send_signal(signal.SIGTERM)
+                passed_on = True
+            try:
+                code = guard.wait(timeout=SCRATCH_SIGNAL_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    if code < 0:
+        # The guard was killed: its command is ended by the next scratch
+        # command that reads the lease, and nothing is known of its result.
+        print(f"the guard was killed (signal {-code}) before its command finished: report "
+              "this break as stopped; don't run it again", file=sys.stderr)
+        return SCRATCH_STOPPED_EXIT
+    return code
 
 
 def guard_scratch_command(store_dir: Path, task: int | str, agent: str,
                           command: list[str]) -> int:
-    """The guard's own process: mark the holder's lease as running, run the
+    """The guard's own process: mark the holder's lease as running (this
+    process, then the command's group, each with its start time), run the
     command under the run's limits, and clear the mark. Returns the status
     `run_in_scratch` reports."""
     holder = _scratch_holder(task, agent)
     seconds, gigabytes = scratch_limits(load_progress_log(store_dir))
+    me = os.getpid()
     with _scratch_lock(store_dir):
         lease = _holding_lease(store_dir, holder)
-        _write_lease(store_dir, {**lease, "last_used_at": time.time(),
-                                 "running_pid": os.getpid()})
+        _write_lease(store_dir, {**lease, "running_pid": me,
+                                 "running_started": _process_started(me),
+                                 "last_used_at": time.time()})
+
+    def mark_command(pgid: int) -> None:
+        with _scratch_lock(store_dir):
+            lease = read_lease(store_dir)
+            if _holds(lease, holder) and lease.get("running_pid") == me:
+                _write_lease(store_dir, {**lease, "command_pgid": pgid,
+                                         "command_started": _process_started(pgid)})
+
     env = _without_git_location(os.environ)
     env["CARGO_TARGET_DIR"] = str(scratch_cache(store_dir) / "cargo")
     try:
-        code, stopped = _run_guarded(command, scratch_copy(store_dir), env, seconds, gigabytes)
+        code, stopped = _run_guarded(command, scratch_copy(store_dir), env, seconds, gigabytes,
+                                     started=mark_command)
     finally:
         with _scratch_lock(store_dir):
             lease = read_lease(store_dir)
-            if _holds(lease, holder) and lease.get("running_pid") == os.getpid():
-                _write_lease(store_dir, {**lease, "last_used_at": time.time(),
-                                         "running_pid": None})
+            if _holds(lease, holder) and lease.get("running_pid") == me:
+                if lease.get("release_when_done"):
+                    (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
+                else:
+                    _write_lease(store_dir, {**lease, **dict.fromkeys(RUNNING_FIELDS),
+                                             "last_used_at": time.time()})
     if stopped:
         print(f"stopped by the guard: {stopped}. Report this break as stopped; don't run it "
               "again", file=sys.stderr)
     return code
 
 
-def _run_guarded(command: list[str], cwd: Path, env: dict, seconds: float,
-                 gigabytes: float) -> tuple[int, str | None]:
+def _run_guarded(command: list[str], cwd: Path, env: dict, seconds: float, gigabytes: float,
+                 started: Callable[[int], None] | None = None) -> tuple[int, str | None]:
     """Run `command` in its own process group and stop the whole group when
-    it passes a limit, or when this process is told to stop. Returns its
-    exit status and None, or the stop's exit code and what caused it.
-    Whatever happens, nothing of the group is left running."""
-    def stop(signum: int, frame: object) -> None:
-        for sig in GUARD_STOP_SIGNALS:  # one stop is enough: finish the cleanup
-            signal.signal(sig, signal.SIG_IGN)
-        raise _GuardStopped
-
+    it passes a limit, or when this process is told to stop. `started` is
+    called with the group's id once the command is running. Returns the
+    command's exit status and None, or the stop's exit code and what caused
+    it. Whatever happens, nothing of the group is left running."""
+    stop = _StopRequested()
     with _handling(GUARD_STOP_SIGNALS, stop):
         try:
             proc = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
         except OSError as e:
             raise RecordError(f"scratch run: can't start {command[0]!r}: {e}") from e
-        started, stopped, code = time.monotonic(), None, None
         try:
+            if started is not None:
+                started(proc.pid)
+            begun, stopped, code = time.monotonic(), None, None
             while code is None:
                 try:
                     code = proc.wait(timeout=SCRATCH_SAMPLE_SECONDS)
                 except subprocess.TimeoutExpired:
-                    used = _group_memory_gb(proc.pid)
-                    if time.monotonic() - started > seconds:
+                    if stop.asked:
+                        code, stopped = SCRATCH_STOPPED_EXIT, "the call that ran it was ended"
+                    elif time.monotonic() - begun > seconds:
                         code, stopped = SCRATCH_TIME_EXIT, (f"ran past the {seconds:g} s time "
                                                             "limit")
-                    elif used > gigabytes:
+                    elif (used := _group_memory_gb(proc.pid)) > gigabytes:
                         code, stopped = SCRATCH_MEMORY_EXIT, (f"used {used:.1f} GB, past the "
                                                               f"{gigabytes:g} GB memory limit")
-        except _GuardStopped:
-            code, stopped = SCRATCH_STOPPED_EXIT, "the call that ran it was ended"
         finally:
-            _kill_group(proc)
+            _end_group(proc.pid, reap=proc.poll)
     return code, stopped
 
 
@@ -2674,26 +2756,28 @@ def _group_memory_gb(pgid: int) -> float:
     return kilobytes / 2 ** 20
 
 
-def _kill_group(proc: subprocess.Popen) -> None:
-    """End every process left in the command's group: ask, wait, then
-    force. The command itself is reaped as it goes, since a group whose
-    leader is an unreaped zombie still counts as alive."""
+def _end_group(pgid: int, reap: Callable[[], object] | None = None) -> None:
+    """End every process left in group `pgid`: ask, wait, then force.
+    `reap` collects the group's leader when it is this process's child,
+    since a group whose leader is an unreaped zombie still counts as
+    alive."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            os.killpg(proc.pid, sig)
+            os.killpg(pgid, sig)
         except (ProcessLookupError, PermissionError):
             break  # the group is gone
         deadline = time.monotonic() + SCRATCH_KILL_GRACE_SECONDS
-        while proc.poll() is None or _group_alive(proc.pid):
-            if time.monotonic() >= deadline:
-                break
+        while _group_alive(pgid, reap) and time.monotonic() < deadline:
             time.sleep(0.05)
-        else:
+        if not _group_alive(pgid, reap):
             break
-    proc.poll()
+    if reap is not None:
+        reap()
 
 
-def _group_alive(pgid: int) -> bool:
+def _group_alive(pgid: int, reap: Callable[[], object] | None = None) -> bool:
+    if reap is not None:
+        reap()
     try:
         os.killpg(pgid, 0)
     except (ProcessLookupError, PermissionError):
@@ -2741,7 +2825,8 @@ def _remove_copy(top: Path, path: Path) -> None:
     if not path.exists():
         return
     try:
-        _git(top, "worktree", "remove", "--force", "--force", str(path))
+        _git(top, "worktree", "remove", "--force", "--force", str(path),
+             env=_without_git_location(os.environ))
     except subprocess.CalledProcessError:
         pass  # not a worktree git can validate: delete it below
     # A folder git doesn't know, a copy whose .git is gone, or one git could
@@ -5935,7 +6020,11 @@ def cmd_scratch(store_dir: Path, args: argparse.Namespace, command: list[str]) -
     run = guard_scratch_command if args.action == "guard" else run_in_scratch
     try:
         return run(store_dir, args.task, args.agent, command)
-    except RecordError as e:
+    except UsageError:
+        raise
+    except (RecordError, OSError, subprocess.SubprocessError) as e:
+        # Never 1 or 2 for a failure of the ledger's own: a reviewer would
+        # read that as its test failing.
         print(f"not run: {e}", file=sys.stderr)
         return SCRATCH_REFUSED_EXIT
 
