@@ -113,6 +113,15 @@ def _completable(store: Path, task: int | str) -> None:
         "commands": [], "findings": [], "recurring": [], "introduced_by_fix": []})
 
 
+def _coder_takes_offer(store: Path, task: int | str) -> None:
+    """Log the user's `coder` answer when the scope's round is an unanswered
+    inline offer, for tests about something other than the offer."""
+    log = ledger.load_progress_log(store)
+    if ledger._offer_awaits_answer(log, task, ledger.load_history(store)):
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_inline_answer(store, task, "coder", "user ruling: the coder fixes it")
+
+
 def _write(store: Path, name: str, data: dict) -> Path:
     path = store / name
     path.write_text(json.dumps(data), encoding="utf-8")
@@ -2628,6 +2637,10 @@ class TriageStoreTestCase(GitRepoTestCase):
                           _spec_reviewer(task=3, status=status, issues=list(issues), **extra))
 
     def coder(self, **fields) -> Path:
+        """The task's coder record. A fix cycle is written on the user's
+        `coder` answer where the round was offered inline."""
+        if fields.get("cycle", 1) >= 2:
+            _coder_takes_offer(self.store, 3)
         return self.write("task-3-python-coder.json", _coder(task=3, **fields))
 
     def fixed(self, **fields) -> Path:
@@ -2677,7 +2690,10 @@ class TestTriageCommand(TriageStoreTestCase):
         again = self.triage()
         self.assertEqual(len(self.entries()), 1)
         self.assertTrue(again.startswith(first), again)
-        self.assertIn("waiting for: the coder's finished fix", again)
+        self.assertIn("waiting for: the user's answer on who fixes this round", again)
+        _coder_takes_offer(self.store, 3)
+        self.assertIn("waiting for: the coder's finished fix", self.triage())
+        self.assertEqual(len(self.entries()), 1)
 
     def test_a_task_nobody_reviewed_is_refused(self):
         self.coder()
@@ -2827,6 +2843,7 @@ class TestTriageBaseline(TriageStoreTestCase):
                    _review_lite(task="final", status="block", findings=[_finding(), _finding(rule="r2")]))
         self.assertTrue(self.triage("final").startswith(first))
         tree = self.snapshots()[0]["tree"]
+        _coder_takes_offer(self.store, "final")
         self.write("final-python-coder.json", _coder(task="final", cycle=2, baseline=tree, **_FIX_FIELDS))
         self.assertIn("waiting for: the fix's commit", self.triage("final"))
 
@@ -2897,6 +2914,7 @@ class TestTriageBaseline(TriageStoreTestCase):
                                                       findings=[_finding()]))
                 self.write(coder, _coder(task=task, cycle=2, status="needs_context"))
                 self.triage(task)
+                _coder_takes_offer(self.store, task)
                 tree = _baseline(self.store, task)
                 (self.repo / "a.py").write_text(f"x = {prefix!r}\n", encoding="utf-8")
                 self.write(coder, _coder(task=task, cycle=2, baseline=tree, **_FIX_FIELDS))
@@ -2932,6 +2950,7 @@ class TestTriageBaseline(TriageStoreTestCase):
     def test_baseline_resolves_a_triage_taken_snapshot(self):
         self.spec(_finding())
         self.triage()
+        _coder_takes_offer(self.store, 3)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_baseline(self.store, self.snapshots()[0]["tree"], 3)
@@ -3348,6 +3367,7 @@ class TestFixChecks(TriageStoreTestCase):
     def test_baseline_prints_the_round_its_findings_and_errors_untriaged(self):
         sent = self.review()
         tree = self.snapshot()
+        _coder_takes_offer(self.store, 3)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_baseline(self.store, tree, 3)
@@ -3666,6 +3686,7 @@ class TestCloseTriage(CloseStoreTestCase):
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "ruling")
         tree = _baseline(self.store, "close")
+        _coder_takes_offer(self.store, "close")
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         _write(self.store, "close-python-coder.json", _coder(
             task="close", cycle=2, baseline=tree, changed_files=["a.py"], **_FIX_FIELDS))
@@ -4033,6 +4054,7 @@ class TestCloseRoundInFlight(CloseStoreTestCase):
                 ledger.finding_states(ledger.load_progress_log(self.store), "close").items()}
 
     def fix(self, cycle: int = 2, files: tuple[str, ...] = ("a.py",), **fields) -> None:
+        _coder_takes_offer(self.store, "close")
         for name in files:
             (self.repo / name).write_text(f"x = {cycle}\n", encoding="utf-8")
         _write(self.store, "close-python-coder.json", _coder(
@@ -4143,6 +4165,7 @@ class TestCloseRoundInFlight(CloseStoreTestCase):
         self.triage()
         self.rule("fix", s3_id)
         self.triage()
+        _coder_takes_offer(self.store, "close")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ledger.cmd_baseline(self.store, _baseline(self.store, "close"), "close")
@@ -4895,6 +4918,7 @@ class TestCommit(TriageStoreTestCase):
         self.write("final-python-review-lite.json",
                    _review_lite(task="final", status="block", findings=[_finding(sites=["lib/x.py:1"])]))
         self.triage("final")
+        _coder_takes_offer(self.store, "final")
         (self.repo / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
         self.write("final-python-coder.json", _coder(
             task="final", cycle=2, baseline=_baseline(self.store, "final"),
@@ -5152,6 +5176,7 @@ class TestHandoffInTheLoop(TriageStoreTestCase):
         """Review with one finding and triage it, so the round's snapshot is taken."""
         self.spec(_finding())
         self.triage()
+        _coder_takes_offer(self.store, 3)
         return _baseline(self.store, 3)
 
     def test_both_coders_write_the_rounds_cycle(self):
@@ -5835,9 +5860,11 @@ class TestInlineFix(TriageStoreTestCase):
     NOTE = "user ruling: fix it inline"
 
     def inline(self, task: int | str = 3, note: str = NOTE, files: tuple[str, ...] = ()) -> str:
+        """The user answers `orchestrator`, and the orchestrator logs its fix."""
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            ledger.cmd_inline(self.store, task, note, list(files))
+            ledger.cmd_inline_answer(self.store, task, "orchestrator", note)
+            ledger.cmd_inline(self.store, task, list(files))
         return out.getvalue()
 
     def edit(self, text: str = "x = 2\n") -> None:
@@ -5994,6 +6021,8 @@ class TestInlineFix(TriageStoreTestCase):
         self.spec(issue, other)
         self.triage()
         self.assertEqual((self.entries()[-1]["kind"], _baseline(self.store, 3)), ("patch", tree))
+        self.assertIn("waiting for: the user's answer", self.triage())
+        _coder_takes_offer(self.store, 3)
         self.assertIn("waiting for: the coder's finished fix", self.triage())
 
     def test_files_must_be_files(self):
@@ -6003,7 +6032,7 @@ class TestInlineFix(TriageStoreTestCase):
         (self.repo / "pkg").mkdir()
         for bad in (".", "", "pkg"):
             with self.subTest(bad=bad), self.assertRaisesRegex(ledger.RecordError, "file"):
-                ledger.cmd_inline(self.store, 3, self.NOTE, [bad])
+                self.inline(files=(bad,))
 
     def test_read_shows_the_inline_fix(self):
         self.spec(_finding())
@@ -6042,7 +6071,8 @@ class TestCloseInlineFix(CloseStoreTestCase):
         (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
         (self.repo / "test_a.py").write_text("def test_x(): pass\n", encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
-            ledger.cmd_inline(self.store, "close", "user ruling: inline", ["a.py", "test_a.py"])
+            ledger.cmd_inline_answer(self.store, "close", "orchestrator", "user ruling: inline")
+            ledger.cmd_inline(self.store, "close", ["a.py", "test_a.py"])
         self.assertIn("waiting for: the fix's commit", self.triage())
         with contextlib.redirect_stdout(io.StringIO()):
             code = ledger.cmd_commit(self.store, "close", "Name the new argument", "true", None)
@@ -6052,6 +6082,174 @@ class TestCloseInlineFix(CloseStoreTestCase):
         self.design()
         self.triage()
         self.assertEqual(self.entries()[-1]["kind"], "done")
+
+
+class TestInlineOffer(TriageStoreTestCase):
+    """A round triage marks inline waits for the user's logged answer on who
+    fixes it: nothing serves the round or accepts a fix for it before."""
+
+    def setUp(self):
+        super().setUp()
+        self.issue = _finding()
+        self.sent = [self.spec_id(self.issue)]
+
+    def offered(self) -> str:
+        self.spec(self.issue)
+        return self.triage()
+
+    def answer(self, by: str, note: str = "user ruling: as I said") -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_inline_answer(self.store, 3, by, note)
+
+    def done(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_inline(self.store, 3, [])
+
+    def baseline(self) -> None:
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_baseline(self.store, _baseline(self.store, 3), 3)
+
+    def coder_fix(self) -> Path:
+        """A complete coder fix of the round, written without asking anyone."""
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        return self.write("task-3-python-coder.json", _coder(
+            task=3, cycle=2, baseline=_baseline(self.store, 3), changed_files=["a.py"],
+            diagnosis={"root_cause": "r", "end_state": "e", "resolves_cluster": "c"},
+            hunk_map=[{"site": "a.py:1", "implements": "the guard"}], consumers_checked=[],
+            sweeps=[{"findings": self.sent, "rule": "size must be positive",
+                     "rows": [{"site": "a.py:1", "hunk": "a.py:1"}],
+                     "searched": {"command": "rg size", "result": "1 match"}}],
+            tests_first=[{"finding": i, "n/a": "docs", "reason": "r"} for i in self.sent]))
+
+    def test_the_offer_is_the_first_line_triage_prints(self):
+        first = self.offered().splitlines()[0]
+        self.assertIn("ASK THE USER FIRST", first)
+        self.assertIn("ledger.py inline --task 3 --by coder|orchestrator", first)
+
+    def test_an_unanswered_offer_is_reprinted_and_starts_no_round(self):
+        self.offered()
+        again = self.triage()
+        self.assertIn("ASK THE USER FIRST", again.splitlines()[0])
+        self.assertIn("waiting for: the user's answer on who fixes this round", again)
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_baseline_refuses_an_unanswered_offer(self):
+        self.offered()
+        with self.assertRaisesRegex(ledger.RecordError, "user's answer"):
+            self.baseline()
+
+    def test_a_coder_fix_for_an_unanswered_offer_is_refused(self):
+        self.offered()
+        with self.assertRaisesRegex(ledger.RecordError, "user's answer"):
+            ledger.cmd_check(str(self.coder_fix()))
+
+    def test_a_coder_record_on_disk_does_not_finish_an_unanswered_offer(self):
+        self.offered()
+        self.coder_fix()
+        self.assertIn("waiting for: the user's answer", self.triage())
+        self.assertEqual(len(self.entries()), 1)
+
+    def test_an_unanswered_offer_blocks_ready_and_is_listed_as_parked(self):
+        self.coder()
+        self.offered()
+        self.assertTrue(any("inline offer" in b for b in ledger.ready_blockers(self.store, 3)))
+        state = ledger.render_run_state(ledger.load_progress_log(self.store),
+                                        ledger.load_records(self.store),
+                                        ledger.load_history(self.store))
+        self.assertIn("task 3: inline offer: who fixes the patch round", state)
+
+    def test_the_coder_answer_lets_the_round_run_as_any_other(self):
+        self.offered()
+        self.answer("coder")
+        self.baseline()
+        ledger.cmd_check(str(self.coder_fix()))
+        with self.assertRaisesRegex(ledger.RecordError, "chose the coder|finished"):
+            self.done()
+        self.assertIn("a re-check from task-3-spec-reviewer", self.triage())
+
+    def test_the_orchestrator_answer_refuses_a_coders_fix_and_takes_the_inline_one(self):
+        self.offered()
+        self.answer("orchestrator")
+        self.baseline()
+        self.assertIn("waiting for: your inline fix", self.triage())
+        with self.assertRaisesRegex(ledger.RecordError, "chose the orchestrator"):
+            ledger.cmd_check(str(self.coder_fix()))
+        self.assertIn("waiting for: your inline fix", self.triage())
+        self.done()
+        self.assertIn("a re-check from task-3-spec-reviewer", self.triage())
+
+    def test_finishing_inline_without_an_answer_is_refused(self):
+        self.offered()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        with self.assertRaisesRegex(ledger.RecordError, "hasn't said"):
+            self.done()
+
+    def test_a_later_answer_replaces_an_earlier_one_until_the_fix_finishes(self):
+        self.offered()
+        self.answer("coder")
+        self.answer("orchestrator")
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.done()
+        with self.assertRaisesRegex(ledger.RecordError, "finished"):
+            self.answer("coder")
+
+    def test_an_answer_needs_the_users_words_and_a_known_fixer(self):
+        self.offered()
+        with self.assertRaisesRegex(ledger.RecordError, "user ruling"):
+            self.answer("coder", note="it looks small")
+        with self.assertRaises(ledger.UsageError):
+            self.answer("reviewer")
+
+    def test_a_round_triage_did_not_mark_takes_no_answer(self):
+        self.spec(_finding(severity=4))
+        self.assertNotIn("ASK THE USER", self.triage())
+        with self.assertRaisesRegex(ledger.RecordError, "isn't one triage marked"):
+            self.answer("orchestrator")
+        self.baseline()
+
+    def test_a_ruled_off_offer_ends_without_an_answer(self):
+        self.coder()
+        self.offered()
+        _rule(self.store, self.sent[0], "drop", "user ruling: drop it")
+        out = self.triage()
+        self.assertNotIn("the user's answer", out)
+        self.assertFalse(any("inline offer" in b for b in ledger.ready_blockers(self.store, 3)))
+
+    def test_a_round_an_earlier_release_finished_without_asking_needs_no_answer(self):
+        self.offered()
+        tree = _baseline(self.store, 3)
+        self.write("task-3-python-coder.json",
+                   _coder(task=3, cycle=2, baseline=tree, **_FIX_FIELDS))
+        ledger._append_jsonl(self.store / ledger.HISTORY_FILENAME, {
+            "record": "task-3-python-coder", "task": 3, "role": "coder", "cycle": 2,
+            "status": "done", "baseline": tree})
+        out = self.triage()
+        self.assertNotIn("the user's answer", out)
+        self.assertIn("a re-check from task-3-spec-reviewer", out)
+
+    def test_the_offer_holds_at_final_too(self):
+        self.write("final-python-review-lite.json",
+                   _review_lite(task="final", status="block", findings=[_finding()]))
+        self.assertIn("ASK THE USER FIRST", self.triage("final").splitlines()[0])
+        with self.assertRaisesRegex(ledger.RecordError, "user's answer"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ledger.cmd_baseline(self.store, _baseline(self.store, "final"), "final")
+
+
+class TestCloseInlineOffer(CloseStoreTestCase):
+    """The close's ruling round is offered the same way."""
+
+    def test_a_ruled_small_finding_waits_for_the_answer(self):
+        s2 = _finding(severity=2, rule="the docstring names the old argument")
+        self.design(s2)
+        self.triage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ledger.cmd_rule(self.store, [self.fid("close-python-design-reviewer", s2)], "fix",
+                            "user ruling: fix it")
+        self.assertIn("ASK THE USER FIRST", self.triage().splitlines()[0])
+        self.assertIn("waiting for: the user's answer", self.triage())
+        with self.assertRaisesRegex(ledger.RecordError, "hasn't said"):
+            ledger.cmd_inline(self.store, "close", ["a.py"])
 
 
 class TestScratch(GitRepoTestCase):

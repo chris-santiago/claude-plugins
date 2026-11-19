@@ -39,7 +39,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py labels <tree> [<path>...]       (takes no --store)
        python3 ledger.py rule <id>... --as fix|file|drop --note "user ruling: ..." [--store DIR]
        python3 ledger.py discard --task N|final|close [--store DIR]
-       python3 ledger.py inline --task N|final|close --note "user ruling: ..." [--files PATH...] [--store DIR]
+       python3 ledger.py inline --task N|final|close --by coder|orchestrator --note "user ruling: ..." [--store DIR]
+       python3 ledger.py inline --task N|final|close --done [--files PATH...] [--store DIR]
        python3 ledger.py scratch --task N --agent NAME [--remove] [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
@@ -264,6 +265,11 @@ DISCARD_ENTRY = "discard"
 # `inline`: the orchestrator fixed an inline-eligible round itself, on the
 # user's ruling, finishing the round as a coder's fix would.
 INLINE_ENTRY = "inline"
+# `inline --by`: the user's answer on who fixes a round triage marked
+# inline. The round moves only once one is logged.
+INLINE_RULING_ENTRY = "inline_ruling"
+INLINE_FIXERS = ("coder", "orchestrator")
+OFFER_UNANSWERED = "unanswered"
 
 PROGRESS_FILENAME = "progress.jsonl"
 # Every command that appends to or deletes from the store holds an
@@ -1228,6 +1234,10 @@ def render_store_markdown(records: list[Record], log: list[dict]) -> str:
             lines.append(f"- {_scope_name(entry.get('task'))} fixed inline from "
                          f"`{str(entry.get('baseline', ''))[:7]}` "
                          f"({', '.join(entry.get('files', []))}): {entry.get('note', '')}")
+        elif entry.get("type") == INLINE_RULING_ENTRY:
+            lines.append(f"- {_scope_name(entry.get('task'))} round from "
+                         f"`{str(entry.get('baseline', ''))[:7]}` is the {entry.get('by')}'s "
+                         f"to fix: {entry.get('note', '')}")
         else:
             lines.append(f"- unknown entry: {entry}")
     return "\n".join(lines)
@@ -1530,8 +1540,11 @@ def _close_section(log: list[dict]) -> list[str]:
     return lines
 
 
-def render_run_state(log: list[dict], records: list[Record]) -> str:
-    """Where the run stands, from the store alone: what a resume reads."""
+def render_run_state(log: list[dict], records: list[Record],
+                     history: list[dict] | None = None) -> str:
+    """Where the run stands, from the store alone: what a resume reads.
+    `history` is the check history, which tells an unanswered inline offer
+    from a round an earlier release finished without one."""
     done = set(completed_task_ids(log))
     in_flight = tasks_in_flight(log, records)
     stages = stage_map(log)
@@ -1562,7 +1575,8 @@ def render_run_state(log: list[dict], records: list[Record]) -> str:
     lines += _close_section(log)
 
     lines += ["", "## Parked (for the stage's batched question)"]
-    parked = [f"- task {task}: {item}" for task in in_flight for item in _parked_items(log, records, task)]
+    parked = [f"- task {task}: {item}" for task in in_flight
+              for item in _parked_items(log, records, task, history or [])]
     lines += parked or ["(none)"]
 
     lines += ["", "## Notes owed"]
@@ -1613,6 +1627,9 @@ def render_report(log: list[dict], records: list[Record]) -> str:
         elif e.get("type") == INLINE_ENTRY:
             rulings.append(f"- {_scope_name(e.get('task'))}: fixed inline "
                            f"({', '.join(e.get('files', []))}): {e['note']}")
+        elif e.get("type") == INLINE_RULING_ENTRY:
+            rulings.append(f"- {_scope_name(e.get('task'))}: a small round is the "
+                           f"{e.get('by')}'s to fix: {e['note']}")
     lines += rulings or ["(none)"]
 
     lines += ["", "## Follow-ups"]
@@ -1656,11 +1673,16 @@ def render_report(log: list[dict], records: list[Record]) -> str:
     return "\n".join(lines)
 
 
-def _parked_items(log: list[dict], records: list[Record], task: int) -> list[str]:
-    """What waits on the user for `task`: an escalation, held findings, and
-    open behavior choices nobody has answered."""
+def _parked_items(log: list[dict], records: list[Record], task: int,
+                  history: list[dict]) -> list[str]:
+    """What waits on the user for `task`: an unanswered inline offer, an
+    escalation, held findings, and open behavior choices nobody has
+    answered."""
     items = []
     entry = latest_triage(log, task)
+    if _offer_awaits_answer(log, task, history):
+        items.append(f"inline offer: who fixes the {entry['kind']} round, you or the coder "
+                     f"({_offer_command(task)})")
     states = finding_states(log, task)
     waiting = sorted(fid for fid, s in states.items() if s.get("state") == "waiting")
     held = sorted(fid for fid, s in states.items() if s.get("state") == "held")
@@ -1688,7 +1710,8 @@ def cmd_run_state(store_dir: Path, plan: str | None = None) -> None:
     verdict, action = store_verdict(store_dir, plan)
     print(f"Verdict: {verdict}")
     print(f"Next: {action}")
-    print(render_run_state(load_progress_log(store_dir), load_records(store_dir)))
+    print(render_run_state(load_progress_log(store_dir), load_records(store_dir),
+                           load_history(store_dir)))
 
 
 def cmd_report(store_dir: Path) -> None:
@@ -1867,6 +1890,9 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
             blockers.append("no triage entry yet (run `ledger.py triage`)")
         elif entry["kind"] != "done":
             blockers.append(f"the last triage step is {entry['kind']}, not done")
+        if _offer_awaits_answer(log, task, load_history(store_dir)):
+            blockers.append("an inline offer awaits the user's answer on who fixes the round "
+                            f"({_offer_command(task)})")
         states = finding_states(log, task)
         held = sorted(fid for fid, s in states.items() if s.get("state") in ("held", "waiting"))
         if held:
@@ -2378,6 +2404,12 @@ def cmd_baseline(store_dir: Path, tree: str, task: int | str) -> None:
     rewritten since)."""
     log = load_progress_log(store_dir)
     entry = fix_round(log, tree, task)
+    current = _round_baseline(log, task)
+    if current is not None and current["tree"] == tree and _offer_state(
+            log, task, current, load_history(store_dir)) == OFFER_UNANSWERED:
+        raise RecordError(f"{_scope_name(task)}'s round waits for the user's answer on who "
+                          f"fixes it: the orchestrator asks, then logs it with "
+                          f"{_offer_command(task)}")
     states = finding_states(log, task)
     print(f"round: {entry['kind']}")
     cycle = find_baseline(log, tree, task).get("fix_cycle")
@@ -2646,6 +2678,7 @@ def check_record(path: Path) -> dict:
         _check_fix_baseline(path, data)
         _check_shapes_listed_once(path, data)
         if _is_store(path.parent):
+            _check_fix_is_the_coders(path, data)
             _check_deferrals_outside_footprint(path, data)
             repo = _store_repo(path.parent)
             if repo is not None:
@@ -3024,6 +3057,26 @@ def _check_fix_baseline(path: Path, data: dict) -> None:
         raise RecordError(f"{path}: baseline {baseline} already started cycle {reused[0]}; "
                           "each fix starts from its own snapshot, so this fix needs a new "
                           "`snapshot` (return needs_context naming it)")
+
+
+def _check_fix_is_the_coders(path: Path, data: dict) -> None:
+    """A coder's fix for a round triage marked inline is accepted only once
+    the user has said the coder fixes it."""
+    if data["cycle"] < 2 or data["status"] not in WORKED_STATUSES:
+        return
+    log, task = load_progress_log(path.parent), data["task"]
+    baseline = _round_baseline(log, task)
+    if baseline is None or baseline["tree"] != data.get("baseline") \
+            or data["cycle"] < _due_cycle(baseline):
+        return
+    offer = _offer_state(log, task, baseline, load_history(path.parent))
+    if offer == OFFER_UNANSWERED:
+        raise RecordError(f"{path}: this round waits for the user's answer on who fixes it, "
+                          f"which the orchestrator logs with {_offer_command(task)}; return "
+                          "needs_context naming this")
+    if offer == "orchestrator":
+        raise RecordError(f"{path}: the user chose the orchestrator to fix this round, so no "
+                          "coder's fix is accepted for it; return needs_context naming this")
 
 
 def _check_shapes_listed_once(path: Path, data: dict) -> None:
@@ -3605,7 +3658,9 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
                         "fix_cycle": fix_cycle}
             _append_progress(store_dir, snapshot)
         footprint = scope_footprint(store_dir, load_progress_log(store_dir), task)
-    print(_render_triage(entry, filed_notes, states, snapshot, footprint))
+    # A round just marked inline has no answer yet.
+    waits = [OFFER_ANSWER_WAIT] if entry.get("inline") and snapshot is not None else []
+    print(_render_triage(entry, filed_notes, states, snapshot, footprint, waits))
 
 
 def _finding_entry(task: int | str, change: dict, states: dict[str, dict],
@@ -3700,6 +3755,10 @@ def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
     if any(e.get("baseline") == baseline["tree"] and (e.get("cycle") or 0) >= due
            for e in _inline_entries(log, task)):
         return False
+    if _offer_state(log, task, baseline, load_history(store_dir)) in (OFFER_UNANSWERED,
+                                                                     "orchestrator"):
+        # No coder record finishes a round the user hasn't given the coder.
+        return True
     scope = scope_prefix(log, task)
     states = [r.data for r in _scope_records(store_dir, scope).coders]
     states += [e for e in load_history(store_dir)
@@ -3708,7 +3767,57 @@ def _fix_is_open(store_dir: Path, log: list[dict], task: int | str,
                    and (s.get("cycle") or 0) >= due for s in states)
 
 
+def _inline_ruling(log: list[dict], task: int | str, baseline: dict) -> dict | None:
+    """The user's latest answer on who fixes the round from `baseline`. The
+    cycle is part of the key: a round that changed no code leaves the next
+    round the same tree."""
+    due = _due_cycle(baseline)
+    answers = [e for e in log if e.get("type") == INLINE_RULING_ENTRY and e.get("task") == task
+               and e.get("baseline") == baseline["tree"] and e.get("cycle") == due]
+    return answers[-1] if answers else None
+
+
+def _offer_state(log: list[dict], task: int | str, baseline: dict | None,
+                 history: list[dict]) -> str | None:
+    """Where the scope's latest round stands as an inline offer: None when
+    triage didn't mark it inline, else who the user said fixes it (`coder`
+    or `orchestrator`), or OFFER_UNANSWERED. Only a fix that passed `check`
+    (the history) stands in for an answer, which is a round an earlier
+    release finished without asking: a coder record merely on disk
+    doesn't, since `check` refuses one for an unanswered offer."""
+    latest = latest_triage(log, task)
+    if baseline is None or latest is None or not latest.get("inline"):
+        return None
+    ruling = _inline_ruling(log, task, baseline)
+    if ruling is not None:
+        return ruling.get("by")
+    due, scope = _due_cycle(baseline), scope_prefix(log, task)
+    finished = any(e.get("role") == "coder" and _scope(str(e.get("record"))) == scope
+                   and e.get("status") in DIAGNOSIS_STATUSES
+                   and e.get("baseline") == baseline["tree"] and (e.get("cycle") or 0) >= due
+                   for e in history)
+    return None if finished else OFFER_UNANSWERED
+
+
+def _offer_awaits_answer(log: list[dict], task: int | str, history: list[dict]) -> bool:
+    """The scope's latest round is an inline offer the user hasn't answered
+    or ruled off."""
+    latest = latest_triage(log, task)
+    return latest is not None and not _round_ruled_off(latest, finding_states(log, task)) \
+        and _offer_state(log, task, _round_baseline(log, task), history) == OFFER_UNANSWERED
+
+
+def _offer_command(task: int | str) -> str:
+    return (f"`ledger.py inline --task {task} --by coder|orchestrator "
+            f"--note \"{RULING_PREFIX} <their words>\"`")
+
+
 CODER_FIX_WAIT = "the coder's finished fix"
+OFFER_ANSWER_WAIT = "the user's answer on who fixes this round"
+
+
+def _inline_fix_wait(task: int | str) -> str:
+    return f"your inline fix (`ledger.py inline --task {task} --done`)"
 
 
 def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict | None,
@@ -3727,7 +3836,10 @@ def _round_waits(store_dir: Path, log: list[dict], task: int | str, latest: dict
         return []
     baseline = _round_baseline(log, task)
     if baseline is not None and _fix_is_open(store_dir, log, task, baseline):
-        return [CODER_FIX_WAIT]
+        offer = _offer_state(log, task, baseline, load_history(store_dir))
+        if offer == OFFER_UNANSWERED:
+            return [OFFER_ANSWER_WAIT]
+        return [_inline_fix_wait(task) if offer == "orchestrator" else CODER_FIX_WAIT]
     if baseline is not None and task in PATH_SCOPES and not _fix_landed(log, task):
         return [f"the fix's commit (`ledger.py commit --task {task}`)"]
     stems = {*triage_rules.unchecked(states, versions),
@@ -3810,30 +3922,68 @@ def cmd_discard(store_dir: Path, task: int | str) -> None:
           f"`triage --task {task}`")
 
 
-def cmd_inline(store_dir: Path, task: int | str, note: str, files: list[str]) -> None:
-    """Log that the orchestrator fixed the scope's latest round itself, on
-    the user's ruling, in place of a coder: only a round triage marked
+def _open_offer(store_dir: Path, log: list[dict], task: int | str) -> dict:
+    """The baseline of the scope's latest round, when triage marked that
+    round inline and its fix is still open; refused otherwise."""
+    latest = latest_triage(log, task)
+    baseline = _round_baseline(log, task)
+    if latest is None or not latest.get("inline") or baseline is None \
+            or _store_repo(store_dir) is None:
+        raise RecordError(f"{_scope_name(task)}'s latest step isn't one triage marked "
+                          "inline: dispatch the coder")
+    if _round_ruled_off(latest, finding_states(log, task)):
+        raise RecordError(f"the user ruled {_scope_name(task)}'s round off: nothing to fix")
+    if not _fix_is_open(store_dir, log, task, baseline):
+        raise RecordError(f"{_scope_name(task)}'s round is already finished: run "
+                          f"`triage --task {task}`")
+    return baseline
+
+
+def cmd_inline_answer(store_dir: Path, task: int | str, by: str, note: str) -> None:
+    """Log the user's answer on who fixes the scope's inline-marked round.
+    Until one is logged the round doesn't move; a later answer replaces an
+    earlier one while the fix is open."""
+    if by not in INLINE_FIXERS:
+        raise UsageError(f"--by {by!r}: one of {', '.join(INLINE_FIXERS)}")
+    if not note.lower().startswith(RULING_PREFIX):
+        raise RecordError(f"who fixes the round is the user's choice: --note "
+                          f"\"{RULING_PREFIX} <their words>\"")
+    with store_lock(store_dir):
+        log = load_progress_log(store_dir)
+        baseline = _open_offer(store_dir, log, task)
+        _append_progress(store_dir, {"type": INLINE_RULING_ENTRY, "task": task,
+                                     "baseline": baseline["tree"],
+                                     "cycle": _due_cycle(baseline), "by": by, "note": note,
+                                     "at": _now()})
+    if by == "coder":
+        print(f"{_scope_name(task)}: the coder fixes this round; dispatch it with the step "
+              f"`triage --task {task}` prints")
+    else:
+        print(f"{_scope_name(task)}: you fix this round; fix every finding `ledger.py baseline "
+              f"{baseline['tree']} --task {task}` lists, then run `ledger.py inline --task "
+              f"{task} --done`")
+
+
+def cmd_inline(store_dir: Path, task: int | str, files: list[str]) -> None:
+    """Log that the orchestrator fixed the scope's latest round itself, as
+    the user answered, in place of a coder: only a round triage marked
     inline, still open, with changes since its baseline. It finishes the
     round as a coder's finished fix would; the commit (at `final` and the
     close) and the re-checks follow as for any fix. `files` are changed
     files outside the scope's footprint, which only `final` and the close
     take: a task's footprint grows by `stage`, as it does for a coder."""
-    if not note.lower().startswith(RULING_PREFIX):
-        raise RecordError(f"fixing inline is the user's choice: --note \"{RULING_PREFIX} "
-                          "<their words>\"")
     with store_lock(store_dir):
         log = load_progress_log(store_dir)
-        latest = latest_triage(log, task)
-        baseline = _round_baseline(log, task)
+        baseline = _open_offer(store_dir, log, task)
         top = _store_repo(store_dir)
-        if latest is None or not latest.get("inline") or baseline is None or top is None:
-            raise RecordError(f"{_scope_name(task)}'s latest step isn't one triage marked "
-                              "inline: dispatch the coder")
-        if _round_ruled_off(latest, finding_states(log, task)):
-            raise RecordError(f"the user ruled {_scope_name(task)}'s round off: nothing to fix")
-        if not _fix_is_open(store_dir, log, task, baseline):
-            raise RecordError(f"{_scope_name(task)}'s round is already finished: run "
-                              f"`triage --task {task}`")
+        ruling = _inline_ruling(log, task, baseline)
+        if ruling is None:
+            raise RecordError(f"the user hasn't said who fixes {_scope_name(task)}'s round: ask, "
+                              f"then log the answer with {_offer_command(task)}")
+        if ruling.get("by") != "orchestrator":
+            raise RecordError(f"the user chose the coder to fix {_scope_name(task)}'s round: "
+                              "dispatch it")
+        note = ruling.get("note", "")
         footprint = scope_footprint(store_dir, log, task) or set()
         named = {_normalize_path(f) for f in files if f.strip()}
         if not all(f.strip() for f in files) or any(f == "." or (top / f).is_dir() for f in named):
@@ -3931,8 +4081,14 @@ def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
                    waits: list[str] = ()) -> str:
     """A triage entry as triage prints it. A reprint may show an entry an
     earlier release logged, so every field but the kind is optional."""
-    lines = [f"{_scope_name(entry['task'])} triage: {entry['kind']} "
-             f"(round {entry.get('round', 0)}, recheck {entry.get('recheck', 'none')})"]
+    lines = []
+    if OFFER_ANSWER_WAIT in waits:
+        lines.append(f"ASK THE USER FIRST who fixes this round, you or the coder (every finding "
+                     f"below is one site of S3 or less), then log the answer: "
+                     f"{_offer_command(entry['task'])}. Until then `baseline` and the coder's "
+                     "`check` refuse this round.")
+    lines.append(f"{_scope_name(entry['task'])} triage: {entry['kind']} "
+                 f"(round {entry.get('round', 0)}, recheck {entry.get('recheck', 'none')})")
     if baseline is not None:
         lines.append(f"Fix baseline: {baseline['tree']}")
         lines.append(f"Task files: {' '.join(sorted(footprint or ()))}")
@@ -3941,10 +4097,9 @@ def _render_triage(entry: dict, filed: list[str], states: dict[str, dict],
                      f"({finding['source']})")
     for cid in entry.get("root_causes", []):
         lines.append(f"  [{cid}] holistic: root cause")
-    if entry.get("inline") and (not waits or waits == [CODER_FIX_WAIT]):
-        lines.append("inline: every finding is one site of S3 or less: ask the user whether you "
-                     "fix it yourself (then `ledger.py inline --task "
-                     f"{entry['task']} --note \"user ruling: ...\"`) or dispatch the coder")
+    if waits == [_inline_fix_wait(entry["task"])]:
+        lines.append("inline: the user chose you to fix this round: fix every finding above, "
+                     f"then run `ledger.py inline --task {entry['task']} --done`")
     for label, key in (("held", "held"), ("waiting for a ruling", "waiting")):
         for fid in entry.get(key, []):
             data = states.get(fid, {}).get("data") or {}
@@ -4903,11 +5058,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_scratch.add_argument("--remove", action="store_true")
 
     p_inline = sub.add_parser("inline", parents=[store_parent],
-                               help="log that you fixed the scope's inline-eligible round "
-                                    "yourself, on the user's ruling; it finishes the round as "
-                                    "a coder's fix would")
+                               help="--by: log the user's answer on who fixes the scope's "
+                                    "inline-marked round, which waits for it; --done: log "
+                                    "that you fixed it yourself, as they answered, which "
+                                    "finishes the round as a coder's fix would")
     p_inline.add_argument("--task", required=True, type=_task_arg)
-    p_inline.add_argument("--note", required=True, help="\"user ruling: <their words>\"")
+    inline_step = p_inline.add_mutually_exclusive_group(required=True)
+    inline_step.add_argument("--by", choices=INLINE_FIXERS,
+                             help="who the user said fixes the round (with --note)")
+    inline_step.add_argument("--done", action="store_true",
+                             help="you finished the fix the user gave you")
+    p_inline.add_argument("--note", help="with --by: \"user ruling: <their words>\"")
     p_inline.add_argument("--files", nargs="*", default=[],
                           help="files you changed outside the scope's footprint (final and "
                                "the close only; a task stages them first)")
@@ -5058,8 +5219,12 @@ def main() -> None:
             cmd_rule(store_dir, args.ids, args.verb, args.note)
         elif args.command == "discard":
             cmd_discard(store_dir, args.task)
+        elif args.command == "inline" and args.by:
+            if args.files:
+                raise UsageError("--files goes with --done: it names what your fix changed")
+            cmd_inline_answer(store_dir, args.task, args.by, args.note or "")
         elif args.command == "inline":
-            cmd_inline(store_dir, args.task, args.note, args.files)
+            cmd_inline(store_dir, args.task, args.files)
         elif args.command == "resolve":
             cmd_resolve(store_dir, args.id, args.note)
         elif args.command == "clear":
