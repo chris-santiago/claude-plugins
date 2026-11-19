@@ -41,7 +41,9 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py discard --task N|final|close [--store DIR]
        python3 ledger.py inline --task N|final|close --by coder|orchestrator --note "user ruling: ..." [--store DIR]
        python3 ledger.py inline --task N|final|close --done [--files PATH...] [--store DIR]
-       python3 ledger.py scratch --task N --agent NAME [--remove] [--store DIR]
+       python3 ledger.py scratch take|release --task N --agent NAME [--store DIR]
+       python3 ledger.py scratch run --task N --agent NAME [--store DIR] -- COMMAND...
+       python3 ledger.py scratch limits [--time SECONDS] [--memory GB] [--store DIR]
        python3 ledger.py resolve <id> [--note "..."] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
@@ -81,10 +83,12 @@ import os
 import posixpath
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -2053,6 +2057,25 @@ def diff_trees(repo: Path, base_tree: str, tree: str,
 
 SCRATCH_ROOT = "sdd-scratch"
 SCRATCH_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+SCRATCH_LEASE = "lease.json"
+SCRATCH_LOCK = ".lock"
+# A lease nobody used for this long, with no command of its holder running,
+# is a reviewer that ended without releasing: the next one takes it over.
+SCRATCH_IDLE_SECONDS = 20 * 60
+# How long `take` waits for another holder: under a tool call's time limit.
+SCRATCH_WAIT_SECONDS = 480
+SCRATCH_POLL_SECONDS = 2.0
+SCRATCH_SAMPLE_SECONDS = 1.0
+SCRATCH_KILL_GRACE_SECONDS = 5.0
+SCRATCH_TIME_LIMIT = 900
+SCRATCH_MEMORY_GB = 12.0
+SCRATCH_LIMITS_ENTRY = "scratch_limits"
+SCRATCH_ACTIONS = ("take", "run", "release", "limits")
+SCRATCH_BUSY_EXIT = 3
+# `run` refused to start the command: not a status the command returned.
+SCRATCH_REFUSED_EXIT = 126
+SCRATCH_TIME_EXIT = 124
+SCRATCH_MEMORY_EXIT = 125
 
 
 # The scratch commit is internal plumbing: it must not depend on (or carry)
@@ -2062,12 +2085,16 @@ SCRATCH_IDENTITY = {"GIT_AUTHOR_NAME": "ledger.py scratch", "GIT_AUTHOR_EMAIL": 
                     "GIT_COMMITTER_EMAIL": "scratch@ledger"}
 
 
+class ScratchBusy(RecordError):
+    """Another reviewer holds the run's scratch copy."""
+
+
 def scratch_root(store_dir: Path) -> Path:
-    """Where the store's scratch copies and build caches live: the system
-    temp folder, in a folder private to this user (`_private_scratch_base`),
-    one folder per store. Never the store itself, which sits in the repo,
-    often inside a synced folder, where a build cache of tens of gigabytes
-    would be synced too."""
+    """Where the store's scratch copy and build cache live: the system temp
+    folder, in a folder private to this user (`_private_scratch_base`), one
+    folder per store. Never the store itself, which sits in the repo, often
+    inside a synced folder, where a build cache of tens of gigabytes would
+    be synced too."""
     resolved = str(store_dir.resolve())
     key = hashlib.sha256(resolved.encode()).hexdigest()[:12]
     base = Path(tempfile.gettempdir()) / f"{SCRATCH_ROOT}-{os.getuid()}"
@@ -2096,37 +2123,124 @@ def _private_scratch_base(store_dir: Path, create: bool) -> bool:
     return True
 
 
-def _scratch_dir(store_dir: Path, task: int | str, agent: str) -> Path:
-    """One folder per task and reviewer, holding its copy and its cache:
-    the script names it, so a reviewer can't start a new one each round."""
+def scratch_copy(store_dir: Path) -> Path:
+    """The run's one scratch copy. Its path never changes, so a build tool's
+    cache stays valid from one task's break check to the next."""
+    return scratch_root(store_dir) / "copy"
+
+
+def scratch_cache(store_dir: Path) -> Path:
+    """The run's one build cache, beside the copy and never inside it or the
+    checkout: a build of the copy into the checkout's own build folder
+    leaves a broken binary there that the build tool treats as fresh."""
+    return scratch_root(store_dir) / "cache"
+
+
+def _scratch_holder(task: int | str, agent: str) -> dict:
+    """Who is asking for the copy, refusing a name that isn't a plain one."""
     for label, value in (("task", str(task)), ("agent", agent)):
         if not SCRATCH_NAME_RE.fullmatch(value):
             raise RecordError(f"scratch {label} must be letters, digits, '.', '_' or '-', not "
-                              f"starting with a symbol: got {value!r}")
-    return scratch_root(store_dir) / f"task-{task}" / agent
+                              f"{value!r}")
+    return {"agent": agent, "task": str(task)}
 
 
-def scratch_copy(store_dir: Path, task: int | str, agent: str) -> Path:
-    return _scratch_dir(store_dir, task, agent) / "copy"
+@contextlib.contextmanager
+def _scratch_lock(store_dir: Path) -> Iterator[None]:
+    """Hold the scratch folder's lock for one read-and-write of the lease.
+    Its own lock, not the store's: a copy is taken before some stores exist.
+    The lease itself outlives the lock, since its holder is a reviewer that
+    runs many separate commands."""
+    _private_scratch_base(store_dir, create=True)
+    root = scratch_root(store_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / SCRATCH_LOCK).open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def scratch_target(store_dir: Path, task: int | str, agent: str) -> Path:
-    """The copy's own cargo target directory. It outlives the copy, so a
-    re-check rebuilds incrementally, until its task completes; it is never
-    shared, since cargo judges a path dependency fresh by mtime and could
-    run another copy's build."""
-    return _scratch_dir(store_dir, task, agent) / "target"
+def read_lease(store_dir: Path) -> dict | None:
+    """Who holds the scratch copy, or None. A lease file that can't be read
+    is no lease: its writer died mid-write, holding nothing."""
+    try:
+        lease = json.loads((scratch_root(store_dir) / SCRATCH_LEASE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return lease if isinstance(lease, dict) else None
 
 
-def make_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> Path:
-    """A throwaway worktree holding the working tree as it is now,
-    uncommitted edits and new files included, for a reviewer to break code
-    in. It replaces any copy left by the same reviewer on the same task.
-    The checkout's working tree, index and HEAD are never touched; the copy
+def _write_lease(store_dir: Path, lease: dict) -> None:
+    _write_json(scratch_root(store_dir) / SCRATCH_LEASE, lease)
+
+
+def _holds(lease: dict | None, holder: dict) -> bool:
+    return lease is not None and all(lease.get(k) == v for k, v in holder.items())
+
+
+def _process_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _lease_idle_seconds(lease: dict) -> float:
+    last = lease.get("last_used_at")
+    return time.time() - last if isinstance(last, (int, float)) else float("inf")
+
+
+def _lease_expired(lease: dict) -> bool:
+    """Its holder ended without releasing: no command of it is running and
+    none ran for SCRATCH_IDLE_SECONDS. A long build never expires."""
+    return not _process_alive(lease.get("running_pid")) \
+        and _lease_idle_seconds(lease) > SCRATCH_IDLE_SECONDS
+
+
+def take_scratch(repo: Path, store_dir: Path, task: int | str, agent: str,
+                 wait: float = SCRATCH_WAIT_SECONDS) -> Path:
+    """Give the run's scratch copy to one reviewer for one task and bring it
+    to the working tree as it is now. While another reviewer holds it, wait
+    up to `wait` seconds, then raise ScratchBusy naming the holder. The same
+    holder may take it again (a re-check), and a lease its holder abandoned
+    (`_lease_expired`) is taken over."""
+    holder = _scratch_holder(task, agent)
+    deadline = time.monotonic() + wait
+    while True:
+        with _scratch_lock(store_dir):
+            lease = read_lease(store_dir)
+            if lease is None or _holds(lease, holder) or _lease_expired(lease):
+                now = time.time()
+                _write_lease(store_dir, {**holder, "taken_at": now, "last_used_at": now,
+                                         "running_pid": None})
+                break
+        if time.monotonic() >= deadline:
+            raise ScratchBusy(f"the scratch copy is held by {lease.get('agent')} on task "
+                              f"{lease.get('task')} (idle {int(_lease_idle_seconds(lease))}s); "
+                              "call `scratch take` again, and build nowhere else")
+        time.sleep(min(SCRATCH_POLL_SECONDS, max(deadline - time.monotonic(), 0.01)))
+    return refresh_scratch(repo, store_dir)
+
+
+def refresh_scratch(repo: Path, store_dir: Path) -> Path:
+    """Bring the scratch copy to the working tree as it is now, uncommitted
+    edits and new files included, discarding every edit left in the copy.
+    The checkout's working tree, index and HEAD are never touched: the copy
     is a detached worktree of a commit made from snapshot_tree, outside the
     repo (`scratch_root`), or ignored by git if the temp folder is inside
-    it, so the copy stays out of later snapshots."""
-    path = scratch_copy(store_dir, task, agent)
+    it, so the copy stays out of later snapshots. An existing copy is
+    updated in place through git, which rewrites only the files that differ
+    and stamps each one now: a build tool that judges freshness by file
+    time then rebuilds exactly what changed. Files git ignores (build
+    outputs a reviewer copied in) are kept."""
+    path = scratch_copy(store_dir)
     top = _toplevel(repo)
     _private_scratch_base(store_dir, create=True)
     _check_scratch_ignored(top, path)
@@ -2134,13 +2248,173 @@ def make_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> Pa
     parent = subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=top,
                             capture_output=True, text=True).stdout.strip()
     commit = _git(top, "commit-tree", tree, *(["-p", parent] if parent else []),
-                  "-m", f"scratch copy for {agent} on task {task}",
-                  env={**os.environ, **SCRATCH_IDENTITY}).strip()
+                  "-m", "scratch copy", env={**os.environ, **SCRATCH_IDENTITY}).strip()
+    if not path.is_symlink() and (path / ".git").is_file():
+        try:
+            _git(path, "checkout", "--force", "--detach", "-q", commit)
+            _git(path, "clean", "-fdq")
+            return path
+        except subprocess.CalledProcessError:
+            pass  # a copy git can no longer update: make it again below
     _remove_copy(top, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # --force: a copy deleted by hand leaves its registration behind.
     _git(top, "worktree", "add", "--force", "--detach", "-q", str(path), commit)
     return path
+
+
+def release_scratch(store_dir: Path, task: int | str, agent: str) -> None:
+    """Give the copy back. Releasing a copy you don't hold changes nothing."""
+    holder = _scratch_holder(task, agent)
+    if not _private_scratch_base(store_dir, create=False):
+        return
+    with _scratch_lock(store_dir):
+        if _holds(read_lease(store_dir), holder):
+            (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
+
+
+def release_task_scratch(store_dir: Path, task: int | str) -> None:
+    """Release a lease still held for `task`, whoever holds it: its
+    reviewers are done once it completes."""
+    if not _private_scratch_base(store_dir, create=False):
+        return
+    with _scratch_lock(store_dir):
+        lease = read_lease(store_dir)
+        if lease is not None and lease.get("task") == str(task):
+            (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
+
+
+def scratch_limits(log: list[dict]) -> tuple[float, float]:
+    """The run's limits on one scratch command: seconds of wall time, and
+    gigabytes of memory across the command's processes. The defaults are
+    SCRATCH_TIME_LIMIT, and SCRATCH_MEMORY_GB or half the machine's memory,
+    whichever is less; the run's latest `scratch limits` entry replaces
+    either."""
+    seconds, gigabytes = float(SCRATCH_TIME_LIMIT), min(SCRATCH_MEMORY_GB, _half_memory_gb())
+    for entry in log:
+        if entry.get("type") == SCRATCH_LIMITS_ENTRY:
+            seconds = entry.get("time") or seconds
+            gigabytes = entry.get("memory") or gigabytes
+    return seconds, gigabytes
+
+
+def _half_memory_gb() -> float:
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2 / 2 ** 30
+    except (ValueError, OSError):
+        return SCRATCH_MEMORY_GB
+
+
+def cmd_scratch_limits(store_dir: Path, seconds: float | None, gigabytes: float | None) -> None:
+    """Print the run's scratch limits, after logging a change to them. They
+    are the run's, set by the orchestrator: `scratch run` takes none, so
+    the reviewer a limit holds back can't lift it."""
+    for label, value in (("--time", seconds), ("--memory", gigabytes)):
+        if value is not None and value <= 0:
+            raise UsageError(f"{label} {value}: a limit is more than 0")
+    if seconds is not None or gigabytes is not None:
+        with store_lock(store_dir):
+            _append_progress(store_dir, {"type": SCRATCH_LIMITS_ENTRY, "time": seconds,
+                                         "memory": gigabytes, "at": _now()})
+    seconds, gigabytes = scratch_limits(load_progress_log(store_dir))
+    print(f"time: {seconds:g} s\nmemory: {gigabytes:g} GB")
+
+
+def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[str]) -> int:
+    """Run one command at the root of the scratch copy for the reviewer that
+    holds it, with the run's build cache set, under the run's time and
+    memory limits. Returns the command's exit status, or SCRATCH_TIME_EXIT
+    or SCRATCH_MEMORY_EXIT when a limit stopped it; either way no process
+    the command started is left running."""
+    holder = _scratch_holder(task, agent)
+    if not command:
+        raise UsageError("scratch run: give the command after `--`")
+    copy = scratch_copy(store_dir)
+    seconds, gigabytes = scratch_limits(load_progress_log(store_dir))
+    with _scratch_lock(store_dir):
+        lease = read_lease(store_dir)
+        if not _holds(lease, holder) or not copy.is_dir():
+            raise RecordError(f"{agent} doesn't hold the scratch copy for task {task}: run "
+                              "`scratch take` first, and run nothing in the copy without it")
+        _write_lease(store_dir, {**lease, "last_used_at": time.time(),
+                                 "running_pid": os.getpid()})
+    env = {**os.environ, "CARGO_TARGET_DIR": str(scratch_cache(store_dir) / "cargo")}
+    try:
+        code, stopped = _run_guarded(command, copy, env, seconds, gigabytes)
+    finally:
+        with _scratch_lock(store_dir):
+            lease = read_lease(store_dir)
+            if _holds(lease, holder):
+                _write_lease(store_dir, {**lease, "last_used_at": time.time(),
+                                         "running_pid": None})
+    if stopped:
+        print(f"stopped by the guard: {stopped}. Report this break as stopped; don't run it "
+              "again", file=sys.stderr)
+    return code
+
+
+def _run_guarded(command: list[str], cwd: Path, env: dict, seconds: float,
+                 gigabytes: float) -> tuple[int, str | None]:
+    """Run `command` in its own process group and stop the whole group when
+    it passes a limit. Returns its exit status and None, or the limit's
+    exit code and what was passed."""
+    try:
+        proc = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+    except OSError as e:
+        raise RecordError(f"scratch run: can't start {command[0]!r}: {e}") from e
+    started, stopped, code = time.monotonic(), None, None
+    try:
+        while code is None:
+            try:
+                code = proc.wait(timeout=SCRATCH_SAMPLE_SECONDS)
+            except subprocess.TimeoutExpired:
+                used = _group_memory_gb(proc.pid)
+                if time.monotonic() - started > seconds:
+                    code, stopped = SCRATCH_TIME_EXIT, f"ran past the {seconds:g} s time limit"
+                elif used > gigabytes:
+                    code, stopped = SCRATCH_MEMORY_EXIT, (f"used {used:.1f} GB, past the "
+                                                          f"{gigabytes:g} GB memory limit")
+    finally:
+        _kill_group(proc)
+    return code, stopped
+
+
+def _group_memory_gb(pgid: int) -> float:
+    """The resident memory of every process in group `pgid`, in gigabytes."""
+    listing = subprocess.run(["ps", "-A", "-o", "pgid=,rss="], capture_output=True, text=True)
+    kilobytes = 0
+    for line in listing.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(pgid) and fields[1].isdigit():
+            kilobytes += int(fields[1])
+    return kilobytes / 2 ** 20
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """End every process left in the command's group: ask, wait, then
+    force. The command itself is reaped as it goes, since a group whose
+    leader is an unreaped zombie still counts as alive."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            break  # the group is gone
+        deadline = time.monotonic() + SCRATCH_KILL_GRACE_SECONDS
+        while proc.poll() is None or _group_alive(proc.pid):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+        else:
+            break
+    proc.poll()
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
 
 
 def _check_scratch_ignored(top: Path, path: Path) -> None:
@@ -2160,28 +2434,20 @@ def _check_scratch_ignored(top: Path, path: Path) -> None:
                           "TMPDIR outside the repo, or at a folder git ignores")
 
 
-def remove_scratch(repo: Path, store_dir: Path, task: int | str, agent: str) -> None:
-    """Delete a reviewer's scratch copy and its worktree registration,
-    build outputs and all, keeping its build cache for a re-check. A copy
-    that's already gone is not an error."""
-    if _private_scratch_base(store_dir, create=False):
-        _remove_copy(_toplevel(repo), scratch_copy(store_dir, task, agent))
-
-
-def drop_scratch(repo: Path | None, store_dir: Path, task: int | str | None = None) -> None:
-    """Delete every copy and build cache of one task (when it completes),
-    or of the whole store (when it is cleared). Nothing there is an error."""
+def drop_scratch(repo: Path | None, store_dir: Path) -> None:
+    """Delete the store's scratch copy, build cache and lease (when the
+    store is cleared), and any per-task copies an earlier release left
+    under the same folder. Nothing there is an error."""
     if not _private_scratch_base(store_dir, create=False):
         return
     root = scratch_root(store_dir)
-    folder = root if task is None else root / f"task-{task}"
-    if not folder.exists():
+    if not root.exists():
         return
     if repo is not None:
         top = _toplevel(repo)
-        for copy in sorted(folder.glob("task-*/*/copy" if task is None else "*/copy")):
+        for copy in [scratch_copy(store_dir), *sorted(root.glob("task-*/*/copy"))]:
             _remove_copy(top, copy)
-    _force_rmtree(folder)
+    _force_rmtree(root)
 
 
 def _remove_copy(top: Path, path: Path) -> None:
@@ -4358,26 +4624,30 @@ def _land_unchanged_fix(store_dir: Path, task: int | str) -> int:
 
 
 def _complete(store_dir: Path, task: int | str, note: str, light: bool) -> int:
-    """Complete the scope, then delete its reviewers' scratch copies and
-    build caches: no re-check can come after a completion."""
+    """Complete the scope, then release a scratch lease still held for it:
+    no re-check can come after a completion. The copy and the build cache
+    stay for the run's other tasks."""
     try:
         cmd_append(store_dir, "complete", task, note, light)
     except RecordError as e:
         print(f"{_scope_name(task)} not completed: {e}")
         return 1
     print(f"{_scope_name(task)} complete")
-    _drop_scratch_or_warn(store_dir, task)
+    try:
+        release_task_scratch(store_dir, task)
+    except (RecordError, OSError) as e:
+        print(f"warning: {_scope_name(task)}'s scratch lease not released: {e}")
     return 0
 
 
-def _drop_scratch_or_warn(store_dir: Path, task: int | str | None = None) -> None:
-    """Delete scratch copies after a command already did its work: a cleanup
-    that fails is reported, never turned into the command's failure."""
+def _drop_scratch_or_warn(store_dir: Path) -> None:
+    """Delete the store's scratch copy and build cache after a command
+    already did its work: a cleanup that fails is reported, never turned
+    into the command's failure."""
     try:
-        drop_scratch(_store_repo(store_dir), store_dir, task)
+        drop_scratch(_store_repo(store_dir), store_dir)
     except (RecordError, OSError, subprocess.CalledProcessError) as e:
-        print(f"warning: scratch copies of {_scope_name(task) if task is not None else 'the store'} "
-              f"not deleted: {e}")
+        print(f"warning: the store's scratch copy and build cache not deleted: {e}")
 
 
 def _check_coder_inside_footprint(store_dir: Path, log: list[dict], task: int | str,
@@ -5048,14 +5318,23 @@ def build_parser() -> argparse.ArgumentParser:
                         help="limit the diff to these paths (the task's own files)")
 
     p_scratch = sub.add_parser("scratch", parents=[store_parent],
-                               help="make a throwaway worktree of the working tree as it is "
-                                    "now (checkout untouched), in the system temp folder, and "
-                                    "print its path, then the CARGO_TARGET_DIR line for its "
-                                    "own build cache; --remove deletes the copy and keeps the "
-                                    "cache, and the task's commit deletes both")
-    p_scratch.add_argument("--task", required=True, type=_task_arg)
-    p_scratch.add_argument("--agent", required=True, help="your agent name")
-    p_scratch.add_argument("--remove", action="store_true")
+                               help="the run's one scratch copy of the working tree, in the "
+                                    "system temp folder (checkout untouched). take: hold it "
+                                    "for your task, brought to the tree as it is now, and "
+                                    "print its path (exit 3 while another reviewer holds "
+                                    "it); run: run the command after `--` in it under the "
+                                    "run's time and memory limits (exit 124 or 125 when one "
+                                    "stops it, 126 without your lease); release: give it "
+                                    "back; limits: print or set those limits")
+    p_scratch.add_argument("action", choices=SCRATCH_ACTIONS)
+    p_scratch.add_argument("--task", type=_task_arg)
+    p_scratch.add_argument("--agent", help="your agent name")
+    p_scratch.add_argument("--wait", type=float, default=SCRATCH_WAIT_SECONDS,
+                           help="take: seconds to wait for another holder")
+    p_scratch.add_argument("--time", type=float, dest="seconds",
+                           help="limits: seconds one command may run")
+    p_scratch.add_argument("--memory", type=float, dest="gigabytes",
+                           help="limits: gigabytes one command's processes may use")
 
     p_inline = sub.add_parser("inline", parents=[store_parent],
                                help="--by: log the user's answer on who fixes the scope's "
@@ -5125,8 +5404,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _split_scratch_command(argv: list[str]) -> tuple[list[str], list[str]]:
+    """`scratch run`'s own arguments, and the command after its `--`, which
+    is passed on untouched: its options are not this script's."""
+    if argv[:1] == ["scratch"] and "--" in argv:
+        at = argv.index("--")
+        return argv[:at], argv[at + 1:]
+    return argv, []
+
+
+def cmd_scratch(store_dir: Path, args: argparse.Namespace, command: list[str]) -> int:
+    """One scratch action, as its exit status. `run` reports a refusal with
+    its own status, since 1 and 2 are statuses the command it runs returns."""
+    if args.action == "limits":
+        cmd_scratch_limits(store_dir, args.seconds, args.gigabytes)
+        return 0
+    if args.seconds is not None or args.gigabytes is not None:
+        raise UsageError("--time and --memory go with `scratch limits`: the limits are the "
+                         "run's, not one command's")
+    if args.task is None or not args.agent:
+        raise UsageError(f"scratch {args.action}: --task and --agent say who holds the copy")
+    if args.action == "release":
+        release_scratch(store_dir, args.task, args.agent)
+        return 0
+    if args.action == "take":
+        _warn_submodules(Path.cwd())
+        try:
+            path = take_scratch(Path.cwd(), store_dir, args.task, args.agent, args.wait)
+        except ScratchBusy as e:
+            print(f"busy: {e}", file=sys.stderr)
+            return SCRATCH_BUSY_EXIT
+        print(path)
+        print(f"run every build and test in it with: python3 {Path(__file__).resolve()} scratch "
+              f"run --task {args.task} --agent {args.agent} --store {store_dir} -- <command>")
+        return 0
+    try:
+        return run_in_scratch(store_dir, args.task, args.agent, command)
+    except RecordError as e:
+        print(f"not run: {e}", file=sys.stderr)
+        return SCRATCH_REFUSED_EXIT
+
+
 def main() -> None:
-    args = build_parser().parse_args()
+    argv, scratch_command = _split_scratch_command(sys.argv[1:])
+    args = build_parser().parse_args(argv)
     try:
         if args.command == "check":
             cmd_check(args.record_path, args.store)
@@ -5190,12 +5511,7 @@ def main() -> None:
             _warn_submodules(Path.cwd())
             cmd_snapshot(store_dir, args.task, args.label, lambda: snapshot_tree(Path.cwd()))
         elif args.command == "scratch":
-            if args.remove:
-                remove_scratch(Path.cwd(), store_dir, args.task, args.agent)
-            else:
-                _warn_submodules(Path.cwd())
-                print(make_scratch(Path.cwd(), store_dir, args.task, args.agent))
-                print(f"CARGO_TARGET_DIR={scratch_target(store_dir, args.task, args.agent)}")
+            sys.exit(cmd_scratch(store_dir, args, scratch_command))
         elif args.command == "baseline":
             cmd_baseline(store_dir, args.tree, args.task)
         elif args.command == "findings":
