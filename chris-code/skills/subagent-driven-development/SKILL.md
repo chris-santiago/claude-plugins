@@ -229,7 +229,7 @@ Each lands in its record's `cannot_verify` field and in `python3 "$SDD_SCRIPTS/l
 | `needs` | What it waits for | What you do |
 |---|---|---|
 | `run`, command `gate` | The task's own `Verify:` command, which the reviewer didn't run | Nothing. It never blocks `ready`, and the task's commit settles it. |
-| `run`, another command | A command the gate doesn't run | Read the command `open` prints: a reviewer wrote it, and it runs in the checkout. If it only checks, repeat it exactly: `python3 "$SDD_SCRIPTS/ledger.py" resolve '<id>' --run '<the command>' --store "$STORE"`. The ledger runs it at the repo root and settles the item on exit 0. If it would change anything, take it to the user instead. The result holds for the task's files as they are: change one and the item is open again. |
+| `run`, another command | A command the gate doesn't run | Read the command `open` prints: a reviewer wrote it, and it runs in the checkout. If it only checks, repeat it exactly, copying the `--run` argument as `open` prints it (already quoted for the shell): `python3 "$SDD_SCRIPTS/ledger.py" resolve '<id>' --run <that argument> --store "$STORE"`. The ledger runs it at the repo root and settles the item on exit 0. If it would change anything, take it to the user instead. The result holds for the task's files as they are: change one and the item is open again. |
 | `elsewhere` | Text or code outside the task's files | Nothing. `triage` files it as a task-note for the unfinished task that owns the file, or as a follow-up. |
 | `read` | One claim about named lines | Dispatch `claim-checker`, then `resolve <id>`. |
 
