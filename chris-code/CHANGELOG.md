@@ -8,6 +8,19 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-18
+
+The orchestrator no longer retypes the run's constants on every call, and the gate keeps its whole output.
+
+### Added
+- **`ledger.py run-config` records the run's settings once.** `run-config --plan PLAN [--spec SPEC] --test "<the full suite>" [--lint "<the lint command>"]` stores the plan and spec that briefs are built from, the project's full test suite and its lint command. A later call replaces only the settings it names, and `run-state` lists them, so they survive a compaction.
+- **`ledger.py brief --task N` builds a brief and prints its dispatch paths.** It runs `task_brief.py` at the repo root on the recorded plan and spec, then prints the brief's path and the record and report path of each coder named with `--coder`, the spec reviewer and each coder's quality reviewer. For a task with one coder that was one `task_brief.py` call and six `path` calls. A rebuild reuses the intent the last brief was built with.
+- **`ledger.py stage --task N --extend [PATH...]` grows a footprint.** It adds the paths given, and every file the task's coders' records list as changed, to the task's recorded footprint and keeps its stage. Before, a footprint could only be restated whole, and the commit that refused a coder's file outside it left the orchestrator to rebuild the list.
+
+### Changed
+- **`gate` and `commit` no longer need `--test`.** A task's test is its `Verify:` command, which building its brief now records (when the task's `Verify:` lines name exactly one backticked command). At `final` and the close it is the run's full suite. The lint command is the run's. Either can still be given, and a scope with no test on record stops with a message saying so.
+- **The gate keeps everything its commands printed.** Each lint and test run's whole output is written to the store (`<scope>-gate-lint.log`, `<scope>-gate-test.log`), the gate record names the file, and a failing command prints the path. Before, only the last 20 lines survived, which on a long run could leave out the failing test's name. A failed command's excerpt now leads with the earlier lines that look like the failure itself.
+
 ## [0.19.0] - 2026-11-18
 
 Three things the skills asked for in prose and nothing enforced are now enforced by the ledger.
