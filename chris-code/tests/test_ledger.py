@@ -6254,6 +6254,338 @@ class TestCloseInlineOffer(CloseStoreTestCase):
             ledger.cmd_inline(self.store, "close", ["a.py"])
 
 
+def _unverified(needs: str | None = None, **fields) -> dict:
+    """A spec reviewer's `cannot_verify` entry: untyped (as an earlier
+    release wrote it) unless `needs` says what settles it."""
+    entry = {"requirement": "the suite passes", "why": "not run in this review"}
+    if needs is not None:
+        entry["needs"] = needs
+    entry.update(fields)
+    return entry
+
+
+GATE_ITEM = _unverified("run", command="gate")
+READ_ITEM = _unverified("read", requirement="the guard runs before the read",
+                        claim="size is checked before data is read", path="lib.py", lines="1-5")
+
+
+class TestUnverifiedShape(LedgerTestCase):
+    """A `cannot_verify` entry says what settles it, and carries what that
+    kind needs."""
+
+    def check(self, *entries: dict) -> None:
+        ledger.cmd_check(str(_write(self.store, "task-1-spec-reviewer.json",
+                                    _spec_reviewer(cannot_verify=list(entries)))))
+
+    def test_each_kind_with_its_fields_passes(self):
+        self.check(GATE_ITEM, _unverified("run", command="cargo doc -p x --no-deps"),
+                   _unverified("elsewhere", sites=["docs/a.md:27", "b.py"]), READ_ITEM,
+                   _unverified("read", claim="c", path="lib.py", lines="7"))
+
+    def test_an_entry_that_does_not_say_what_settles_it_is_refused_by_check(self):
+        with self.assertRaisesRegex(ledger.RecordError, "has no `needs`"):
+            self.check(_unverified(should_check="the orchestrator should look"))
+
+    def test_an_untyped_entry_on_disk_still_loads(self):
+        _write(self.store, "task-1-spec-reviewer.json", _spec_reviewer(cannot_verify=[_unverified()]))
+        [record] = ledger.load_records(self.store)
+        self.assertTrue(record.ok)
+
+    def test_a_kind_missing_what_it_needs_is_refused(self):
+        cases = {
+            "needs": _unverified("ask"),
+            "command": _unverified("run"),
+            "sites": _unverified("elsewhere", sites=[]),
+            r"sites\[0\]": _unverified("elsewhere", sites=["a.py:0"]),
+            "claim": _unverified("read", path="lib.py", lines="1-5"),
+            "path": _unverified("read", claim="c", lines="1-5"),
+            "lines": _unverified("read", claim="c", path="lib.py", lines="5-1"),
+        }
+        for field_name, entry in cases.items():
+            with self.subTest(field_name), self.assertRaisesRegex(ledger.RecordError,
+                                                                  f"cannot_verify\\[0\\].{field_name}"):
+                self.check(entry)
+
+
+class TestUnverifiedItems(TriageStoreTestCase):
+    """Each kind of item is settled by what can settle it: the commit gate
+    or a recorded command result, a note triage files, or claim-checker's
+    quoted lines; never by the orchestrator's own note."""
+
+    STEM = "task-3-spec-reviewer"
+    LIB = "def load(size):\n    if size <= 0:\n        raise ValueError(size)\n    data = read(size)\n    return data\n"
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / "lib.py").write_text(self.LIB, encoding="utf-8")
+        self.coder()
+
+    def items(self, *entries: dict) -> list[str]:
+        self.spec(cannot_verify=list(entries))
+        return [_cv_id(self.STEM, e) for e in entries]
+
+    def open_ids(self) -> set[str]:
+        log = ledger.load_progress_log(self.store)
+        return {i.id for i in ledger.compute_open_items(ledger.load_records(self.store),
+                                                        ledger.settled_ids(self.store, log))}
+
+    def blocked(self) -> bool:
+        return any("cannot_verify" in b for b in ledger.ready_blockers(self.store, 3))
+
+    def resolve(self, rid: str, note: str = "", run: bool = False) -> str:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_resolve(self.store, rid, note, run)
+        return out.getvalue()
+
+    def resolution(self, rid: str) -> dict:
+        return [e for e in ledger.load_progress_log(self.store)
+                if e.get("type") == "resolution" and e.get("resolves") == rid][-1]
+
+    def claim(self, rid: str, status: str = "holds", evidence: list[dict] | None = None,
+              **fields) -> Path:
+        if evidence is None:
+            evidence = [{"path": "lib.py", "line": n, "text": self.LIB.splitlines()[n - 1]}
+                        for n in (2, 3, 4)]
+        return self.write(ledger.claim_path(self.store, rid).name, {
+            "schema": 2, "agent": "claim-checker", "role": "claim-checker", "task": 3,
+            "status": status, "item": rid, "evidence": evidence,
+            "because": "the check on line 2 precedes the read on line 4", **fields})
+
+    # --- run: the gate ---
+
+    def test_an_item_the_gate_settles_never_blocks_the_commit(self):
+        [rid] = self.items(GATE_ITEM)
+        self.triage()
+        self.assertFalse(self.blocked())
+        self.assertIn(rid, self.open_ids())
+
+    def test_a_gate_item_is_settled_when_its_scope_completes(self):
+        [rid] = self.items(GATE_ITEM)
+        self.triage()
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(ledger.cmd_commit(self.store, 3, "Guard size", "test -f a.py", None), 0)
+        self.assertNotIn(rid, self.open_ids())
+        self.assertIn("test -f a.py", self.resolution(rid)["note"])
+
+    def test_a_gate_item_takes_no_resolution_by_hand(self):
+        [rid] = self.items(GATE_ITEM)
+        for note, run in (("the gate will run it", False), ("", False)):
+            with self.subTest(note=note), self.assertRaisesRegex(ledger.RecordError, "commit gate"):
+                self.resolve(rid, note, run)
+        with self.assertRaises(ledger.UsageError):
+            self.resolve(rid, run=True)
+
+    # --- run: a command ---
+
+    def test_a_command_item_blocks_until_its_command_passes(self):
+        [rid] = self.items(_unverified("run", command="test -f lib.py && echo documented"))
+        self.triage()
+        self.assertTrue(self.blocked())
+        self.resolve(rid, run=True)
+        self.assertFalse(self.blocked())
+        entry = self.resolution(rid)
+        self.assertEqual((entry["exit"], entry["tree"], entry["tail"]),
+                         (0, ledger.snapshot_tree(self.repo), "documented"))
+
+    def test_a_failing_command_settles_nothing_and_shows_its_output(self):
+        [rid] = self.items(_unverified("run", command="echo two warnings; exit 3"))
+        with self.assertRaisesRegex(ledger.RecordError, "two warnings"):
+            self.resolve(rid, run=True)
+        self.assertIn(rid, self.open_ids())
+
+    def test_a_command_naming_a_missing_program_settles_nothing(self):
+        [rid] = self.items(_unverified("run", command="! no-such-program-xyz lib.py"))
+        with self.assertRaisesRegex(ledger.RecordError, "not found"):
+            self.resolve(rid, run=True)
+
+    def test_a_command_item_is_not_settled_by_a_note(self):
+        [rid] = self.items(_unverified("run", command="true"))
+        with self.assertRaisesRegex(ledger.RecordError, "--run"):
+            self.resolve(rid, "the coder says it passes")
+        self.assertIn(rid, self.open_ids())
+
+    def test_a_result_goes_stale_when_a_file_of_the_scope_changes(self):
+        [rid] = self.items(_unverified("run", command="true"))
+        self.resolve(rid, run=True)
+        (self.repo / "lib.py").write_text(self.LIB + "# not in task 3\n", encoding="utf-8")
+        self.assertNotIn(rid, self.open_ids())
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.assertIn(rid, self.open_ids())
+        self.triage()
+        self.assertTrue(self.blocked())
+        self.resolve(rid, run=True)  # not "already resolved": the old result is stale
+        self.assertNotIn(rid, self.open_ids())
+
+    def test_a_completed_scopes_result_stands_when_its_files_change_later(self):
+        [rid] = self.items(_unverified("run", command="true"))
+        self.resolve(rid, run=True)
+        ledger._append_progress(self.store, {"type": "complete", "task": 3, "note": "n"})
+        (self.repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        self.assertNotIn(rid, self.open_ids())
+
+    # --- elsewhere ---
+
+    def test_triage_files_an_outside_site_as_a_follow_up_and_settles_the_item(self):
+        [rid] = self.items(_unverified("elsewhere", requirement="docs name current paths",
+                                       why="the architecture doc still names the old file",
+                                       sites=["docs/arch.md:27"]))
+        self.assertIn("filed note#follow-up", self.triage())
+        self.assertNotIn(rid, self.open_ids())
+        [note] = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                  if n["kind"] == "follow-up"]
+        self.assertIn("docs/arch.md:27", note["text"])
+        self.assertEqual((note["rule"], note["from"]), ("docs name current paths", 3))
+        self.assertEqual(self.resolution(rid)["note"], f"filed {note['id']}")
+
+    def test_a_site_in_an_unfinished_tasks_footprint_becomes_its_task_note(self):
+        ledger.cmd_stage(self.store, 4, 1, ["b.py"])
+        self.items(_unverified("elsewhere", sites=["docs/arch.md", "b.py:3"]))
+        self.triage()
+        [note] = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                  if n["kind"] == "task-note"]
+        self.assertEqual(note["for"], 4)
+
+    def test_an_elsewhere_item_is_filed_once_and_not_resolved_by_a_note(self):
+        [rid] = self.items(_unverified("elsewhere", sites=["docs/arch.md"]))
+        with self.assertRaisesRegex(ledger.RecordError, "triage"):
+            self.resolve(rid, "I'll remember it")
+        self.triage()
+        self.spec(_finding(severity=1, rule="a name"),
+                  cannot_verify=[_unverified("elsewhere", sites=["docs/arch.md"])])
+        self.triage()
+        notes = [n for n in ledger.notes_from_log(ledger.load_progress_log(self.store))
+                 if n["kind"] == "follow-up" and "docs/arch.md" in n["text"]]
+        self.assertEqual(len(notes), 1)
+
+    # --- read ---
+
+    def test_a_read_item_waits_for_claim_checkers_record(self):
+        [rid] = self.items(READ_ITEM)
+        self.triage()
+        self.assertTrue(self.blocked())
+        with self.assertRaisesRegex(ledger.RecordError, "claim-checker.*task-3-claim-"):
+            self.resolve(rid)
+        with self.assertRaisesRegex(ledger.RecordError, "claim-checker"):
+            self.resolve(rid, "I read it and it holds")
+
+    def test_a_checked_holds_record_settles_it(self):
+        [rid] = self.items(READ_ITEM)
+        ledger.cmd_check(str(self.claim(rid)))
+        self.resolve(rid)
+        self.assertNotIn(rid, self.open_ids())
+        entry = self.resolution(rid)
+        self.assertIn("lib.py:2, lib.py:3, lib.py:4", entry["note"])
+        self.assertEqual(entry["claim"], ledger.claim_path(self.store, rid).name)
+
+    def test_a_quote_that_is_not_in_the_file_is_refused_at_check_and_at_resolve(self):
+        [rid] = self.items(READ_ITEM)
+        invented = [{"path": "lib.py", "line": 2, "text": "    if size < 0:"},
+                    {"path": "lib.py", "line": 3, "text": "        raise ValueError(size)"},
+                    {"path": "lib.py", "line": 4, "text": "    data = read(size)"}]
+        path = self.claim(rid, evidence=invented)
+        with self.assertRaisesRegex(ledger.RecordError, r"evidence\[0\] is not line 2"):
+            ledger.cmd_check(str(path))
+        with self.assertRaisesRegex(ledger.RecordError, r"evidence\[0\] is not line 2"):
+            self.resolve(rid)
+        self.assertIn(rid, self.open_ids())
+
+    def test_evidence_must_be_real_lines_of_the_items_file(self):
+        [rid] = self.items(READ_ITEM)
+        good = [{"path": "lib.py", "line": n, "text": self.LIB.splitlines()[n - 1]} for n in (1, 2)]
+        cases = {
+            "past the end": good + [{"path": "lib.py", "line": 99, "text": "x"}],
+            "another file": good + [{"path": "a.py", "line": 1, "text": "x = 1"}],
+        }
+        for label, evidence in cases.items():
+            with self.subTest(label), self.assertRaises(ledger.RecordError):
+                ledger.cmd_check(str(self.claim(rid, evidence=evidence)))
+
+    def test_a_quote_may_lose_the_whitespace_around_it(self):
+        [rid] = self.items(READ_ITEM)
+        stripped = [{"path": "./lib.py", "line": n, "text": self.LIB.splitlines()[n - 1].strip()}
+                    for n in (2, 3, 4)]
+        ledger.cmd_check(str(self.claim(rid, evidence=stripped)))
+
+    def test_a_verdict_needs_three_to_ten_quoted_lines(self):
+        [rid] = self.items(READ_ITEM)
+        line = {"path": "lib.py", "line": 2, "text": "    if size <= 0:"}
+        for status, count in (("holds", 2), ("does-not-hold", 0), ("holds", 11)):
+            with self.subTest(status=status, count=count), \
+                    self.assertRaisesRegex(ledger.RecordError, "evidence"):
+                ledger.cmd_check(str(self.claim(rid, status=status, evidence=[line] * count)))
+        ledger.cmd_check(str(self.claim(rid, status="not-decidable-by-reading", evidence=[])))
+
+    def test_a_claim_that_does_not_hold_goes_back_to_the_reviewer(self):
+        [rid] = self.items(READ_ITEM)
+        self.claim(rid, status="does-not-hold")
+        with self.assertRaisesRegex(ledger.RecordError, "spec reviewer"):
+            self.resolve(rid)
+        self.assertIn(rid, self.open_ids())
+
+    def test_a_claim_reading_cannot_decide_is_the_users(self):
+        [rid] = self.items(READ_ITEM)
+        self.claim(rid, status="not-decidable-by-reading", evidence=[])
+        with self.assertRaisesRegex(ledger.RecordError, "only the user"):
+            self.resolve(rid)
+        self.resolve(rid, "user ruling: accept it as built")
+        self.assertNotIn(rid, self.open_ids())
+
+    def test_a_claim_record_answers_a_read_item_at_that_items_path(self):
+        run_id, read_id = self.items(_unverified("run", command="true"), READ_ITEM)
+        with self.assertRaisesRegex(ledger.RecordError, "isn't a `read` item"):
+            ledger.cmd_check(str(self.write("task-3-claim-00000000.json", json.loads(
+                self.claim(read_id).read_text()) | {"item": run_id})))
+        with self.assertRaisesRegex(ledger.RecordError, "is written at"):
+            ledger.cmd_check(str(self.write("task-3-claim-00000000.json",
+                                            json.loads(self.claim(read_id).read_text()))))
+
+    def test_path_prints_where_the_claim_record_goes(self):
+        [rid] = self.items(READ_ITEM)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ledger.cmd_path(self.store, 3, "claim-checker", "record", rid)
+        self.assertEqual(Path(out.getvalue().strip()), ledger.claim_path(self.store, rid))
+        with self.assertRaises(ledger.UsageError):
+            ledger.cmd_path(self.store, 4, "claim-checker", "record", rid)
+        with self.assertRaises(ledger.UsageError):
+            ledger.cmd_path(self.store, 3, "spec-reviewer", "record", rid)
+
+    def test_a_claim_record_is_not_a_reviewer_the_round_waits_on(self):
+        [rid] = self.items(READ_ITEM)
+        ledger.cmd_check(str(self.claim(rid)))
+        self.resolve(rid)
+        self.triage()
+        self.assertEqual(self.entries()[-1]["kind"], "done")
+        self.assertEqual(ledger.ready_blockers(self.store, 3), [])
+
+    # --- every kind, and what came before ---
+
+    def test_the_users_ruling_settles_any_item(self):
+        ids = self.items(_unverified("run", command="false"),
+                         _unverified("elsewhere", sites=["docs/arch.md"]), READ_ITEM)
+        for rid in ids:
+            self.resolve(rid, "user ruling: accept as recorded")
+        self.assertFalse(set(ids) & self.open_ids())
+
+    def test_open_says_what_settles_each_item(self):
+        self.items(GATE_ITEM, _unverified("run", command="cargo doc"),
+                   _unverified("elsewhere", sites=["docs/arch.md"]), READ_ITEM)
+        lines = "\n".join(ledger._open_lines(ledger.load_progress_log(self.store),
+                                             ledger.load_records(self.store)))
+        for expected in ("the commit gate settles it", "--run` runs `cargo doc`",
+                         "docs/arch.md; `triage` files it", "claim-checker", "lib.py:1-5"):
+            self.assertIn(expected, lines)
+
+    def test_an_untyped_item_from_an_earlier_release_keeps_its_handling(self):
+        [rid] = self.items(_unverified(should_check="look at the caller"))
+        self.triage()
+        self.assertTrue(self.blocked())
+        self.resolve(rid, "checked the caller: it passes a positive size")
+        self.assertFalse(self.blocked())
+
+
 class ScratchTestCase(GitRepoTestCase):
     """A repo whose scratch folder is a temp folder of the test's own, with
     the guard sampling fast."""

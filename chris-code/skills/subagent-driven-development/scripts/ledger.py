@@ -44,7 +44,8 @@ Usage: python3 ledger.py read|open|shapes|completed|store-dir|stats|run-state|re
        python3 ledger.py scratch take|release --task N --agent NAME [--store DIR]
        python3 ledger.py scratch run --task N --agent NAME [--store DIR] -- COMMAND...
        python3 ledger.py scratch limits [--time SECONDS] [--memory GB] [--store DIR]
-       python3 ledger.py resolve <id> [--note "..."] [--store DIR]
+       python3 ledger.py resolve <id> [--note "..." | --run] [--store DIR]
+       python3 ledger.py path --task N|final|close [--agent NAME] [--kind record|report|brief] [--item ID] [--store DIR]
        python3 ledger.py check <record-path> [--store DIR]
 
 A per-task decision is itself a record (role "decision", written by
@@ -134,7 +135,12 @@ STATUS_ENUMS = {
     "design-reviewer": {"pass", "concerns"},
     "intent-reviewer": {"pass", "concerns"},
     "mutation-tester": {"pass", "concerns", "skipped", "inconclusive"},
+    # A claim-checker's answer to one `read` item: the status is its verdict.
+    "claim-checker": {"holds", "does-not-hold", "not-decidable-by-reading"},
 }
+CLAIM_ROLE = "claim-checker"
+CLAIM_HOLDS, CLAIM_FAILS, CLAIM_UNDECIDABLE = "holds", "does-not-hold", "not-decidable-by-reading"
+CLAIM_MIN_EVIDENCE, CLAIM_MAX_EVIDENCE = 3, 10
 # Derived, never restated: a role added to STATUS_ENUMS alone (or vice
 # versa) would turn `check`'s corrective RecordError into a raw KeyError
 # at the STATUS_ENUMS[role] lookup below.
@@ -144,7 +150,7 @@ CODER_OPEN_STATUSES = {"blocked", "needs_context"}
 # task's coder of record in `handed_to`: open until that coder finishes.
 CODER_HANDOFF = "handed_off"
 REVIEWER_OPEN_STATUSES = {"issues", "block", "escalate", "fail"}
-REVIEWER_ROLES = VALID_ROLES - {"coder", "decision"}
+REVIEWER_ROLES = VALID_ROLES - {"coder", "decision", CLAIM_ROLE}
 # Roles whose records carry a validated `cycle`.
 CYCLE_ROLES = ("coder", "decision")
 
@@ -234,6 +240,15 @@ ROOT_CAUSE_RE = re.compile(r"^root cause:\s*(?P<site>\S+)\s+\S", re.I)
 # researched decision can route its fix before any review has run.
 FINDING_FIELDS = ("issues", "findings")
 OPTIONAL_FINDING_FIELDS = ("cannot_verify",)
+# A spec reviewer's `cannot_verify` entry says what settles it (`needs`):
+# `run` a command (GATE_COMMAND for the task's own Verify, which the commit
+# gate runs), `elsewhere` (sites outside the scope's files, which triage
+# files), or `read` (one claim about named lines, which claim-checker
+# answers). An entry without `needs` is one an earlier release wrote.
+UNVERIFIED_FIELD = "cannot_verify"
+UNVERIFIED_NEEDS = ("run", "elsewhere", "read")
+GATE_COMMAND = "gate"
+LINES_RE = re.compile(r"^(?P<start>[1-9]\d*)(?:-(?P<end>[1-9]\d*))?$")
 CONCERN_FIELD = "concerns"
 CHOICE_KEYS = {"fix": ("reframe", "choice", "completeness"), "escalate": ("why", "evidence")}
 CANDIDATE_KEYS = ("name", "precedent", "why")
@@ -496,6 +511,11 @@ def validate_record(data: object) -> None:
         _validate_decision(data)
     elif role == "intent-reviewer":
         _validate_intent(data)
+    elif role == "spec-reviewer":
+        for idx, entry in enumerate(data[UNVERIFIED_FIELD]):
+            _validate_unverified(entry, f"{UNVERIFIED_FIELD}[{idx}]")
+    elif role == CLAIM_ROLE:
+        _validate_claim(data)
     if role in FINDING_LIST_FIELD:
         _validate_finding_tags(data, role)
 
@@ -699,6 +719,57 @@ def _validate_intent(data: dict) -> None:
         raise RecordError(f"status: got {data['status']!r} with "
                           f"{'a' if not_met else 'no'} not-met statement; expected "
                           f"{'concerns' if not_met else 'pass'}")
+
+
+def _validate_unverified(entry: dict, where: str) -> None:
+    """A typed `cannot_verify` entry carries what its kind is settled by.
+    One without `needs` loads as an earlier release wrote it; `check`
+    refuses to pass a new one (`_check_unverified_typed`)."""
+    if "needs" not in entry:
+        return
+    needs = entry["needs"]
+    if needs not in UNVERIFIED_NEEDS:
+        raise RecordError(f"{where}.needs: got {needs!r}, allowed set: {list(UNVERIFIED_NEEDS)}")
+    if needs == "run":
+        _require_strs(entry, ("command",), where)
+    elif needs == "read":
+        _require_strs(entry, ("claim", "path", "lines"), where)
+        match = LINES_RE.match(entry["lines"])
+        if match is None or (match["end"] and int(match["end"]) < int(match["start"])):
+            raise RecordError(f"{where}.lines: got {entry['lines']!r}, expected a line or "
+                              "start-end (lines from 1, start <= end)")
+    else:
+        sites = entry.get("sites")
+        if not isinstance(sites, list) or not sites:
+            raise RecordError(f"{where}.sites: got {sites!r}, expected a non-empty list of the "
+                              "sites outside the task's files")
+        for idx, site in enumerate(sites):
+            _validate_site(site, f"{where}.sites[{idx}]")
+
+
+def _validate_claim(data: dict) -> None:
+    """A claim-checker's record: the item it answers, quoted lines, and one
+    sentence tying them to the claim. Its status is the verdict. A verdict
+    either way rests on CLAIM_MIN_EVIDENCE to CLAIM_MAX_EVIDENCE lines."""
+    _require_strs(data, ("item", "because"), "claim")
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or len(evidence) > CLAIM_MAX_EVIDENCE:
+        raise RecordError(f"evidence: expected a list of at most {CLAIM_MAX_EVIDENCE} quoted "
+                          "lines")
+    if data["status"] != CLAIM_UNDECIDABLE and len(evidence) < CLAIM_MIN_EVIDENCE:
+        raise RecordError(f"evidence: `{data['status']}` rests on {CLAIM_MIN_EVIDENCE} to "
+                          f"{CLAIM_MAX_EVIDENCE} quoted lines, got {len(evidence)}")
+    for idx, line in enumerate(evidence):
+        where = f"evidence[{idx}]"
+        if not isinstance(line, dict):
+            raise RecordError(f"{where}: got {line!r}, expected an object")
+        _require_strs(line, ("path",), where)
+        if not _positive_int_value(line.get("line")):
+            raise RecordError(f"{where}.line: got {line.get('line')!r}, expected the line's "
+                              "number, from 1")
+        if not isinstance(line.get("text"), str):
+            raise RecordError(f"{where}.text: got {line.get('text')!r}, expected the line as "
+                              "it is in the file")
 
 
 def _non_empty_str(value: object) -> bool:
@@ -1062,8 +1133,34 @@ def _describe_duplication(entry: dict) -> str:
 
 
 def _describe_cannot_verify(entry: dict) -> str:
-    return (f"{entry.get('requirement', '')} — {entry.get('why', '')} "
-            f"(should_check: {entry.get('should_check', '')})")
+    """The item and the one action that settles it."""
+    return f"{entry.get('requirement', '')} — {entry.get('why', '')} ({_settled_by(entry)})"
+
+
+def _gate_settles(entry: dict) -> bool:
+    """The scope's commit gate runs what this item waits for."""
+    return entry.get("needs") == "run" and entry.get("command") == GATE_COMMAND
+
+
+def _settled_by(entry: dict) -> str:
+    needs = entry.get("needs")
+    if _gate_settles(entry):
+        return "run: the commit gate settles it; nothing to do"
+    if needs == "run":
+        return f"run: `resolve <id> --run` runs `{entry.get('command')}` and records the result"
+    if needs == "elsewhere":
+        return f"elsewhere: {', '.join(map(str, entry.get('sites', [])))}; `triage` files it"
+    if needs == "read":
+        return (f"read: dispatch claim-checker with the claim \"{entry.get('claim')}\" at "
+                f"{entry.get('path')}:{entry.get('lines')}, then `resolve <id>`")
+    return f"should_check: {entry.get('should_check', '')}"
+
+
+def unverified_entries(records: list[Record]) -> dict[str, dict]:
+    """Every spec reviewer's `cannot_verify` entry, by its item id."""
+    return {_item_id(rec.stem, UNVERIFIED_FIELD, entry): entry
+            for rec in records if rec.ok and rec.data["role"] == "spec-reviewer"
+            for entry in rec.data.get(UNVERIFIED_FIELD, [])}
 
 
 _FIELD_DESCRIBERS = {
@@ -1822,14 +1919,19 @@ def cmd_read(store_dir: Path) -> None:
 
 
 def cmd_open(store_dir: Path) -> None:
-    lines = _open_lines(load_progress_log(store_dir), load_records(store_dir))
+    log = load_progress_log(store_dir)
+    lines = _open_lines(log, load_records(store_dir), settled_ids(store_dir, log))
     print("\n".join(lines) if lines else "No open items.")
 
 
-def _open_lines(log: list[dict], records: list[Record]) -> list[str]:
+def _open_lines(log: list[dict], records: list[Record],
+                resolved: set[str] | None = None) -> list[str]:
     """Everything that blocks: the records' open items, the notes tasks in
-    flight haven't received, and open disclosures and questions."""
-    items = compute_open_items(records, set(resolutions_from_log(log)))
+    flight haven't received, and open disclosures and questions. `resolved`
+    is the ids whose resolution stands (`settled_ids`); by default every
+    logged one."""
+    items = compute_open_items(records, set(resolutions_from_log(log))
+                               if resolved is None else resolved)
     lines = [f"[{item.id}] {item.kind}: {item.summary}" for item in items]
     for task in tasks_in_flight(log, records):
         lines += [f"[{n['id']}] undelivered to task {task}: {_describe_note(n)}"
@@ -1873,6 +1975,52 @@ def cmd_append(store_dir: Path, entry_type: str, task: int | str, note: str,
             if light:
                 entry["light"] = True
         _append_progress(store_dir, entry)
+        if entry_type == "complete":
+            _settle_gate_items(store_dir, task)
+
+
+def settled_ids(store_dir: Path, log: list[dict]) -> set[str]:
+    """The ids with a resolution that still stands: every logged one but a
+    command's result that the scope's files have since moved past."""
+    return set(resolutions_from_log(log)) - _stale_run_results(store_dir, log)
+
+
+def _stale_run_results(store_dir: Path, log: list[dict]) -> set[str]:
+    """`resolve --run` results that no longer speak for their scope: the
+    scope's files changed after the command ran on them. A completed scope's
+    results stand, since later tasks may go on to change its files."""
+    latest = {e["resolves"]: e for e in log
+              if e.get("type") == "resolution" and isinstance(e.get("resolves"), str)}
+    ran = {rid: e for rid, e in latest.items() if e.get("tree")}
+    top = _store_repo(store_dir) if ran else None
+    if top is None:
+        return set()
+    done, now, stale = set(completed_task_ids(log)), snapshot_tree(top), set()
+    for rid, entry in ran.items():
+        scope = _scope(rid.split("#")[0])
+        if scope is None or str(_scope_task(scope)) in done:
+            continue
+        paths = sorted(scope_footprint(store_dir, log, _scope_task(scope)) or ())
+        if paths and diff_trees(top, entry["tree"], now, paths).strip():
+            stale.add(rid)
+    return stale
+
+
+def _settle_gate_items(store_dir: Path, task: int | str) -> None:
+    """Log the settlement of each item the scope's commit gate ran: the
+    scope just completed, which it can't without that gate passing on the
+    tree it committed. The caller holds the lock."""
+    log = load_progress_log(store_dir)
+    resolved = resolutions_from_log(log)
+    gate = _load_record(_gate_path(store_dir, log, task))
+    ran = "; ".join(f"`{c.get('command')}`" for c in (gate.data.get("commands", []) if gate.ok else [])
+                    if c.get("kind") in ("lint", "test"))
+    for rid, entry in unverified_entries(load_records(store_dir)).items():
+        if _gate_settles(entry) and _scope(rid.split("#")[0]) in _task_scopes(task) \
+                and rid not in resolved:
+            _append_progress(store_dir, {
+                "type": "resolution", "resolves": rid,
+                "note": f"the commit gate passed on the committed tree: {ran or 'its commands'}"})
 
 
 def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> list[str]:
@@ -1881,7 +2029,7 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
     open-choice checks."""
     log = load_progress_log(store_dir)
     records = load_records(store_dir)
-    resolved = set(resolutions_from_log(log))
+    resolved = settled_ids(store_dir, log)
     found = _scope_records(store_dir, scope_prefix(log, task))
     blockers = []
     if light and (latest_triage(log, task) is not None
@@ -1930,7 +2078,10 @@ def ready_blockers(store_dir: Path, task: int | str, light: bool = False) -> lis
     if escalations:
         blockers.append(f"escalations awaiting the user's ruling: {escalations}; `resolve` each "
                         f"with --note \"{RULING_PREFIX} <the ruling, verbatim>\"")
-    unverified = [i.id for i in items if i.kind == "cannot_verify" and _scope(i.source) in scopes]
+    # An item the commit gate settles never blocks the commit that runs it.
+    entries = unverified_entries(records)
+    unverified = [i.id for i in items if i.kind == UNVERIFIED_FIELD and _scope(i.source) in scopes
+                  and not _gate_settles(entries.get(i.id, {}))]
     if unverified:
         blockers.append(f"open cannot_verify items: {', '.join(unverified)}")
     if found.problems:
@@ -2701,23 +2852,86 @@ def _git_head() -> str:
         raise RuntimeError("close-round needs a git HEAD to record; run it inside the repo") from e
 
 
-def cmd_resolve(store_dir: Path, resolve_id: str, note: str) -> None:
+def cmd_resolve(store_dir: Path, resolve_id: str, note: str, run: bool = False) -> None:
     """Record a resolution — but only for an id that is currently open and
     resolvable. A resolve that matches nothing is not a silent no-op: it
     raises RecordError distinguishing "already resolved" (the id has a
     prior resolution — the corrective message quotes that resolution's own
     note) from "never was open" (the id never matched a resolvable item;
-    the message lists what's actually open right now)."""
+    the message lists what's actually open right now). A typed
+    `cannot_verify` item is resolved only by what settles its kind
+    (`_typed_resolution`), or by the user's ruling."""
     with store_lock(store_dir):
         _check_resolvable(store_dir, resolve_id, note)
-        _append_progress(store_dir,
-                      {"type": "resolution", "resolves": resolve_id, "note": note})
+        entry = unverified_entries(load_records(store_dir)).get(resolve_id, {})
+        typed = "needs" in entry and not note.lower().startswith(RULING_PREFIX)
+        if run and not (typed and entry["needs"] == "run" and not _gate_settles(entry)):
+            raise UsageError(f"--run settles a `run` item by running its command; "
+                             f"{resolve_id} isn't one")
+        if not typed:
+            _append_progress(store_dir,
+                             {"type": "resolution", "resolves": resolve_id, "note": note})
+            return
+        if entry["needs"] != "run" or _gate_settles(entry):
+            _append_progress(store_dir, {"type": "resolution", "resolves": resolve_id,
+                                         **_typed_resolution(store_dir, resolve_id, entry)})
+            return
+        if not run:
+            raise RecordError(f"{resolve_id} is settled by running `{entry['command']}`: "
+                              f"`ledger.py resolve {resolve_id} --run` runs it and records the "
+                              f"result (or --note \"{RULING_PREFIX} ...\" for the user's ruling)")
+        top = _store_repo(store_dir)
+        if top is None:
+            raise RecordError(f"{store_dir} isn't inside a git work tree; nowhere to run "
+                              f"`{entry['command']}`")
+        tree = snapshot_tree(top)
+    # The command may run for minutes: other agents write the store meanwhile.
+    passed, tail = _run_shell(top, entry["command"])
+    if not passed:
+        raise RecordError(f"`{entry['command']}` failed, so {resolve_id} stays open: send this "
+                          "output to the spec reviewer, who raises a tagged finding in the "
+                          f"item's place\n{tail}")
+    with store_lock(store_dir):
+        _append_progress(store_dir, {
+            "type": "resolution", "resolves": resolve_id, "exit": 0, "tree": tree, "tail": tail,
+            "note": f"ran `{entry['command']}`: exit 0"})
+    print(f"`{entry['command']}` passed; {resolve_id} is settled while the scope's files stay "
+          "as they are")
+
+
+def _typed_resolution(store_dir: Path, resolve_id: str, entry: dict) -> dict:
+    """The resolution of a typed `cannot_verify` item that needs no command
+    run here, or a RecordError naming what settles it instead. Only a
+    `read` item is resolved this way: by claim-checker's checked record,
+    when its verdict is `holds`."""
+    if _gate_settles(entry):
+        raise RecordError(f"{resolve_id} is settled by the commit gate when its scope "
+                          "completes: nothing to resolve")
+    if entry["needs"] == "elsewhere":
+        raise RecordError(f"{resolve_id} is settled by `triage`, which files it as a task-note "
+                          "or a follow-up: run `ledger.py triage` for its scope")
+    path = claim_path(store_dir, resolve_id)
+    if not path.is_file():
+        raise RecordError(f"{resolve_id} is settled by claim-checker: dispatch it with the claim "
+                          f"\"{entry['claim']}\", {entry['path']}:{entry['lines']}, the item id "
+                          f"and the record path {path}, and nothing else")
+    data = check_record(path)
+    if data["status"] == CLAIM_FAILS:
+        raise RecordError(f"claim-checker found the claim does not hold ({path}): send its "
+                          "evidence to the spec reviewer, who raises a tagged finding in the "
+                          "item's place")
+    if data["status"] == CLAIM_UNDECIDABLE:
+        raise RecordError(f"claim-checker can't decide the claim by reading ({path}): only the "
+                          f"user settles it: --note \"{RULING_PREFIX} <the ruling, verbatim>\", "
+                          "with the lines and the claim put to them")
+    quoted = ", ".join(f"{line['path']}:{line['line']}" for line in data["evidence"])
+    return {"note": f"claim-checker: holds ({quoted}): {data['because']}", "claim": path.name}
 
 
 def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
     log = load_progress_log(store_dir)
     already_resolved = resolutions_from_log(log)
-    if resolve_id in already_resolved:
+    if resolve_id in already_resolved and resolve_id in settled_ids(store_dir, log):
         raise RecordError(
             f"{resolve_id!r} already resolved (note: {already_resolved[resolve_id]!r})")
     if resolve_id.startswith(NOTE_ID_PREFIX):
@@ -2733,7 +2947,7 @@ def _check_resolvable(store_dir: Path, resolve_id: str, note: str) -> None:
             raise RecordError(f"{resolve_id!r} is settled only by the user: resolve it with "
                               f"--note \"{RULING_PREFIX} <the ruling, verbatim>\"")
         return
-    items = compute_open_items(records, set(already_resolved))
+    items = compute_open_items(records, settled_ids(store_dir, log))
     open_ids = sorted([item.id for item in items if item.kind in RESOLVABLE_KINDS]
                       + [n["id"] for n in open_notes(log)])
     if resolve_id not in open_ids:
@@ -2825,10 +3039,17 @@ PATH_KINDS = ("record", "report", "brief")
 
 
 def handoff_path(store_dir: Path, log: list[dict], scope: int | str, agent: str | None,
-                 kind: str = "record") -> Path:
+                 kind: str = "record", item: str | None = None) -> Path:
     """The store path of a handoff file: a task's or a scope's record or
-    report for `agent`, or a task's brief. A re-run of the same agent in
-    the same scope gets the same path, so it reads its prior report."""
+    report for `agent`, a task's brief, or (with `item`) claim-checker's
+    record for that `read` item. A re-run of the same agent in the same
+    scope gets the same path, so it reads its prior report."""
+    if item is not None:
+        path = claim_path(store_dir, item)
+        if agent != CLAIM_ROLE or kind != "record" or _scope(path.stem) != scope_prefix(log, scope):
+            raise UsageError(f"--item names a `read` item of the scope for claim-checker's "
+                             f"record: --task <its task> --agent {CLAIM_ROLE} --item <id>")
+        return path
     if scope in RETIRED_PATH_SCOPES:
         raise UsageError(f"--task {scope} is retired: the close's gates, fixes and rulings "
                          "are all named by --task close")
@@ -2842,8 +3063,9 @@ def handoff_path(store_dir: Path, log: list[dict], scope: int | str, agent: str 
     return store_dir / (f"{stem}.json" if kind == "record" else f"{stem}-report.md")
 
 
-def cmd_path(store_dir: Path, scope: int | str, agent: str | None, kind: str = "record") -> None:
-    print(handoff_path(store_dir, load_progress_log(store_dir), scope, agent, kind))
+def cmd_path(store_dir: Path, scope: int | str, agent: str | None, kind: str = "record",
+             item: str | None = None) -> None:
+    print(handoff_path(store_dir, load_progress_log(store_dir), scope, agent, kind, item))
 
 
 def cmd_clear(store_dir: Path, discard_open: bool = False) -> None:
@@ -2934,8 +3156,12 @@ def check_record(path: Path) -> dict:
     except Exception as e:
         raise RecordError(
             f"{path}: passes validation but fails to render as an open item: {e}") from e
+    if data["role"] == "spec-reviewer":
+        _check_unverified_typed(path, data)
     if data["role"] == "decision":
         _check_decision_context(path, data)
+    elif data["role"] == CLAIM_ROLE:
+        _check_claim(path, data)
     elif data["role"] in FINDING_LIST_FIELD and _is_store(path.parent):
         _check_contest_answers(path, data)
         _check_reraised_findings(path, data)
@@ -2953,6 +3179,64 @@ def check_record(path: Path) -> dict:
             if data["cycle"] >= 2 and data["status"] in DIAGNOSIS_STATUSES:
                 _check_fix_round(path, data, repo)
     return data
+
+
+def _check_unverified_typed(path: Path, data: dict) -> None:
+    """Every `cannot_verify` entry a reviewer writes now says what settles
+    it; an entry that nothing can check belongs in the report instead."""
+    for idx, entry in enumerate(data.get(UNVERIFIED_FIELD, [])):
+        if "needs" not in entry:
+            raise RecordError(
+                f"{path}: {UNVERIFIED_FIELD}[{idx}] has no `needs`: say what settles it: "
+                f"\"run\" with a `command` (\"{GATE_COMMAND}\" for the task's Verify command, "
+                "which the commit gate runs), \"elsewhere\" with the `sites` outside the task's "
+                "files, or \"read\" with one `claim`, a `path` and its `lines`. A requirement "
+                "nothing can check goes in your report, not here")
+
+
+def claim_path(store_dir: Path, item_id: str) -> Path:
+    """Where claim-checker writes its record for one `read` item."""
+    scope = _scope(item_id.split("#")[0])
+    digest = re.search(r"\[([0-9a-f]+)\]$", item_id)
+    if scope is None or digest is None or f"#{UNVERIFIED_FIELD}[" not in item_id:
+        raise RecordError(f"{item_id!r} isn't a `{UNVERIFIED_FIELD}` item id: copy it from "
+                          "`ledger.py open`")
+    return store_dir / f"{scope}-claim-{digest[1]}.json"
+
+
+def _check_claim(path: Path, data: dict) -> None:
+    """A claim record answers one `read` item of its store, sits at that
+    item's path, and quotes lines that are in the file: each evidence line
+    is compared with that line of the item's file in the working tree,
+    ignoring the whitespace around it. The quotation is what makes the
+    verdict checkable without a second reader, so one the file doesn't
+    hold is refused."""
+    store = path.parent
+    entry = unverified_entries(load_records(store)).get(data["item"])
+    if entry is None or entry.get("needs") != "read":
+        raise RecordError(f"{path}: item {data['item']!r} isn't a `read` item of this store: "
+                          "copy the id from your dispatch")
+    expected = claim_path(store, data["item"])
+    if path.name != expected.name:
+        raise RecordError(f"{path}: the record for {data['item']} is written at {expected}")
+    top = _store_repo(store)
+    if top is None:
+        raise RecordError(f"{path}: {store} isn't inside a git work tree, so the quoted lines "
+                          "can't be checked against the file")
+    target = _normalize_path(entry["path"])
+    try:
+        lines = (top / target).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        raise RecordError(f"{path}: can't read {target}: {e}") from e
+    for idx, quoted in enumerate(data["evidence"]):
+        if _normalize_path(quoted["path"]) != target:
+            raise RecordError(f"{path}: evidence[{idx}] quotes {quoted['path']}, but the claim "
+                              f"is about {target}: quote that file")
+        number = quoted["line"]
+        actual = lines[number - 1] if number <= len(lines) else None
+        if actual is None or actual.strip() != quoted["text"].strip():
+            raise RecordError(f"{path}: evidence[{idx}] is not line {number} of {target} "
+                              f"(that line is {actual!r}): quote the line exactly as it is")
 
 
 TEST_FILE_RE = re.compile(r"(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.(py|rs)$|(^|/)tests\.rs$")
@@ -3828,9 +4112,7 @@ def _file_deferrals(store_dir: Path, log: list[dict], task: int | str,
     """File each new coder deferral: an outside site a later task's footprint
     covers goes to that task as a task-note; everything else is a follow-up
     carrying its rule, for the close batch."""
-    done = set(completed_task_ids(log))
-    owners = {f: other for other, entry in stage_map(log).items()
-              if other != task and str(other) not in done for f in entry.get("files", [])}
+    owners = _unfinished_owners(log, task)
     filed = []
     for item in to_file:
         detail = texts.get(item["id"], item)
@@ -3846,6 +4128,39 @@ def _file_deferrals(store_dir: Path, log: list[dict], task: int | str,
         else:
             filed.append(_file_note(store_dir, log, "follow-up", text, source=task,
                                     rule=item["rule"]))
+        log = load_progress_log(store_dir)
+    return filed
+
+
+def _unfinished_owners(log: list[dict], task: int | str) -> dict[str, int]:
+    """Each file in another unfinished task's footprint, and that task."""
+    done = set(completed_task_ids(log))
+    return {f: other for other, entry in stage_map(log).items()
+            if other != task and str(other) not in done for f in entry.get("files", [])}
+
+
+def _file_elsewhere_items(store_dir: Path, task: int | str, reviewers: list[Record]) -> list[str]:
+    """File each `elsewhere` item the scope's spec reviewer raised and log
+    it settled by the filing: a task-note for the unfinished task whose
+    footprint holds one of its sites, a follow-up otherwise. The caller
+    holds the lock."""
+    log = load_progress_log(store_dir)
+    owners, filed = _unfinished_owners(log, task), []
+    for rid, entry in unverified_entries(reviewers).items():
+        if entry.get("needs") != "elsewhere" or rid in resolutions_from_log(log):
+            continue
+        paths = [_normalize_path(SITE_RE.match(site)["path"]) for site in entry["sites"]]
+        owner = next((owners[p] for p in paths if p in owners), None)
+        text = (f"{entry.get('requirement', '')}: {entry.get('why', '')} "
+                f"({', '.join(entry['sites'])})")
+        kind = "task-note" if owner is not None else "follow-up"
+        nid = note_id(kind, text, owner, None, task)
+        if nid not in {n["id"] for n in notes_from_log(log)}:
+            _file_note(store_dir, log, kind, text, for_task=owner, source=task,
+                       rule=None if owner is not None else entry.get("requirement"))
+            filed.append(nid)
+        _append_progress(store_dir, {"type": "resolution", "resolves": rid,
+                                     "note": f"filed {nid}"})
         log = load_progress_log(store_dir)
     return filed
 
@@ -3893,6 +4208,7 @@ def cmd_triage(store_dir: Path, task: int | str) -> None:
         candidates = [c for c in ctx["file_candidates"] if c["id"] not in already]
         filed_notes += _file_deferrals(store_dir, load_progress_log(store_dir), task, candidates,
                                        {c["id"]: c for c in candidates})
+        filed_notes += _file_elsewhere_items(store_dir, task, ctx["reviewers"])
         tree = _tree_or_none(store_dir)
         for change in changes:
             _append_progress(store_dir, _finding_entry(task, change, states, ctx["versions"],
@@ -5296,6 +5612,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"a task number, or one of {', '.join(PATH_SCOPES)}")
     p_path.add_argument("--agent", help="the agent's registered name (not for a brief)")
     p_path.add_argument("--kind", default="record", choices=PATH_KINDS)
+    p_path.add_argument("--item", help="with --agent claim-checker: the `read` cannot_verify "
+                                       "item its record answers")
 
     p_commit = sub.add_parser("commit", parents=[store_parent],
                               help="ready, stage the task's footprint, gate, git commit it "
@@ -5376,6 +5694,9 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="record a resolution for an open item")
     p_resolve.add_argument("id")
     p_resolve.add_argument("--note", default="")
+    p_resolve.add_argument("--run", action="store_true",
+                           help="a `run` cannot_verify item: run its command now and record "
+                                "the result, which settles it on exit 0")
 
     p_clear = sub.add_parser("clear", parents=[store_parent],
                               help="remove records matching the naming convention "
@@ -5521,7 +5842,7 @@ def main() -> None:
         elif args.command == "gate":
             sys.exit(cmd_gate(store_dir, args.task, args.test, args.lint))
         elif args.command == "path":
-            cmd_path(store_dir, args.task, args.agent, args.kind)
+            cmd_path(store_dir, args.task, args.agent, args.kind, args.item)
         elif args.command == "commit":
             sys.exit(cmd_commit(store_dir, args.task, args.message, args.test, args.lint,
                                 args.light))
@@ -5542,7 +5863,7 @@ def main() -> None:
         elif args.command == "inline":
             cmd_inline(store_dir, args.task, args.files)
         elif args.command == "resolve":
-            cmd_resolve(store_dir, args.id, args.note)
+            cmd_resolve(store_dir, args.id, args.note, args.run)
         elif args.command == "clear":
             cmd_clear(store_dir, args.discard_open)
         elif args.command == "run-state":
