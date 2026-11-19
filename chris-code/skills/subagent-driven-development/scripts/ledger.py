@@ -2358,11 +2358,14 @@ def _process_started(pid: object) -> str | None:
     """When the live process `pid` started, as `ps` prints it, or None when
     no such process is running (a zombie is not). A pid alone doesn't name a
     process for long, since the system hands a dead one's number to the
-    next; a pid and its start time do."""
+    next; a pid and its start time do. `ps` prints the time in its reader's
+    timezone and language, so both are fixed here: every reader of the lease
+    must see the same text for the same process."""
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return None
     listing = subprocess.run(["ps", "-o", "stat=", "-o", "lstart=", "-p", str(pid)],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True,
+                             env={**os.environ, "LC_ALL": "C", "TZ": "UTC0"})
     state, _, started = listing.stdout.strip().partition(" ")
     if listing.returncode != 0 or not started.strip() or state.startswith("Z"):
         return None
@@ -2395,9 +2398,7 @@ def _current_lease(store_dir: Path) -> dict | None:
     lease = read_lease(store_dir)
     if lease is None or lease.get("running_pid") is None or _command_running(lease):
         return lease
-    pgid = lease.get("command_pgid")
-    if _same_process(pgid, lease.get("command_started")):
-        _end_group(pgid)
+    _end_orphaned_group(lease.get("command_pgid"), lease.get("command_started"))
     if lease.get("release_when_done"):
         (scratch_root(store_dir) / SCRATCH_LEASE).unlink(missing_ok=True)
         return None
@@ -2406,6 +2407,22 @@ def _current_lease(store_dir: Path) -> dict | None:
     lease = {**lease, **dict.fromkeys(RUNNING_FIELDS)}
     _write_lease(store_dir, lease)
     return lease
+
+
+def _end_orphaned_group(pgid: object, started: object) -> None:
+    """End the command group a dead guard recorded (`pgid`, whose leader
+    started at `started`), unless that id now belongs to another process.
+
+    The system gives a group's id to no new process while the group has a
+    member. So a live process with this id and another start time means the
+    recorded group is gone and the id was handed on: nothing is ended. No
+    live process with this id means whatever the group still holds is the
+    command's own (a server its leader started and left, say)."""
+    if not isinstance(pgid, int) or isinstance(pgid, bool) or pgid <= 1:
+        return
+    now = _process_started(pgid)
+    if now is None or now == started:
+        _end_group(pgid)
 
 
 def _lease_idle_seconds(lease: dict) -> float:
@@ -2661,8 +2678,10 @@ def run_in_scratch(store_dir: Path, task: int | str, agent: str, command: list[s
             except subprocess.TimeoutExpired:
                 continue
     if code < 0:
-        # The guard was killed: its command is ended by the next scratch
-        # command that reads the lease, and nothing is known of its result.
+        # The guard was killed, so its command has no limits any more and
+        # nothing is known of its result: end it before returning.
+        with _scratch_lock(store_dir):
+            _current_lease(store_dir)
         print(f"the guard was killed (signal {-code}) before its command finished: report "
               "this break as stopped; don't run it again", file=sys.stderr)
         return SCRATCH_STOPPED_EXIT
@@ -2811,11 +2830,34 @@ def drop_scratch(repo: Path | None, store_dir: Path) -> None:
     root = scratch_root(store_dir)
     if not root.exists():
         return
+    _stop_scratch_command(store_dir)
     if repo is not None:
         top = _toplevel(repo)
         for copy in [scratch_copy(store_dir), *sorted(root.glob("task-*/*/copy"))]:
             _remove_copy(top, copy)
     _force_rmtree(root)
+
+
+def _stop_scratch_command(store_dir: Path) -> None:
+    """End whatever still runs in the copy before it is deleted, since a
+    build left running would write its cache back after the delete. A
+    command a dead guard left is ended here; a live guard is told to stop
+    its own. A RecordError when the guard hasn't stopped in the time one
+    stop can take."""
+    with _scratch_lock(store_dir):
+        lease = _current_lease(store_dir)
+    if not _command_running(lease):
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.kill(lease["running_pid"], signal.SIGTERM)
+    # The guard sees the stop at its next sample, ends the group (ask, then
+    # force), and clears its mark under the lock, which is why none is held.
+    deadline = time.monotonic() + SCRATCH_SAMPLE_SECONDS + 3 * SCRATCH_KILL_GRACE_SECONDS
+    while _command_running(lease):
+        if time.monotonic() > deadline:
+            raise RecordError("a command is still running in the scratch copy (its guard is "
+                              f"process {lease['running_pid']}) and didn't stop when asked")
+        time.sleep(SCRATCH_SIGNAL_POLL_SECONDS)
 
 
 def _remove_copy(top: Path, path: Path) -> None:
