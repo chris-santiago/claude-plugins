@@ -8,6 +8,14 @@ This history was reconstructed retroactively from git (development began 2026-05
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-20
+
+`lean-plan` sizes a task against what it costs to run, and makes the task cut itself.
+
+### Changed
+- **`lean-plan` sizes a task against the cost of running it.** The self-review check that merges small tasks named only the smallest (a guard, a message, a row or two of `Cases:`) and counted only the review sequence. It now counts the task's `Verify:` runs (the coder's and the commit gate's) and its reviewers' break checks as well, and the bar rises with what `Verify:` costs: where it builds the project or runs its whole suite for minutes, a task of several `Cases:` rows joins its neighbor too. Before, a plan for a project with a slow `Verify:` kept every task above the smallest on its own, and each one paid for those runs. The limit is unchanged: a merged task must still read as one change a reviewer can hold at once.
+- **`lean-plan` makes the task cut itself.** A new *Before Writing* step says a task breakdown that arrives with the work (in a decision doc, a spec or a research report) is a proposal, held to the same self-review checks as the planner's own cut. Before, nothing said an upstream breakdown wasn't binding, so one could be carried into the plan as given. A cut the user set themselves is kept: the planner asks before merging any of its tasks.
+
 ## [0.20.0] - 2026-11-18
 
 The orchestrator no longer retypes the run's constants on every call, and the gate keeps its whole output.
