@@ -11,6 +11,8 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 
 **Core principle:** Find the root cause before attempting a fix. A fix aimed at the symptom leaves the cause in place and often adds a second bug.
 
+If a step seems not to apply, do it anyway or ask. Don't decide on your own that its purpose is already met.
+
 ## The Iron Law
 
 ```
