@@ -85,6 +85,13 @@ No `python-quality-reviewer` runs beside you. The pytorch-coder follows general 
   8. Exception drift across similar failures
   9. Orchestration mixed with implementation in one function
   10. Overgrown classes with weak invariants
+  11. Parameter forwarding gaps: an accepted parameter that never reaches the result and isn't explicitly dropped
+  12. Same-answer conditionals repeated across call sites
+  13. Lying type annotations (`-> tuple`, `-> dict`, `-> Any`) on a function with a real contract
+  14. Public/internal type bifurcation without a typed union at the public boundary
+  15. Sibling duplication: the same leaf logic copied across three or more sibling sites
+  16. Overgrown modules: a file past ~800 lines, or one spanning more than two weakly related responsibilities
+  17. O(n²) membership lookups in a hot loop
 - **General bugs**, beside the ML-specific ones:
   - **Off-by-one errors** in sequence indexing, padding calculations, window sizes, slicing
   - **Unhandled None/empty cases**: code that assumes a non-empty or non-None input without checking

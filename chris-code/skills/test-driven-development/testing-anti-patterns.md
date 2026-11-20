@@ -12,11 +12,9 @@ Tests must verify real behavior, not mock behavior. Mocks are a means to isolate
 
 ## The Iron Laws
 
-```
-1. NEVER test mock behavior
-2. NEVER add test-only methods to production classes
-3. NEVER mock without understanding dependencies
-```
+1. **Test what the code does, not what a mock does.** An assertion on a mock passes whether or not the code works.
+2. **Keep test-only methods out of production classes.** Put them in test utilities, where nothing in production can call them.
+3. **Understand what a dependency does before you mock it.** A mock that removes a side effect the test relies on makes the test pass or fail for the wrong reason.
 
 ## Anti-Pattern 1: Testing Mock Behavior
 
@@ -44,18 +42,18 @@ test('renders sidebar', () => {
   expect(screen.getByRole('navigation')).toBeInTheDocument();
 });
 
-// OR if sidebar must be mocked for isolation:
+// or if sidebar must be mocked for isolation:
 // Don't assert on the mock - test Page's behavior with sidebar present
 ```
 
 ### Gate Function
 
 ```
-BEFORE asserting on any mock element:
+Before asserting on any mock element:
   Ask: "Am I testing real component behavior or just mock existence?"
 
-  IF testing mock existence:
-    STOP - Delete the assertion or unmock the component
+  If testing mock existence:
+    Stop - Delete the assertion or unmock the component
 
   Test real behavior instead
 ```
@@ -102,17 +100,17 @@ afterEach(() => cleanupSession(session));
 ### Gate Function
 
 ```
-BEFORE adding any method to production class:
+Before adding any method to production class:
   Ask: "Is this only used by tests?"
 
-  IF yes:
-    STOP - Don't add it
+  If yes:
+    Stop - Don't add it
     Put it in test utilities instead
 
   Ask: "Does this class own this resource's lifecycle?"
 
-  IF no:
-    STOP - Wrong class for this method
+  If no:
+    Stop - Wrong class for this method
 ```
 
 ## Anti-Pattern 3: Mocking Without Understanding
@@ -151,22 +149,22 @@ test('detects duplicate server', () => {
 ### Gate Function
 
 ```
-BEFORE mocking any method:
-  STOP - Don't mock yet
+Before mocking any method:
+  Stop - Don't mock yet
 
   1. Ask: "What side effects does the real method have?"
   2. Ask: "Does this test depend on any of those side effects?"
   3. Ask: "Do I fully understand what this test needs?"
 
-  IF depends on side effects:
+  If depends on side effects:
     Mock at lower level (the actual slow/external operation)
-    OR use test doubles that preserve necessary behavior
-    NOT the high-level method the test depends on
+    Or use test doubles that preserve necessary behavior
+    Not the high-level method the test depends on
 
-  IF unsure what test depends on:
-    Run test with real implementation FIRST
+  If unsure what test depends on:
+    Run test with real implementation first
     Observe what actually needs to happen
-    THEN add minimal mocking at the right level
+    Then add minimal mocking at the right level
 
   Red flags:
     - "I'll mock this to be safe"
@@ -194,7 +192,7 @@ const mockResponse = {
 - **Tests pass but integration fails** - Mock incomplete, real API complete
 - **False confidence** - Test proves nothing about real behavior
 
-**The Iron Rule:** Mock the COMPLETE data structure as it exists in reality, not just fields your immediate test uses.
+**The Iron Rule:** Mock the complete data structure as it exists in reality, not just fields your immediate test uses.
 
 **The fix:**
 ```typescript
@@ -210,16 +208,16 @@ const mockResponse = {
 ### Gate Function
 
 ```
-BEFORE creating mock responses:
+Before creating mock responses:
   Check: "What fields does the real API response contain?"
 
   Actions:
     1. Examine actual API response from docs/examples
-    2. Include ALL fields system might consume downstream
+    2. Include all fields system might consume downstream
     3. Verify mock matches real response schema completely
 
   Critical:
-    If you're creating a mock, you must understand the ENTIRE structure
+    If you're creating a mock, you must understand the entire structure
     Partial mocks fail silently when code depends on omitted fields
 
   If uncertain: Include all documented fields
@@ -245,7 +243,7 @@ TDD cycle:
 1. Write failing test
 2. Implement to pass
 3. Refactor
-4. THEN claim complete
+4. Then claim complete
 ```
 
 ## When Mocks Become Too Complex

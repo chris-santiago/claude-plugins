@@ -1,6 +1,6 @@
 ---
 name: bug-hunt
-description: Repeatable parallel test-writing campaign for any project. Dispatches one bug-hunter agent per subsystem to find edge-case bugs across the codebase. Use when the user says /bug-hunt, "write edge case tests", "find bugs", "test coverage sweep", or wants a systematic bug-finding pass. Accepts an optional subsystem name to scope a single subsystem.
+description: Repeatable parallel test-writing campaign for Python and Rust code. Dispatches one bug-hunter agent per subsystem to find edge-case bugs across the codebase. Use when the user says /bug-hunt, "write edge case tests", "find bugs", "test coverage sweep", or wants a systematic bug-finding pass. Accepts an optional subsystem name to scope a single subsystem.
 ---
 
 # Bug Hunt
@@ -11,48 +11,43 @@ Parallel edge-case test campaign. One `bug-hunter` agent per subsystem writes te
 
 ### Step 1 — Discover subsystems
 
-If the user provided a subsystem name (e.g. `/bug-hunt auth`), run only that subsystem.
+If the user provided a subsystem name (e.g. `/bug-hunt auth`), hunt only that subsystem: go straight to item 3 for it.
 
 Otherwise, discover subsystems by exploring the project:
 
 1. Read the project's CLAUDE.md, README, and directory structure.
 2. Identify logical subsystems — modules, packages, crates, or functional areas with distinct responsibilities.
-3. For each subsystem, determine:
+3. For each subsystem, determine the six inputs its agent needs:
    - **Key**: short kebab-case name (e.g. `auth`, `data-pipeline`, `rendering`)
-   - **Mode**: what languages are involved — `Py`, `Rs`, `Py+Rs`, `TS`, or other
+   - **Mode**: `Py`, `Rs` or `Py+Rs`, the languages the `bug-hunter` agent writes tests in
    - **Source scope**: paths containing the subsystem's implementation
    - **Existing tests**: paths containing existing tests for the subsystem
-4. Present the discovered subsystem table to the user for confirmation before dispatching agents.
+   - **Test output paths**: where the new test file for each language goes, named `test_bug_hunt_<key>` in the project's test directory and following its conventions
+   - **Build/run commands**: how to build the project and run that test file, for each language in the mode
+4. A subsystem in any other language has no agent mode. Leave it out and tell the user it isn't covered.
+5. Present the discovered subsystem table to the user for confirmation before dispatching agents.
 
 ### Step 2 — Dispatch agents in parallel
 
-Send ALL active subsystems in a **single message** as parallel Agent tool calls — one per subsystem.
-
-Prompt template per agent (fill in the blanks):
+Dispatch one `chris-code:bug-hunter` agent per subsystem, all in a **single message** so they run in parallel. Each dispatch carries that subsystem's six inputs and nothing else:
 
 ```
 Subsystem: <key>
-Mode: <language mode>
+Mode: <Py | Rs | Py+Rs>
 Source paths: <source scope>
 Existing test paths: <existing tests>
-
-You are a bug-hunter agent. Your job is to:
-1. Read all source files in scope
-2. Identify edge cases, boundary conditions, error paths, and under-tested logic
-3. Write a focused test file exercising those cases
-4. Run the tests
-5. Return your verdict: tests added count, list of failures (test name + error), status (clean / bugs-found)
-
-Write tests that are minimal, targeted, and follow the project's existing test patterns.
+Test output paths: <one path per language in the mode>
+Build/run commands: <how to build, and how to run each new test file>
 ```
+
+The agent's own contract says how to hunt and what to return, so don't restate its job, and don't narrow it: the agent disregards a dispatch that tells it to skip a category or downplay a failure.
 
 ### Step 3 — Run the new tests
 
-Use the project's established test runner. Examples:
+Run the new test files yourself with the same commands you gave the agents, to confirm the failures they reported. Examples:
 
 - Python: `pytest tests/test_bug_hunt_*.py --tb=short -q`
 - Rust: `cargo test -- bug_hunt --nocapture`
-- TypeScript/JS: `npm test -- --grep bug_hunt` or equivalent
 - Mixed: run each language's test runner separately
 
 ### Step 4 — Write the report

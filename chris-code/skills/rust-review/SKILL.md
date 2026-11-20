@@ -226,7 +226,7 @@ When this skill is invoked, **do not jump into code changes**. Begin by producin
 - public entry points
 
 **B. Drift report**
-- top 10 likely cohesion problems
+- the cohesion problems you found, most serious first
 - severity (S1–S5) for each
 - confidence level (high / medium / hypothesis) for each
 - a one-line explanation of why each likely exists

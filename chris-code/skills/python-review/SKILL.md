@@ -254,7 +254,7 @@ When this skill is invoked, **do not jump into a rewrite**. Begin by producing, 
 - side-effect boundaries
 
 **B. Drift report**
-- top 10 likely cohesion problems
+- the cohesion problems you found, most serious first
 - severity (S1–S5) and confidence (high/medium/low) for each
 - a one-line explanation of why each likely exists
 

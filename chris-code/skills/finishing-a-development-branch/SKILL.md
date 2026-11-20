@@ -80,8 +80,15 @@ Which option?
 
 #### Option 1: Merge Locally
 
+The merge and its test run happen in the checkout that holds `<base-branch>`, so leave the worktree first. Before you leave it, note its path, and for an SDD run resolve `SDD_SCRIPTS` and `STORE` (Step 6): resolved from anywhere else, `STORE` names a different store.
+
+- **A worktree this session entered with `EnterWorktree`:** call `ExitWorktree({ action: "keep" })`. It returns the session to the original checkout and leaves the worktree and its branch on disk. A `cd` in Bash is not a substitute: it doesn't move the session. Then run the block below without its first two lines.
+- **Any other worktree, or a normal repo:** run the block below as written. Its `cd` holds for that one command.
+
+If you can't tell which it is (after a compaction, say), call `ExitWorktree({ action: "keep" })`. Outside a worktree session it does nothing and says so, and then the second case applies.
+
 ```bash
-# Get main repo root for CWD safety
+# Skip these two lines when ExitWorktree already returned the session to the original checkout
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
 cd "$MAIN_ROOT"
 
@@ -122,13 +129,13 @@ EOF
 )"
 ```
 
-**Do NOT clean up worktree** — user needs it alive to iterate on PR feedback.
+**Do NOT clean up worktree** — user needs it alive to iterate on PR feedback. If you leave it, leave with `ExitWorktree({ action: "keep" })`.
 
 #### Option 3: Keep As-Is
 
 Report: "Keeping branch <name>. Worktree preserved at <path>."
 
-**Don't cleanup worktree.**
+**Don't cleanup worktree.** If you leave it, leave with `ExitWorktree({ action: "keep" })`.
 
 #### Option 4: Discard
 
@@ -144,13 +151,7 @@ Type 'discard' to confirm.
 
 Wait for exact confirmation.
 
-If confirmed:
-```bash
-MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
-cd "$MAIN_ROOT"
-```
-
-Then: Cleanup worktree (Step 6), then force-delete branch:
+If confirmed, run Step 6 (the run's store, then the worktree). Then force-delete the branch, if Step 6 left it:
 ```bash
 git branch -D <feature-branch>
 ```
@@ -159,9 +160,13 @@ git branch -D <feature-branch>
 
 **Only runs for Options 1 and 4.** Options 2 and 3 always preserve the worktree.
 
-First, if an SDD run built the change, run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` and give the user its open follow-ups and landed disclosures in your summary: removing the store destroys them. `SDD_SCRIPTS` is `<this skill's base directory>/../subagent-driven-development/scripts`, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`, or the session's `--store` override.
+#### The run's store
 
-Then, for the same SDD run, clear it, which also deletes the run's break-check copy and build cache from the system temp folder (deleting the store's folder alone would leave them):
+If an SDD run built the change, clean up its store before the worktree goes. `SDD_SCRIPTS` is `<this skill's base directory>/../subagent-driven-development/scripts`, and `STORE=$(python3 "$SDD_SCRIPTS/ledger.py" store-dir)`, or the session's `--store` override. Resolve `STORE` from inside the worktree: it is an absolute path, and `report` and `clear` find the run from it, so they still work once Option 1 has returned the session to the original checkout.
+
+First run `python3 "$SDD_SCRIPTS/ledger.py" report --store "$STORE"` and give the user its open follow-ups and landed disclosures in your summary: removing the store destroys them.
+
+Then clear the store, which also deletes the run's break-check copy and build cache from the system temp folder (deleting the store's folder alone would leave them):
 
 ```bash
 python3 "$SDD_SCRIPTS/ledger.py" clear --store "$STORE"
@@ -172,31 +177,41 @@ python3 "$SDD_SCRIPTS/ledger.py" clear --store "$STORE"
 Then remove the store's folder (task briefs, reports, review diffs, ledger records and progress log):
 
 ```bash
-rm -rf "$(git rev-parse --show-toplevel)/.sdd"   # per-worktree: toplevel resolves to this worktree's root
+rm -rf "$STORE"   # the absolute path resolved above: `.sdd/` at the worktree's root, or the session's `--store` override
 ```
 
-If the session resolved its store with a `--store` override directory, remove that directory too — it holds the same records, progress log, briefs, and reports, and the disposable-store invariant applies to it exactly as it does to the default location.
+A store inside a worktree also goes when the worktree is removed below; the explicit removal covers a normal repo and a relocated store. Run `clear` either way: the copy and the cache live outside the worktree.
 
-In a worktree, removing the worktree below also removes this directory; the explicit removal covers the normal-repo case. Run `clear` either way: the copy and the cache live outside the worktree.
+#### The worktree
+
+Which case applies decides who removes it. We clean up only a worktree in one of our own locations: `.worktrees/`, `worktrees/`, `.claude/worktrees/`, or `~/.config/chris-code/worktrees/`.
+
+**Normal repo** (`GIT_DIR == GIT_COMMON`, Step 2): no worktree to clean up. Done.
+
+**A worktree this session entered with `EnterWorktree`,** in one of our locations. Leave it with `ExitWorktree` before anything removes it:
+
+- *Option 1:* the session already left it with `ExitWorktree({ action: "keep" })` (Step 5). From the original checkout, remove what it kept:
+
+  ```bash
+  git worktree remove <the worktree's path>
+  git worktree prune  # Self-healing: clean up any stale registrations
+  ```
+
+- *Option 4:* call `ExitWorktree({ action: "remove", discard_changes: true })`. The user's typed `discard` is the confirmation `discard_changes` needs. It returns the session to the original checkout and deletes the worktree and its branch. It won't remove a worktree the session entered by `path` (one made with `git worktree add`): leave that one with `action: "keep"`, then remove it from the original checkout with `git worktree remove --force <the worktree's path>`.
+
+If `ExitWorktree` answers that no worktree session is active, the session didn't enter this worktree with the tool: treat it as the next case.
+
+**A worktree the session didn't enter with the tool** (it started inside one made by hand), in one of our locations. The session can't leave it, so the commands run from the main repo root:
 
 ```bash
-GIT_DIR=$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)
-GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
 WORKTREE_PATH=$(git rev-parse --show-toplevel)
-```
-
-**If `GIT_DIR == GIT_COMMON`:** Normal repo, no worktree to clean up. Done.
-
-**If worktree path is under `.worktrees/`, `worktrees/`, `.claude/worktrees/`, or `~/.config/chris-code/worktrees/`:** We own cleanup.
-
-```bash
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
 cd "$MAIN_ROOT"
 git worktree remove "$WORKTREE_PATH"
 git worktree prune  # Self-healing: clean up any stale registrations
 ```
 
-**Otherwise:** The host environment (harness) owns this workspace. Do NOT remove it. If your platform provides a workspace-exit tool, use it. Otherwise, leave the workspace in place.
+**Otherwise** (a worktree anywhere else, however the session got into it): The host environment (harness) or whoever made it owns this workspace. Do NOT remove it. If your platform provides a workspace-exit tool, use it. Otherwise, leave the workspace in place.
 
 ## Quick Reference
 
@@ -214,6 +229,6 @@ git worktree prune  # Self-healing: clean up any stale registrations
 - Never delete work without typed "discard" confirmation
 - Never force-push without explicit user request
 - Never clean up worktrees you didn't create (provenance check)
-- Never run `git worktree remove` from inside the worktree — `cd` to main repo root first
+- Never run `git worktree remove` from inside the worktree. Leave with `ExitWorktree` first when the session entered it with `EnterWorktree`, and `cd` to the main repo root otherwise
 - Always remove worktree before deleting its branch (order matters)
 - Only clean up worktrees for Options 1 and 4 — Option 2 (PR) needs the worktree alive

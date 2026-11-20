@@ -387,5 +387,3 @@ Breaking any rule above is a red flag. These are the ones a long run's pressure 
 **Subagents use:** **chris-code:test-driven-development** for each task.
 
 **Alternative workflow:** **chris-code:executing-plans** for inline execution without subagents.
-
-**Related:** **chris-code:requesting-code-review** for ad-hoc reviews outside these gates.

@@ -65,6 +65,10 @@ Senior Rust coder. Implement features, fix bugs, write tests, and refactor — c
 
 15. **Lookup loops with O(n²) cost**: `Vec::contains` / `HashMap::values().any(…)` inside a hot loop where the collection grows. Use `HashSet` / `HashMap` for membership; the construction cost is paid back in one pass.
 
+### Public boundaries
+
+16. **Sentinel returns from public functions**: signaling failure with `-1`, an empty value or a default that callers can't tell from a real result. Return `Option` or `Result` instead.
+
 ## Critical patterns (S4–S5)
 
 - **New `unsafe` blocks** without justification → S4–S5.

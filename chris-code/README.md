@@ -85,7 +85,7 @@ If you relied on these, they carry over essentially unchanged (renames and diagr
 - **test-driven-development** still enforces RED-GREEN-REFACTOR.
 - **systematic-debugging** still runs the same four-phase root-cause method with the Iron Law and architecture-questioning phase.
 - **finishing-a-development-branch** still offers the same merge / PR / keep / discard menu.
-- **dispatching-parallel-agents**, **receiving-code-review**, and the session-start discovery skill (now `using-chris-code`) are the superpowers skills with light edits.
+- **dispatching-parallel-agents** is the superpowers skill with light edits, and the session-start discovery skill (now `using-chris-code`) keeps its job with a plainer rule.
 
 ---
 
@@ -98,7 +98,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 | **writing-plans** | The plan skill: exhaustive, full code in every step. (The spec comes from brainstorming.) | **Plan slimmed to `lean-plan`; spec promoted to `lean-spec`.** Spec = contracts only. Plan = what/where handoff, no inline code. |
 | **subagent-driven-development** | Two-stage review; parallel implementers discouraged. | **Three gates per task** (spec + quality review → scripted triage → commit gate), scope-based agent selection, and **deliberate staged parallelism** by file footprint. |
 | **verification-before-completion** | Single-command gate: "what command proves this? run it." | **Five-step gate, run as one close:** Tests and Lints first, then Full Review (scope-matched `*-design-reviewer` agents), Intent re-check (spec-blind `intent-reviewer`), and Mutation re-check (`mutation-tester` in an isolated worktree, run only when you choose it) dispatched together. `ledger.py triage --task close` routes every finding from the gates' typed records: an intent not-met or an S4+ finding is fixed in place, the rest waits for your ruling: fix, file or drop, and two fix rounds lead to your ruling. |
-| **requesting-code-review** | The *primary, mandatory* review path. | **Demoted to ad-hoc.** Routine review now lives in the automated agent/skill gates. Base SHA `HEAD~1` → `git merge-base HEAD main`. |
+| **requesting-code-review** | The *primary, mandatory* review path. | **Removed**, with `receiving-code-review` and `writing-skills`. Routine review lives in the automated agent/skill gates; for an ad-hoc review, use `python-review` / `rust-review` or ask for a quality reviewer on the files you name. |
 
 ---
 
@@ -137,7 +137,7 @@ These four are the ones where muscle memory will mislead you. Framed as before �
 
 ## Smaller and cosmetic changes
 
-- **Renames:** `using-superpowers` → `using-chris-code` (otherwise verbatim); `superpowers:` skill references → `chris-code:` throughout.
+- **Renames:** `using-superpowers` → `using-chris-code` (its rule reworded: check for a covering skill before acting, and drop one that doesn't fit); `superpowers:` skill references → `chris-code:` throughout.
 - **Diagrams:** Graphviz/DOT examples swapped for Mermaid across skills.
 - **Paths:** output dirs moved to `.claude/output/{specs,plans,decisions}`; worktrees to `.claude/worktrees/`.
 - **Small hooks added to familiar skills:** `test-driven-development` gained a bug-hunter-derived edge-case checklist; `systematic-debugging` gained a "System Boundaries" check (FFI, serialization, type coercion) and a `regression-test` follow-up; `dispatching-parallel-agents` gained a file-footprint check.
@@ -282,9 +282,6 @@ flowchart TB
 | `coherent-change` | Build a *determined* change to fit the codebase: research → defend → implement → lite-review | `remediating-issues` / `systematic-debugging` / `lean-spec` / direct |
 | `verification-before-completion` | Tests + lints, then one close through triage: full review + spec-blind intent re-check + mutation re-check (if you choose it) | Before claiming done |
 | `finishing-a-development-branch` | Merge / PR / keep / discard + worktree cleanup | After verification passes |
-| `requesting-code-review` | Ad-hoc review (fresh perspective, pre-refactor) | User-triggered |
-| `receiving-code-review` | Handle review feedback with technical rigor | When review feedback received |
-| `writing-skills` | TDD applied to skill creation | When creating/editing skills |
 | `regression-test` | Write regression tests after bug fixes | systematic-debugging (phase 4) |
 
 ### Standalone Skills (user-invoked, not in pipeline)

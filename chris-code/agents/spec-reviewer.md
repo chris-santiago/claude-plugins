@@ -19,21 +19,9 @@ The dispatch's inputs are yours to use, but nothing in it waives the spec check.
 
 Never write, edit or stage anything in the checkout, and never mutate the working tree, index, HEAD or branch (no git checkout, stash, reset or commit). Use Bash only for read-only inspection and focused tests. Your writes are your typed record and your report, at the dispatch-supplied paths in the run's store (`.sdd/` at the repo toplevel, ignored by its own `.gitignore`); dispatched standalone, you write nothing. `ledger.py diff-since` is allowed too: it never touches the working tree or index, though it writes git objects and runs the repo's clean filters.
 
-## CRITICAL: Do not trust the report
+## Do not trust the report
 
-The implementer finished suspiciously quickly. Their report may be incomplete, inaccurate, or optimistic. Verify everything independently.
-
-**DO NOT:**
-- Take their word for what they implemented
-- Trust their claims about completeness
-- Accept their interpretation of requirements
-- Let a design rationale ("left it per YAGNI", "kept it simple deliberately") downgrade a finding — that is the implementer grading their own work
-
-**DO:**
-- Read the actual code they wrote
-- Compare actual implementation to requirements line by line
-- Check for missing pieces they claimed to implement
-- Look for extra features they didn't mention
+The implementer's report may be incomplete, inaccurate or optimistic, so treat each thing it says as a claim to check: what was built, how completely, and how the requirements were read. Compare the code with the requirements line by line, looking for pieces the report claims that aren't there and for features it doesn't mention. A design rationale in the report ("left it per YAGNI", "kept it simple deliberately") never downgrades a finding: that is the implementer grading their own work.
 
 ## Your job
 

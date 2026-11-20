@@ -4,9 +4,28 @@ All notable changes to **chris-code** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Versions are markers in `plugin.json`; the project is shared by cloning, not by tagged GitHub releases.
 
-This history was reconstructed retroactively from git (development began 2026-05-20). chris-code is a superset of [obra/superpowers](https://github.com/obra/superpowers): forked from **v5.1.0**, then hardened with selective **v6.0.0** backports.
+This history was reconstructed retroactively from git (development began 2026-05-20). chris-code grew out of [obra/superpowers](https://github.com/obra/superpowers): forked from **v5.1.0**, then hardened with selective **v6.0.0** backports.
 
 ## [Unreleased]
+
+## [0.21.0] - 2026-11-20
+
+A prompt audit of the plugin's skills and agents. Three inherited skills are removed, instructions that contradicted each other are reconciled, and several skills state the same rules without capitalized emphasis.
+
+### Removed
+- **`requesting-code-review`, `receiving-code-review` and `writing-skills`.** No workflow invoked any of them. For an ad-hoc review, use `python-review` / `rust-review`, or ask for a quality reviewer on the files you name; the *Review a branch* guide is rewritten around those.
+- **The Copilot, Codex and Gemini tool mappings** under `using-chris-code/references/`, and the lines in `using-chris-code` that pointed at them. The plugin is written for Claude Code.
+
+### Changed
+- **`finishing-a-development-branch` leaves a worktree before removing it.** For a worktree the session entered with `EnterWorktree`, it leaves with `ExitWorktree`: `keep` before a local merge, after which the kept worktree is removed from the original checkout, and `remove` on a discard. Before, it ran `git worktree remove` on the directory the session was still in, after a `cd` that doesn't move the session. The run's store is cleaned by its absolute path, so that still works once the session has left the worktree.
+- **`bug-hunt` dispatches the `bug-hunter` agent with all six of its inputs.** It sent four and restated the agent's job in a prompt template. It no longer offers a TypeScript mode the agent doesn't have.
+- **A sentinel return from a public function is S3 in the coders' contracts,** as it already was for the reviewers. The Python and PyTorch coders listed it as a minor pattern and the Rust coder didn't list it, so a coder following its contract could earn a fix round.
+- **The quality reviewers check every general S3 pattern their coder is told to avoid.** Each listed 10 of them. The Python and PyTorch reviewers gain the missing seven and the Rust reviewer the missing five. The Rust reviewer's sentinel check no longer counts `None` as a sentinel.
+- **`using-chris-code` states one plain rule:** before responding or acting, check whether a skill covers the task, invoke one that plausibly does, and drop it if it doesn't fit. The "even a 1% chance" block is gone, and the twelve-row table of forbidden thoughts is three rows.
+- **`test-driven-development`, `systematic-debugging` and `testing-anti-patterns.md` keep every rule and lose the capitalized emphasis.** One behavior changes: code written before its test is set aside, not deleted, and the skill no longer has code deleted that the task didn't write.
+- **`spec-reviewer` no longer says the implementer "finished suspiciously quickly".** One paragraph says the report may be optimistic and that each of its claims is checked against the code.
+- **`python-review` and `rust-review` report the cohesion problems they found,** not a "top 10".
+- **`bug-hunter` describes a good hunt once,** in place of its "lazy" and "thorough" lists, and its examples no longer come from one kind of project.
 
 ## [0.20.1] - 2026-11-20
 

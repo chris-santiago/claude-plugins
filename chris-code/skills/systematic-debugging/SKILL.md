@@ -9,9 +9,7 @@ description: Use when encountering any bug, test failure, or unexpected behavior
 
 Random fixes waste time and create new bugs. Quick patches mask underlying issues.
 
-**Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
-
-**Violating the letter of this process is violating the spirit of debugging.**
+**Core principle:** Find the root cause before attempting a fix. A fix aimed at the symptom leaves the cause in place and often adds a second bug.
 
 ## The Iron Law
 
@@ -23,7 +21,7 @@ If you haven't completed Phase 1, you cannot propose fixes.
 
 ## When to Use
 
-Use for ANY technical issue:
+Use for any technical issue:
 - Test failures
 - Bugs in production
 - Unexpected behavior
@@ -31,7 +29,9 @@ Use for ANY technical issue:
 - Build failures
 - Integration issues
 
-**Use this ESPECIALLY when:**
+For a small bug each phase takes a minute. Scale the depth to the bug, not the order.
+
+**Use this especially when:**
 - Under time pressure (emergencies make guessing tempting)
 - "Just one quick fix" seems obvious
 - You've already tried multiple fixes
@@ -41,15 +41,15 @@ Use for ANY technical issue:
 **Don't skip when:**
 - Issue seems simple (simple bugs have root causes too)
 - You're in a hurry (rushing guarantees rework)
-- Manager wants it fixed NOW (systematic is faster than thrashing)
+- Manager wants it fixed now (systematic is faster than thrashing)
 
 ## The Four Phases
 
-You MUST complete each phase before proceeding to the next.
+Work the phases in order, finishing each before the next.
 
 ### Phase 1: Root Cause Investigation
 
-**BEFORE attempting ANY fix:**
+**Before attempting any fix:**
 
 1. **Read Error Messages Carefully**
    - Don't skip past errors or warnings
@@ -71,19 +71,19 @@ You MUST complete each phase before proceeding to the next.
 
 4. **Gather Evidence in Multi-Component Systems**
 
-   **WHEN system has multiple components (CI → build → signing, API → service → database):**
+   **When system has multiple components (CI → build → signing, API → service → database):**
 
-   **BEFORE proposing fixes, add diagnostic instrumentation:**
+   **Before proposing fixes, add diagnostic instrumentation:**
    ```
-   For EACH component boundary:
+   For each component boundary:
      - Log what data enters component
      - Log what data exits component
      - Verify environment/config propagation
      - Check state at each layer
 
-   Run once to gather evidence showing WHERE it breaks
-   THEN analyze evidence to identify failing component
-   THEN investigate that specific component
+   Run once to gather evidence showing where it breaks
+   Then analyze evidence to identify failing component
+   Then investigate that specific component
    ```
 
    **This reveals:** Which layer fails (e.g., config → service ✓, service → database ✗)
@@ -95,7 +95,7 @@ You MUST complete each phase before proceeding to the next.
 
 6. **Trace Data Flow**
 
-   **WHEN error is deep in call stack:**
+   **When error is deep in call stack:**
 
    See `root-cause-tracing.md` in this directory for the complete backward tracing technique.
 
@@ -114,7 +114,7 @@ You MUST complete each phase before proceeding to the next.
    - What works that's similar to what's broken?
 
 2. **Compare Against References**
-   - If implementing pattern, read reference implementation COMPLETELY
+   - If implementing pattern, read reference implementation completely
    - Don't skim - read every line
    - Understand the pattern fully before applying
 
@@ -138,14 +138,14 @@ You MUST complete each phase before proceeding to the next.
    - Be specific, not vague
 
 2. **Test Minimally**
-   - Make the SMALLEST possible change to test hypothesis
+   - Make the smallest possible change to test hypothesis
    - One variable at a time
    - Don't fix multiple things at once
 
 3. **Verify Before Continuing**
    - Did it work? Yes → Phase 4
-   - Didn't work? Form NEW hypothesis
-   - DON'T add more fixes on top
+   - Didn't work? Form new hypothesis
+   - Don't add more fixes on top
 
 4. **When You Don't Know**
    - Say "I don't understand X"
@@ -161,13 +161,13 @@ You MUST complete each phase before proceeding to the next.
    - Simplest possible reproduction
    - Automated test if possible
    - One-off test script if no framework
-   - MUST have before fixing
+   - Write it before the fix
    - Use `chris-code:test-driven-development` for writing proper failing tests
    - After the fix, invoke `chris-code:regression-test` to ensure full regression coverage (sibling paths, boundary cases, property assertions)
 
 2. **Implement Single Fix**
    - Address the root cause identified
-   - ONE change at a time
+   - One change at a time
    - No "while I'm here" improvements
    - No bundled refactoring
    - The root cause is known, so the fix is now a *determined change*. When more than one implementation is plausible, hand it to `chris-code:coherent-change` — it researches the codebase's patterns, defends the most coherent implementation against the alternatives, implements it, and lite-reviews it before handing back. You then run this phase's close (the failing test from Step 1, regression coverage, verify).
@@ -178,11 +178,11 @@ You MUST complete each phase before proceeding to the next.
    - Issue actually resolved?
 
 4. **If Fix Doesn't Work**
-   - STOP
+   - Stop
    - Count: How many fixes have you tried?
    - If < 3: Return to Phase 1, re-analyze with new information
-   - **If ≥ 3: STOP and question the architecture (step 5 below)**
-   - DON'T attempt Fix #4 without architectural discussion
+   - **If ≥ 3: stop and question the architecture (step 5 below)**
+   - Don't attempt Fix #4 without architectural discussion
 
 5. **If 3+ Fixes Failed: Question Architecture**
 
@@ -191,14 +191,14 @@ You MUST complete each phase before proceeding to the next.
    - Fixes require "massive refactoring" to implement
    - Each fix creates new symptoms elsewhere
 
-   **STOP and question fundamentals:**
+   **Stop and question fundamentals:**
    - Is this pattern fundamentally sound?
    - Are we "sticking with it through sheer inertia"?
    - Should we refactor architecture vs. continue fixing symptoms?
 
    **Discuss with the user before attempting more fixes**
 
-   This is NOT a failed hypothesis - this is a wrong architecture.
+   This is not a failed hypothesis - this is a wrong architecture.
 
 ## Rationalizations — All Mean "Return to Phase 1"
 
@@ -216,7 +216,7 @@ You MUST complete each phase before proceeding to the next.
 
 | Phase | Key Activities | Success Criteria |
 |-------|---------------|------------------|
-| **1. Root Cause** | Read errors, reproduce, check changes, gather evidence | Understand WHAT and WHY |
+| **1. Root Cause** | Read errors, reproduce, check changes, gather evidence | Understand what and why |
 | **2. Pattern** | Find working examples, compare | Identify differences |
 | **3. Hypothesis** | Form theory, test minimally | Confirmed or new hypothesis |
 | **4. Implementation** | Create test, fix, verify | Bug resolved, tests pass |
@@ -230,7 +230,7 @@ If systematic investigation reveals issue is truly environmental, timing-depende
 3. Implement appropriate handling (retry, timeout, error message)
 4. Add monitoring/logging for future investigation
 
-**But:** 95% of "no root cause" cases are incomplete investigation.
+**But:** most "no root cause" conclusions are an unfinished investigation.
 
 ## Supporting Techniques
 

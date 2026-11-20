@@ -326,9 +326,9 @@
   <div class="wrap hero-inner">
     <p class="eyebrow">The complete guide</p>
     <h1>Claude Code, with an opinion about <span class="cc">how</span> to build.</h1>
-    <p class="lede"><span class="mono">chris-code</span> turns Claude Code from a free-form chat assistant into a spec-driven engineering workflow: settle intent, design before code, dispatch focused agents, and gate drift before it reaches <span class="mono">main</span>. It ships <strong>25 skills</strong> and a <strong>15-agent</strong> layer — and where that breadth is spent tells you what it values.</p>
+    <p class="lede"><span class="mono">chris-code</span> turns Claude Code from a free-form chat assistant into a spec-driven engineering workflow: settle intent, design before code, dispatch focused agents, and gate drift before it reaches <span class="mono">main</span>. It ships <strong>22 skills</strong> and a <strong>15-agent</strong> layer — and where that breadth is spent tells you what it values.</p>
     <div class="counts">
-      <div class="count"><b>25</b><span>skills · 8 groups</span></div>
+      <div class="count"><b>22</b><span>skills · 8 groups</span></div>
       <div class="count"><b>15</b><span>scoped agents</span></div>
       <div class="count hl"><b>3&nbsp;:&nbsp;12</b><span>coders vs. checkers</span></div>
       <div class="count"><b>1</b><span>fixed pipeline</span></div>
@@ -515,7 +515,7 @@
 <section id="skills">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">The 25 skills</p>
+      <p class="eyebrow">The 22 skills</p>
       <h2>Eight functional groups, one idea-to-integration pipeline.</h2>
       <p>The first three groups are the pipeline's spine; the rest cover the change engine, testing, completion, review, campaigns, and meta. Colour marks each skill's nature.</p>
     </div>
@@ -551,9 +551,9 @@
         <div class="chips"><span class="chip assure">verification-before-completion</span><span class="chip build">finishing-a-development-branch</span></div>
       </div>
       <div class="group">
-        <div class="g-head"><h3>Review</h3><span class="g-count">5</span></div>
-        <p class="g-sub">On-demand senior review, plus how to give and take it.</p>
-        <div class="chips"><span class="chip assure">requesting-code-review</span><span class="chip assure">receiving-code-review</span><span class="chip assure">python-review</span><span class="chip assure">rust-review</span><span class="chip assure">technical-review</span></div>
+        <div class="g-head"><h3>Review</h3><span class="g-count">3</span></div>
+        <p class="g-sub">On-demand senior review of design, APIs and algorithms.</p>
+        <div class="chips"><span class="chip assure">python-review</span><span class="chip assure">rust-review</span><span class="chip assure">technical-review</span></div>
       </div>
       <div class="group">
         <div class="g-head"><h3>Quality campaigns</h3><span class="g-count">3</span></div>
@@ -561,9 +561,9 @@
         <div class="chips"><span class="chip assure">bug-hunt</span><span class="chip assure">test-sweep</span><span class="chip assure">code-archaeology</span></div>
       </div>
       <div class="group">
-        <div class="g-head"><h3>Meta &amp; ops</h3><span class="g-count">3</span></div>
+        <div class="g-head"><h3>Meta &amp; ops</h3><span class="g-count">2</span></div>
         <p class="g-sub">How the plugin finds its own skills, and ships itself.</p>
-        <div class="chips"><span class="chip">using-chris-code</span><span class="chip">writing-skills</span><span class="chip build">release</span></div>
+        <div class="chips"><span class="chip">using-chris-code</span><span class="chip build">release</span></div>
       </div>
     </div>
   </div>
@@ -699,13 +699,13 @@
         <table class="delta">
           <thead><tr><th>Inventory</th><th class="num">superpowers</th><th class="num">chris-code</th></tr></thead>
           <tbody>
-            <tr><td>Skills</td><td class="num">14</td><td class="num grow">25</td></tr>
+            <tr><td>Skills</td><td class="num">14</td><td class="num grow">22</td></tr>
             <tr><td>Agents</td><td class="num">0</td><td class="num grow">15</td></tr>
             <tr><td>Commands</td><td class="num">0</td><td class="num">0</td></tr>
             <tr><td>Hooks</td><td class="num">1</td><td class="num">0</td></tr>
           </tbody>
         </table>
-        <p class="fork-note">Every superpowers skill carries over — one renamed (<code>using-superpowers</code> → <code>using-chris-code</code>), one split (<code>writing-plans</code> → <code>lean-plan</code> + <code>lean-spec</code>). chris-code is a <strong>true superset</strong>: 11 new skills and the entire agent layer on top.</p>
+        <p class="fork-note">Eleven of the fourteen superpowers skills carry over: one renamed (<code>using-superpowers</code> → <code>using-chris-code</code>), one split (<code>writing-plans</code> → <code>lean-plan</code> + <code>lean-spec</code>). Three were removed (<code>requesting-code-review</code>, <code>receiving-code-review</code>, <code>writing-skills</code>). On top: 11 new skills and the entire agent layer.</p>
       </div>
       <div>
         <p class="eyebrow" style="margin-bottom:16px">Six thematic shifts</p>
@@ -728,7 +728,7 @@
           <tr><td class="skill">writing-plans</td><td class="sp">Exhaustive, full code in every step.</td><td class="cc">Split: plan slimmed to <span class="mono">lean-plan</span>, spec promoted to <span class="mono">lean-spec</span>. Spec = contracts; plan = what/where, no inline code.</td></tr>
           <tr><td class="skill">subagent-driven-development</td><td class="sp">Two-stage review; parallel implementers discouraged.</td><td class="cc">Three gates per task (spec + quality → scripted triage → commit gate), scope-based agent selection, deliberate staged parallelism by file footprint.</td></tr>
           <tr><td class="skill">verification-before-completion</td><td class="sp">Single-command gate: “what proves this? run it.”</td><td class="cc">Tests → Lints first, then Design review, spec-blind intent re-check, and mutation re-check together as one close, routed by triage: blocking findings fixed in place, two fix rounds max.</td></tr>
-          <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Demoted to ad-hoc — routine review now lives in the automated agent gates.</td></tr>
+          <tr><td class="skill">requesting-code-review</td><td class="sp">The primary, mandatory review path.</td><td class="cc">Removed. Routine review lives in the automated agent gates; for an ad-hoc review use python-review / rust-review or a quality reviewer.</td></tr>
         </tbody>
       </table>
     </div>
@@ -742,7 +742,6 @@
         <span class="chip">systematic-debugging</span>
         <span class="chip">finishing-a-development-branch</span>
         <span class="chip">dispatching-parallel-agents</span>
-        <span class="chip">receiving-code-review</span>
         <span class="chip">using-chris-code</span>
       </div>
       <p style="font-size:13.5px; color:var(--muted); font-style:italic; margin:14px 0 0">There's also a quieter shift in voice: chris-code strips superpowers' persuasion scaffolding — “Red Flags — STOP” lists, rationalization tables, real-world-impact blocks — for terse, mechanical instructions. Same rules, less rhetoric.</p>

@@ -120,6 +120,9 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 ### Implementation choice
 17. **Lookup loops with O(n²) cost**: `list.__contains__` in a hot loop; use `set` / `dict` for membership tests when the collection grows.
 
+### Public boundaries
+18. **Sentinel returns from public functions**: signaling failure with `None`, `-1` or an empty value that callers can't tell from a real result; raise a typed exception instead.
+
 ## S1–S2 patterns to watch
 
 - Missing `self.save_hyperparameters()` in `__init__`.
@@ -127,7 +130,7 @@ def __init__(self, encoder: nn.Module, lr: float = 1e-3, weight_decay: float = 0
 - Inconsistent naming between training and validation metrics.
 - DataLoader without `num_workers`, `pin_memory`, or `persistent_workers` tuning.
 - Missing `worker_init_fn` for reproducible data loading.
-- Dead code, sentinel returns, missing type hints on public functions (lying annotations are worse than missing — see general S3 item 5), stateful code without need.
+- Dead code, sentinel returns from private helpers (one from a public function is general S3 item 18), missing type hints on public functions (lying annotations are worse than missing — see general S3 item 5), stateful code without need.
 
 ## Refactoring heuristics (fix in path, don't hunt out of scope, though a consumer your change breaks and every case on the brief's `Cases:` line are in scope; Lightning wins over general Python on conflict)
 

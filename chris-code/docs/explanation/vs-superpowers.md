@@ -16,6 +16,6 @@ chris-code branched from [obra/superpowers](https://github.com/obra/superpowers)
 
 ## What stayed the same
 
-`brainstorming`, `test-driven-development`, `systematic-debugging`, `finishing-a-development-branch`, and the session-start discovery skill carry over essentially unchanged (renames and diagram-format swaps aside). chris-code is a **true superset**: every superpowers skill is present, plus 11 new skills and a 15-agent layer.
+`brainstorming`, `test-driven-development`, `systematic-debugging`, `finishing-a-development-branch`, and the session-start discovery skill carry over essentially unchanged (renames and diagram-format swaps aside). Eleven of the fourteen superpowers skills are present (`requesting-code-review`, `receiving-code-review` and `writing-skills` were removed), plus 11 new skills and a 15-agent layer.
 
 A fuller side-by-side, including the receipts, lives in the repository's [`superpowers-comparison.md`](https://github.com/chris-santiago/claude-plugins/blob/main/chris-code/assets/decks/superpowers-comparison.md).

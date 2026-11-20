@@ -67,9 +67,13 @@ Senior Python coder. Implement features, fix bugs, write tests, and refactor —
 
 17. **Lookup loops with O(n²) cost**: `list.__contains__` (`x in some_list`) inside a hot loop where the list grows beyond a handful of items. Use `set` / `dict` for membership tests; the conversion cost is paid back in one pass.
 
+### Public boundaries
+
+18. **Sentinel returns from public functions**: signaling failure with `None`, `-1` or an empty value that callers can't tell from a real result. Raise a typed exception instead.
+
 ## Patterns to watch (S1–S2)
 
-- Unused imports, dead code, sentinel return values.
+- Unused imports, dead code, sentinel returns from private helpers (one from a public function is S3 item 18).
 - Naming inconsistent with neighboring code.
 - Missing type hints on public functions (cf. S3 item 5 — lying annotations are worse than missing ones).
 - Stateful code without need (class that should be functions).

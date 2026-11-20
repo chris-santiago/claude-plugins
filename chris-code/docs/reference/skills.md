@@ -1,6 +1,6 @@
 # Skills
 
-chris-code ships 25 skills. Most fire automatically — invoked by the pipeline, by another skill, or by a trigger phrase in your request — so you rarely call them by name. This page describes each one: what it does, when it fires, and what it hands off to.
+chris-code ships 22 skills. Most fire automatically — invoked by the pipeline, by another skill, or by a trigger phrase in your request — so you rarely call them by name. This page describes each one: what it does, when it fires, and what it hands off to.
 
 The skills fall into eight groups. The first two (design and planning, then execution) form the idea-to-integration pipeline; the rest are the change engine, testing, completion, review, quality campaigns, and meta-skills.
 
@@ -70,12 +70,6 @@ Runs once implementation is complete and verified. It presents the integration o
 
 ## Review
 
-### `requesting-code-review`
-Ad-hoc review outside the automated gates — when you're stuck, before a refactor, or for a fresh perspective. By default it scopes the change to `git merge-base HEAD main`..`HEAD`.
-
-### `receiving-code-review`
-The discipline for *handling* review feedback: technical evaluation, not performative agreement. Verify each finding against the actual code before acting; a stated rationale never auto-downgrades a real finding, and a questionable suggestion is checked, not blindly implemented.
-
 ### `python-review` · `rust-review`
 Senior-level, interactive refactoring and API-design review of a package/module/subsystem. They recover architectural intent, identify drift (utility-module sprawl, dict-shaped domain data, mode-flag creep, leaky internals), and propose changes as **end-states**. They are *discovery* — they do **not** apply patches; they route the proposed changes to `coherent-change` (single or batch), which finds the method and runs the close. (The read-only `*-design-reviewer` agents are the automated-gate counterparts.)
 
@@ -100,10 +94,7 @@ Surfaces unimplemented features, silently dropped parameters, dead code paths, s
 ## Meta
 
 ### `using-chris-code`
-The session-start skill: establishes how to find and use skills, requiring a Skill-tool check before any response. Loaded automatically by the plugin system.
-
-### `writing-skills`
-TDD applied to *process documentation* — used when creating, editing, or verifying skills. A skill is tested the way code is: against the behavior it's meant to produce.
+The session-start skill: establishes how to find and use skills. Before responding or acting it checks whether a skill covers the task and invokes one that plausibly does, dropping it if it turns out not to fit. Loaded automatically by the plugin system.
 
 ### `release`
 Cuts a release — bump the version across the repo, generate a changelog from conventional commits, update the changelog file, and create a tagged GitHub release. Triggered explicitly only; never auto-invoked.

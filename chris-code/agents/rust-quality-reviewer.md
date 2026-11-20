@@ -47,6 +47,11 @@ Scan new/modified code for these patterns the coder is told to avoid:
 8. Parallel APIs that drifted
 9. Data-model leakage to callers
 10. Orchestration mixed with implementation in one function
+11. Same-answer conditionals repeated across call sites
+12. Public/internal type bifurcation without an explicit enum or trait bound at the public boundary
+13. Sibling duplication: the same match arms or helper logic copied across three or more sibling sites
+14. Overgrown modules: a file past ~800 lines, or one spanning more than two weakly related responsibilities
+15. O(n²) membership lookups in a hot loop
 
 **Critical (S4–S5):**
 - New `unsafe` blocks without justification
@@ -81,7 +86,7 @@ Look for obvious bugs the coder may have introduced:
 ### 5. Project Constraints and Public Boundaries
 
 - Does the change break a hard constraint in the repo's `CLAUDE.md` or the dispatch's verbatim Constraints? Severity per the constraint (S4–S5 typical).
-- Does a public function signal failure with a sentinel (`None`, `-1`, an empty value) where callers can't tell it from a real result? S3.
+- Does a public function signal failure with a sentinel (`-1`, an empty value, a default) where callers can't tell it from a real result, instead of returning `Option` or `Result`? S3.
 
 ## Break check
 

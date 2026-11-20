@@ -11,8 +11,6 @@ Write the test first. Watch it fail. Write minimal code to pass.
 
 **Core principle:** If you didn't watch the test fail, you don't know if it tests the right thing.
 
-**Violating the letter of the rules is violating the spirit of the rules.**
-
 ## When to Use
 
 **Always:**
@@ -26,23 +24,15 @@ Write the test first. Watch it fail. Write minimal code to pass.
 - Generated code
 - Configuration files
 
-Thinking "skip TDD just this once"? Stop. That's rationalization.
-
 ## The Iron Law
 
 ```
 NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST
 ```
 
-Write code before the test? Delete it. Start over.
+Write the test before the code it tests. If you wrote implementation first, set it aside, write the test, watch it fail, then write the implementation fresh against the test, without pasting the set-aside code back or adapting it. A test written around finished code passes at once and proves nothing, and code you keep open while writing its test shapes the test to fit it.
 
-**No exceptions:**
-- Don't keep it as "reference"
-- Don't "adapt" it while writing tests
-- Don't look at it
-- Delete means delete
-
-Implement fresh from tests. Period.
+Don't delete code you didn't write in this task; ask first.
 
 ## Red-Green-Refactor
 
@@ -124,7 +114,7 @@ Vague name, tests mock not code
 
 ### Verify RED - Watch It Fail
 
-**MANDATORY. Never skip.**
+Run it and watch it fail. A test you never saw fail may be passing for the wrong reason.
 
 ```bash
 # run the project's test suite targeting this test file
@@ -179,7 +169,7 @@ Don't add features, refactor other code, or "improve" beyond the test.
 
 ### Verify GREEN - Watch It Pass
 
-**MANDATORY.**
+Run it and confirm it passes, along with the tests around it.
 
 ```bash
 # run the project's test suite targeting this test file
@@ -222,8 +212,7 @@ Next failing test for next feature.
 | "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
 | "I'll test after" | Tests-after pass immediately — proves nothing. Tests-first = "what should this do?" |
 | "Already manually tested" | Ad-hoc ≠ systematic. No record, can't re-run, can't regression-check. |
-| "Deleting X hours is wasteful" | Sunk cost. Keeping unverified code is the real waste. |
-| "Keep as reference" | You'll adapt it. That's testing after. Delete means delete. |
+| "Keep it open as reference" | You'll write the test to fit it. That's testing after. Set it aside until the test fails. |
 | "Need to explore first" | Fine. Throw away exploration, then start with TDD. |
 | "Test hard = design unclear" | Listen to the test. Hard to test = hard to use. Simplify the interface. |
 | "TDD will slow me down" | TDD is faster than debugging. Every "shortcut" creates debug time later. |
@@ -280,7 +269,7 @@ Before marking work complete:
 - [ ] Tests use real code (mocks only if unavoidable)
 - [ ] Edge cases and errors covered
 
-Can't check all boxes? You skipped TDD. Start over.
+An unchecked box is a step to go back and do. For a test you never saw fail, set its implementation aside and run the test until you have seen it fail for the expected reason.
 
 ## When Stuck
 
@@ -299,7 +288,7 @@ Never fix bugs without a test.
 
 ## Testing Anti-Patterns
 
-When adding mocks or test utilities, read @testing-anti-patterns.md to avoid common pitfalls:
+When adding mocks or test utilities, read `testing-anti-patterns.md` in this directory to avoid common pitfalls:
 - Testing mock behavior instead of real behavior
 - Adding test-only methods to production classes
 - Mocking without understanding dependencies
